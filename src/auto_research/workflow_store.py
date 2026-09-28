@@ -1,0 +1,726 @@
+"""Schema 3 workflow ledger. No models, threads, timers or task execution."""
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+from .errors import ConflictError, ValidationError, NotFoundError
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def encoded(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+
+
+DDL = """
+CREATE TABLE IF NOT EXISTS workflow_project (
+ id INTEGER PRIMARY KEY CHECK(id=1), main_session_id TEXT, state TEXT NOT NULL,
+ generation INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_sessions (
+ session_id TEXT PRIMARY KEY, host_id TEXT NOT NULL, role TEXT NOT NULL,
+ node_id TEXT, cwd TEXT, pause_reason TEXT, waiting TEXT NOT NULL DEFAULT '[]',
+ context TEXT NOT NULL DEFAULT '{}', goal_id TEXT, goal_revision INTEGER,
+ detached INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+ close_state TEXT, close_attempt_id TEXT, close_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS unique_main_session ON workflow_sessions(role)
+ WHERE role='main' AND detached=0;
+CREATE TABLE IF NOT EXISTS exploration_tasks (
+ task_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL,
+ parent_session_id TEXT NOT NULL, node_id TEXT NOT NULL, session_id TEXT UNIQUE NOT NULL,
+ state TEXT NOT NULL, context TEXT NOT NULL, cwd TEXT, error TEXT,
+ generation INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS unique_live_node_task ON exploration_tasks(node_id)
+ WHERE state IN ('queued','starting','running','waiting','stopping','unverified');
+CREATE TABLE IF NOT EXISTS workflow_notifications (
+ notification_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
+ recipient TEXT NOT NULL, kind TEXT NOT NULL, reference TEXT,
+ payload TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_intents (
+ intent_id TEXT PRIMARY KEY, kind TEXT NOT NULL, session_id TEXT,
+ state TEXT NOT NULL, details TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS snapshot_handoffs (
+ snapshot_id TEXT PRIMARY KEY, context TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projection_cursors (
+ session_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL
+);
+"""
+
+
+def migrate_schema3(path: Path):
+    """Consistent backup before a transactional version upgrade; never arms execution."""
+    with sqlite3.connect(path, isolation_level=None) as db:
+        db.row_factory = sqlite3.Row
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 3:
+            return
+        if version != 2:
+            raise ValidationError(f"Expected schema 2, found {version}")
+        backup = path.parent / "schema-2-backup.sqlite3"
+        if not backup.exists():
+            temporary = backup.with_suffix(".tmp")
+            with sqlite3.connect(temporary) as target:
+                db.backup(target)
+            temporary.replace(backup)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 3:
+                db.rollback()
+                return
+            for statement in DDL.split(";"):
+                if statement.strip():
+                    db.execute(statement)
+            associations = (
+                list(db.execute("SELECT * FROM associations ORDER BY started_at"))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='associations'").fetchone()
+                else []
+            )
+            first = associations[0]["session_id"] if associations else None
+            # Current control is deliberately retained; runtime activation is revoked.
+            db.execute("INSERT INTO workflow_project VALUES(1,?,'cold',0,?)", (first, now()))
+            seen = set()
+            for row in associations:
+                sid = row["session_id"]
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                latest = [a for a in associations if a["session_id"] == sid][-1]
+                attempt = db.execute(
+                    "SELECT a.* FROM attempts a JOIN associations s USING(association_id) "
+                    "WHERE s.session_id=? ORDER BY a.started_at DESC LIMIT 1",
+                    (sid,),
+                ).fetchone()
+                role = (
+                    "main"
+                    if sid == first
+                    else "exploration"
+                    if attempt and attempt["role"] == "branch"
+                    else "legacy"
+                )
+                db.execute(
+                    "INSERT INTO workflow_sessions(session_id,host_id,role,node_id,pause_reason,detached,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        sid,
+                        row["host_id"],
+                        role,
+                        attempt["node_id"] if attempt else None,
+                        "legacy_history" if role == "exploration" else "cold",
+                        int(latest["ended_at"] is not None),
+                        now(),
+                    ),
+                )
+                goal = db.execute(
+                    "SELECT g.* FROM owned_goals g JOIN associations a USING(association_id) WHERE a.session_id=? ORDER BY g.updated_at DESC LIMIT 1",
+                    (sid,),
+                ).fetchone()
+                if goal:
+                    db.execute(
+                        "UPDATE workflow_sessions SET goal_id=?,goal_revision=? WHERE session_id=?",
+                        (goal["goal_id"], goal["revision"], sid),
+                    )
+            db.execute("PRAGMA user_version=3")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+
+class WorkflowStore:
+    def workflow_control(self, db, session_id=None, cursors=None):
+        """SQL-selected lifecycle facts. History and task bodies have separate reads."""
+        cursors = cursors or {}
+        live = "('queued','starting','running','waiting','stopping','unverified')"
+        session_filter = (
+            """detached=0 AND (
+            role='main' OR session_id=? OR
+            (role IN ('node_core','exploration') AND (
+                session_id IN (SELECT session_id FROM exploration_tasks WHERE state IN %s)
+                OR session_id IN (SELECT a.session_id FROM associations a JOIN attempts t USING(association_id) WHERE t.ended_at IS NULL)
+                OR COALESCE(pause_reason,'') NOT IN ('finished','complete','stop','legacy_history')))
+            OR (role='specialist' AND session_id IN (SELECT child_session_id FROM specialist_tasks WHERE state IN ('starting','running','unverified')))
+        )"""
+            % live
+        )
+        specs = {
+            "sessions": ("workflow_sessions", session_filter, (session_id,)),
+            "tasks": ("exploration_tasks", f"state IN {live} OR session_id=?", (session_id,)),
+            "notifications": (
+                "workflow_notifications",
+                "state='pending' OR (state='delivered' AND task_id IN (SELECT j.value FROM workflow_sessions w,json_each(w.waiting) j WHERE w.detached=0 AND w.pause_reason IN ('wait','project_wait')))",
+                (),
+            ),
+            "intents": ("workflow_intents", "session_id=? AND kind='jobs'", (session_id,)),
+        }
+        result, next_cursors = {}, {}
+        for name, (table, where, args) in specs.items():
+            columns = (
+                "*"
+                if name != "sessions"
+                else "session_id,host_id,role,node_id,cwd,pause_reason,waiting,goal_id,goal_revision,detached,created_at,close_state,close_attempt_id,close_reason"
+            )
+            if name == "tasks":
+                columns = "task_id,operation_id,parent_session_id,node_id,session_id,state,cwd,error,generation,created_at,updated_at"
+            rows = list(
+                db.execute(
+                    f"SELECT rowid AS _key,{columns} FROM {table} WHERE ({where}) AND rowid>? ORDER BY rowid LIMIT 101",
+                    (*args, int(cursors.get(name, 0))),
+                )
+            )
+            result[name] = []
+            for row in rows[:100]:
+                value = dict(row)
+                value.pop("_key")
+                # Do not move large research text into the control channel.
+                if name == "tasks":
+                    value.pop("context", None)
+                for key in ("waiting", "payload", "details"):
+                    if key in value:
+                        value[key] = json.loads(value[key])
+                if name == "notifications":
+                    from .memory_store import bounded_value
+
+                    value["payload"] = bounded_value(value["payload"], 4096)
+                if isinstance(value.get("error"), str):
+                    value["error"] = value["error"][:2000]
+                result[name].append(value)
+            if len(rows) > 100:
+                next_cursors[name] = rows[99]["_key"]
+        row = db.execute("SELECT * FROM workflow_project WHERE id=1").fetchone()
+        current = db.execute(
+            "SELECT session_id,host_id,role,node_id,cwd,pause_reason,waiting,goal_id,goal_revision,detached,created_at,close_state,close_attempt_id,close_reason FROM workflow_sessions WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        result.update(
+            run=dict(row) if row else None,
+            session=dict(current) if current else None,
+            cursors=next_cursors,
+        )
+        if current:
+            result["session"]["waiting"] = json.loads(current["waiting"])
+        return result
+
+    @staticmethod
+    def notify_in_transaction(db, session_id, fields):
+        task = db.execute(
+            "SELECT * FROM exploration_tasks WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if not task:
+            return {"ignored": True}
+        nid = (
+            "notice-"
+            + hashlib.sha256((task["task_id"] + ":" + fields["key"]).encode()).hexdigest()[:24]
+        )
+        body = {"task_id": task["task_id"], "node_id": task["node_id"], **fields}
+        db.execute(
+            "INSERT OR IGNORE INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)",
+            (
+                nid,
+                task["task_id"],
+                task["parent_session_id"],
+                fields["kind"],
+                fields.get("reference"),
+                encoded(body),
+                "claimed" if fields.get("silent") else "pending",
+                now(),
+            ),
+        )
+        return {"notification_id": nid}
+
+    def workflow_view(self, db, session_id=None):
+        project = db.execute("SELECT * FROM workflow_project WHERE id=1").fetchone()
+        sessions = []
+        for row in db.execute("SELECT * FROM workflow_sessions ORDER BY created_at"):
+            value = dict(row)
+            value["waiting"] = json.loads(value["waiting"])
+            value["context"] = json.loads(value["context"])
+            sessions.append(value)
+        tasks = []
+        for row in db.execute("SELECT * FROM exploration_tasks ORDER BY created_at,task_id"):
+            value = dict(row)
+            value["context"] = json.loads(value["context"])
+            tasks.append(value)
+        notifications = []
+        for row in db.execute("SELECT * FROM workflow_notifications ORDER BY created_at"):
+            value = dict(row)
+            value["payload"] = json.loads(value["payload"])
+            notifications.append(value)
+        return {
+            "run": dict(project) if project else None,
+            "sessions": sessions,
+            "tasks": tasks,
+            "intents": [
+                {**dict(r), "details": json.loads(r["details"])}
+                for r in db.execute("SELECT * FROM workflow_intents")
+            ],
+            "notifications": notifications,
+            "session": next((s for s in sessions if s["session_id"] == session_id), None),
+        }
+
+    def workflow(self, host_id, session_id, action, fields, operation_id):
+        payload = {"host_id": host_id, "session_id": session_id, "action": action, "fields": fields}
+
+        def work(db):
+            view = self.workflow_control(db, session_id)
+            current = view["session"]
+            at = now()
+            if action == "register":
+                role = fields.get(
+                    "role",
+                    "main" if not view["run"] or not view["run"]["main_session_id"] else "legacy",
+                )
+                if role not in {
+                    "main",
+                    "node_core",
+                    "exploration",
+                    "discussion",
+                    "handoff",
+                    "specialist",
+                    "legacy",
+                }:
+                    raise ValidationError("Invalid session role")
+                if current:
+                    db.execute(
+                        "UPDATE workflow_sessions SET detached=0,cwd=COALESCE(?,cwd) WHERE session_id=?",
+                        (fields.get("cwd"), session_id),
+                    )
+                else:
+                    db.execute(
+                        "INSERT INTO workflow_sessions(session_id,host_id,role,node_id,cwd,context,created_at) VALUES(?,?,?,?,?,?,?)",
+                        (
+                            session_id,
+                            host_id,
+                            role,
+                            fields.get("node_id"),
+                            fields.get("cwd"),
+                            encoded(fields.get("context", {})),
+                            at,
+                        ),
+                    )
+                if not view["run"]:
+                    db.execute(
+                        "INSERT INTO workflow_project VALUES(1,?,'manual',0,?)",
+                        (session_id if role == "main" else None, at),
+                    )
+                elif role == "main":
+                    db.execute(
+                        "UPDATE workflow_project SET main_session_id=? WHERE id=1", (session_id,)
+                    )
+            elif action == "run":
+                state = fields["state"]
+                if state not in {
+                    "manual",
+                    "running",
+                    "paused",
+                    "stopping",
+                    "stopped",
+                    "complete",
+                    "cold",
+                    "unverified",
+                }:
+                    raise ValidationError("Invalid run state")
+                generation = view["run"]["generation"] + (1 if fields.get("new_generation") else 0)
+                db.execute(
+                    "UPDATE workflow_project SET state=?,generation=?,updated_at=? WHERE id=1",
+                    (state, generation, at),
+                )
+                control = (
+                    "auto"
+                    if state == "running"
+                    else "stopped"
+                    if state == "stopped"
+                    else "manual"
+                    if state == "manual"
+                    else "paused"
+                )
+                db.execute("UPDATE project SET control=?", (control,))
+                if state == "stopping":
+                    db.execute(
+                        "UPDATE exploration_tasks SET state='cancelled',updated_at=? WHERE state='queued'",
+                        (at,),
+                    )
+            elif action == "session":
+                if not current:
+                    raise NotFoundError("Session role is missing")
+                allowed = {
+                    "pause_reason", "waiting", "goal_id", "goal_revision", "detached", "cwd",
+                    "close_state", "close_attempt_id", "close_reason",
+                }
+                for key, value in fields.items():
+                    if key not in allowed:
+                        raise ValidationError(f"Unsupported session field {key}")
+                    db.execute(
+                        f"UPDATE workflow_sessions SET {key}=? WHERE session_id=?",
+                        (encoded(value) if key == "waiting" else value, session_id),
+                    )
+            elif action == "task":
+                if (
+                    not current
+                    or current["role"] not in {"main", "node_core", "exploration"}
+                    or current["detached"]
+                ):
+                    raise ConflictError("Only research agents may dispatch")
+                if view["run"]["state"] != "running":
+                    raise ConflictError("Autonomous research is not running")
+                node = next(
+                    (
+                        dict(n)
+                        for n in db.execute(
+                            "SELECT * FROM nodes WHERE node_id=?", (fields["node_id"],)
+                        )
+                    ),
+                    None,
+                )
+                if not node or node["status"] == "closed":
+                    raise ConflictError("Unknown or closed node")
+                if current["node_id"] == node["node_id"]:
+                    raise ConflictError("Cannot dispatch the currently executing node to itself")
+                live = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE node_id=? AND state IN ('queued','starting','running','waiting','stopping','unverified')",
+                    (node["node_id"],),
+                ).fetchone()
+                if live:
+                    return dict(live)
+                prior = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE node_id=? ORDER BY created_at DESC LIMIT 1",
+                    (node["node_id"],),
+                ).fetchone()
+                if prior:
+                    if prior["state"] == "finished" and prior["cwd"]:
+                        db.execute(
+                            "UPDATE exploration_tasks SET state='queued',parent_session_id=?,"
+                            "generation=?,error=NULL,updated_at=? WHERE task_id=?",
+                            (session_id, view["run"]["generation"], at, prior["task_id"]),
+                        )
+                        return dict(
+                            db.execute(
+                                "SELECT * FROM exploration_tasks WHERE task_id=?",
+                                (prior["task_id"],),
+                            ).fetchone()
+                        )
+                    return dict(prior)
+                task_id = "T-" + hashlib.sha256(operation_id.encode()).hexdigest()[:20]
+                context = {**node, "inputs": json.loads(node["inputs"])}
+                sid = "research-" + str(uuid4())
+                db.execute(
+                    "INSERT INTO exploration_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        task_id,
+                        operation_id,
+                        session_id,
+                        node["node_id"],
+                        sid,
+                        "queued",
+                        encoded(context),
+                        None,
+                        None,
+                        view["run"]["generation"],
+                        at,
+                        at,
+                    ),
+                )
+                return {
+                    **dict(
+                        db.execute(
+                            "SELECT * FROM exploration_tasks WHERE task_id=?", (task_id,)
+                        ).fetchone()
+                    ),
+                    "context": context,
+                }
+            elif action == "task_session":
+                # Hosts that mint their own session IDs bind them here before the
+                # executor is registered; a registered session never changes hands.
+                task = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE task_id=?", (fields.get("task_id"),)
+                ).fetchone()
+                if not task:
+                    raise NotFoundError("Unknown exploration task")
+                if task["parent_session_id"] != session_id:
+                    raise ConflictError("Only the dispatching session may bind the task session")
+                if task["state"] not in {"queued", "starting"}:
+                    raise ConflictError("Only a queued or starting task can bind its session")
+                bound = fields.get("session_id")
+                if not isinstance(bound, str) or not bound:
+                    raise ValidationError("session_id is required")
+                if bound != task["session_id"]:
+                    if db.execute(
+                        "SELECT 1 FROM workflow_sessions WHERE session_id=?", (task["session_id"],)
+                    ).fetchone():
+                        raise ConflictError("The task session is already registered")
+                    if db.execute(
+                        "SELECT 1 FROM exploration_tasks WHERE session_id=? AND task_id<>?",
+                        (bound, task["task_id"]),
+                    ).fetchone():
+                        raise ConflictError("Session already serves another task")
+                    db.execute(
+                        "UPDATE exploration_tasks SET session_id=?,updated_at=? WHERE task_id=?",
+                        (bound, at, task["task_id"]),
+                    )
+            elif action == "task_state":
+                task = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
+                ).fetchone()
+                if not task:
+                    raise NotFoundError("Unknown task")
+                allowed = {
+                    "queued",
+                    "starting",
+                    "running",
+                    "waiting",
+                    "finished",
+                    "failed",
+                    "cancelled",
+                    "stopping",
+                    "unverified",
+                }
+                if fields["state"] not in allowed:
+                    raise ValidationError("Invalid task state")
+                db.execute(
+                    "UPDATE exploration_tasks SET state=?,cwd=COALESCE(?,cwd),error=?,updated_at=? WHERE task_id=?",
+                    (
+                        fields["state"],
+                        fields.get("cwd"),
+                        fields.get("error"),
+                        at,
+                        fields["task_id"],
+                    ),
+                )
+            elif action == "task_retry":
+                task = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
+                ).fetchone()
+                if not task or task["state"] not in {
+                    "failed",
+                    "unverified",
+                    "finished",
+                    "cancelled",
+                }:
+                    raise ConflictError("Task is not awaiting recovery")
+                other = db.execute(
+                    "SELECT task_id FROM exploration_tasks WHERE node_id=? AND task_id!=? AND state IN ('queued','starting','running','waiting','stopping','unverified')",
+                    (task["node_id"], task["task_id"]),
+                ).fetchone()
+                if other:
+                    raise ConflictError("Another live task already owns this node")
+                db.execute(
+                    "UPDATE exploration_tasks SET state=?,error=NULL,updated_at=? WHERE task_id=?",
+                    (
+                        "queued" if fields.get("absent_verified") else "starting",
+                        at,
+                        task["task_id"],
+                    ),
+                )
+            elif action == "task_verified_failed":
+                task = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
+                ).fetchone()
+                if not task:
+                    raise NotFoundError("Unknown task")
+                if task["state"] == "failed":
+                    return dict(task)
+                if task["state"] != "unverified":
+                    raise ConflictError("Task is not awaiting creation verification")
+                db.execute(
+                    "UPDATE exploration_tasks SET state='failed',updated_at=? WHERE task_id=?",
+                    (at, task["task_id"]),
+                )
+            elif action == "task_resumed":
+                task = db.execute(
+                    "SELECT * FROM exploration_tasks WHERE task_id=? AND session_id=?",
+                    (fields["task_id"], session_id),
+                ).fetchone()
+                attempt = db.execute(
+                    "SELECT t.* FROM attempts t JOIN associations a USING(association_id) WHERE t.attempt_id=? AND a.session_id=? AND t.ended_at IS NULL",
+                    (fields["attempt_id"], session_id),
+                ).fetchone()
+                if not task or not attempt:
+                    raise ConflictError("Task and open attempt must belong to this session")
+                details = {
+                    **json.loads(attempt["details"]),
+                    "retry_of": fields.get("retry_of"),
+                    "task_id": task["task_id"],
+                }
+                db.execute(
+                    "UPDATE attempts SET details=? WHERE attempt_id=?",
+                    (encoded(details), attempt["attempt_id"]),
+                )
+                db.execute(
+                    "UPDATE exploration_tasks SET state='running',error=NULL,updated_at=? WHERE task_id=?",
+                    (at, task["task_id"]),
+                )
+            elif action == "notify":
+                notice = self.notify_in_transaction(db, session_id, fields)
+                if notice.get("ignored"):
+                    return notice
+            elif action == "notification_state":
+                if fields["state"] not in {"delivered", "claimed", "discarded"}:
+                    raise ValidationError("Invalid notification state")
+                db.execute(
+                    "UPDATE workflow_notifications SET state=? WHERE notification_id=? AND state!='claimed'",
+                    (fields["state"], fields["notification_id"]),
+                )
+            elif action == "intent":
+                db.execute(
+                    "INSERT INTO workflow_intents VALUES(?,?,?,?,?,?) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
+                    (
+                        fields["intent_id"],
+                        fields["kind"],
+                        session_id,
+                        fields["state"],
+                        encoded(fields.get("details", {})),
+                        at,
+                    ),
+                )
+            elif action == "cold":
+                db.execute(
+                    "UPDATE usage_observations SET details=? WHERE amount IS NULL AND json_extract(details,'$.phase')='started'",
+                    (encoded({"phase": "missing", "reason": "host-restart"}),),
+                )
+                db.execute(
+                    "UPDATE workflow_project SET state='cold',updated_at=? WHERE state NOT IN ('manual','stopped','complete')",
+                    (at,),
+                )
+                db.execute(
+                    "UPDATE workflow_sessions SET pause_reason='cold' WHERE role IN ('main','node_core','exploration') AND detached=0 AND (pause_reason IS NULL OR pause_reason IN ('wait','project','capacity'))"
+                )
+            else:
+                raise ValidationError(f"Unknown workflow action {action}")
+            self._event(db, "workflow." + action, {"session_id": session_id, **fields})
+            return self.workflow_control(db, session_id)
+
+        return self._mutate("workflow", payload, operation_id, work)
+
+    def takeover_main(self, host_id, session_id, cwd, operation_id):
+        """Make this session the project's main session and retire the previous one.
+
+        One-way: the previous main loses its association, so every later write
+        from it fails. Only a quiet project (manual, stopped or complete, with no
+        live exploration task or specialist) can change hands.
+        """
+        payload = {"host_id": host_id, "session_id": session_id, "cwd": cwd}
+
+        def work(db):
+            run = db.execute("SELECT * FROM workflow_project WHERE id=1").fetchone()
+            state = run["state"] if run else "manual"
+            if state not in {"manual", "stopped", "complete"}:
+                raise ConflictError(
+                    f"Project run state is {state}; stop the project in its current host first"
+                )
+            if db.execute(
+                "SELECT 1 FROM exploration_tasks WHERE state IN "
+                "('queued','starting','running','waiting','stopping','unverified')"
+            ).fetchone():
+                raise ConflictError("Exploration tasks are still live; stop and verify them first")
+            if db.execute(
+                "SELECT 1 FROM specialist_tasks WHERE state IN ('starting','running','unverified')"
+            ).fetchone():
+                raise ConflictError("Specialists are still live; verify them first")
+            at = now()
+            previous = run["main_session_id"] if run else None
+            retired = previous if previous and previous != session_id else None
+            if retired:
+                for association in db.execute(
+                    "SELECT * FROM associations WHERE session_id=? AND ended_at IS NULL", (retired,)
+                ).fetchall():
+                    attempt = db.execute(
+                        "SELECT * FROM attempts WHERE association_id=? AND ended_at IS NULL",
+                        (association["association_id"],),
+                    ).fetchone()
+                    if attempt:
+                        details = {"reason": "takeover", "successor_session_id": session_id}
+                        db.execute(
+                            "UPDATE attempts SET state='stopped',ended_at=?,details=? WHERE attempt_id=?",
+                            (at, encoded(details), attempt["attempt_id"]),
+                        )
+                        self._event(db, "attempt.finished", {
+                            "attempt_id": attempt["attempt_id"], "state": "stopped", "ended_at": at,
+                        })
+                        self.queue_review_in_tx(
+                            db, "attempt-finished", attempt["attempt_id"], attempt["node_id"]
+                        )
+                    db.execute(
+                        "DELETE FROM focus_queue WHERE association_id=?",
+                        (association["association_id"],),
+                    )
+                    db.execute(
+                        "UPDATE associations SET ended_at=? WHERE association_id=?",
+                        (at, association["association_id"]),
+                    )
+                    self._event(db, "session.detached", {
+                        "association_id": association["association_id"], "ended_at": at,
+                    })
+                db.execute(
+                    "UPDATE workflow_sessions SET detached=1,pause_reason='detached' WHERE session_id=?",
+                    (retired,),
+                )
+            if not db.execute(
+                "SELECT 1 FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL",
+                (host_id, session_id),
+            ).fetchone():
+                association = {
+                    "association_id": str(uuid4()), "host_id": host_id, "session_id": session_id,
+                    "started_seq": None, "ended_seq": None, "started_at": at, "ended_at": None,
+                }
+                db.execute(
+                    "INSERT INTO associations VALUES (?,?,?,?,?,?,?)", tuple(association.values())
+                )
+                self._event(db, "session.associated", association)
+            if db.execute(
+                "SELECT 1 FROM workflow_sessions WHERE session_id=?", (session_id,)
+            ).fetchone():
+                db.execute(
+                    "UPDATE workflow_sessions SET role='main',host_id=?,detached=0,pause_reason=NULL,"
+                    "cwd=COALESCE(?,cwd) WHERE session_id=?",
+                    (host_id, cwd, session_id),
+                )
+            else:
+                db.execute(
+                    "INSERT INTO workflow_sessions(session_id,host_id,role,cwd,created_at) "
+                    "VALUES(?,?,'main',?,?)",
+                    (session_id, host_id, cwd, at),
+                )
+            if run:
+                db.execute(
+                    "UPDATE workflow_project SET main_session_id=?,state='manual',updated_at=? WHERE id=1",
+                    (session_id, at),
+                )
+            else:
+                db.execute("INSERT INTO workflow_project VALUES(1,?,'manual',0,?)", (session_id, at))
+            self._event(db, "workflow.takeover", {
+                "session_id": session_id, "previous_session_id": retired, "previous_state": state,
+            })
+            return self.workflow_control(db, session_id)
+
+        return self._mutate("workflow.takeover", payload, operation_id, work)
+
+    def workflow_usage(self, db):
+        rows = db.execute(
+            "SELECT u.amount,u.completeness,u.details,COALESCE(w.role,'legacy') role FROM usage_observations u LEFT JOIN associations a USING(association_id) LEFT JOIN workflow_sessions w ON a.session_id=w.session_id"
+        )
+        result = {"actual": 0, "estimated": 0, "in_progress": 0, "missing": 0, "discussion": 0}
+        for row in rows:
+            if row["amount"] is not None:
+                result["estimated" if row["completeness"] == "estimated" else "actual"] += row[
+                    "amount"
+                ]
+                if row["role"] == "discussion":
+                    result["discussion"] += row["amount"]
+            elif json.loads(row["details"]).get("phase") == "started":
+                result["in_progress"] += 1
+            else:
+                result["missing"] += 1
+        result["coverage_incomplete"] = int(
+            db.execute("SELECT COUNT(*) FROM usage_coverage_gaps WHERE state='open'").fetchone()[0]
+        )
+        return result
