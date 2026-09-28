@@ -1,6 +1,6 @@
 {
   "name": "auto-research-opencode",
-  "version": "0.7.0-m1",
+  "version": "0.1.0",
   "description": "Autonomous research for OpenCode V2: coordinator, node sessions, specialists and a research board",
   "private": true,
   "type": "module",

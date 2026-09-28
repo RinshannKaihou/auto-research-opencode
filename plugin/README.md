@@ -1,5 +1,7 @@
 # auto-research-opencode · 自主研究插件（OpenCode V2）
 
+版本 v0.1.0。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲插件怎么工作。
+
 这是面向 OpenCode V2（`@opencode/plugin` 2.0.18）的研究插件。**它以自主推进为底层**：你给出研究目标后，插件驱动模型自己完成规划、派发、执行、综合和收尾。你可以随时插话指导，也可以暂停或停止。
 
 研究账本是仓库根目录 `src/auto_research/` 下的 Python 代码，从 DSH 版 0.6.11 复制而来，数据格式相同（schema 9），数据放在 `<项目>/.research/`。
@@ -105,9 +107,11 @@ node_modules/.bin/tsc -p tsconfig.json --noEmit    # 类型检查
 make test-python                                   # 在仓库根目录运行 Python 测试
 ```
 
-沙盒端到端测试用一个按剧本应答的模拟模型（`mock_research.py`），在真实的 OpenCode 2.0.18 里完整跑过一次：`/research auto` → 两个节点 → 主协调两次被唤醒 → 最终报告 → 完成。
+改完代码后执行 `opencode service restart`，正在用的 OpenCode 才会加载新代码：插件加载在后台服务里，只重启界面不够。
 
-专家另用一个剧本（`mock_specialist.py`）在真实的 OpenCode 里跑过：
+端到端测试在开发沙盒里进行（不在本仓库），用按剧本应答的模拟模型，在真实的 OpenCode 2.0.18 里完整跑过一次：`/research auto` → 两个节点 → 主协调两次被唤醒 → 最终报告 → 完成。
+
+专家另用一个剧本在真实的 OpenCode 里跑过：
 - 节点 X-001 叫了一位普通专家，专家调用 `shell` 被拒绝，读研究记录后交回报告；
 - 节点 X-002 用自带的 `write` 写了一份报告并发布，再交给一位盲评专家，盲评专家读到 `input-1` 的内容，调用 `research_query` 被拒绝；
 - 盲评专家的请求里没有工作目录、`AGENTS.md`、项目目标和发布编号。
