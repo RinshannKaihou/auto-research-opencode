@@ -643,7 +643,7 @@ describe("command parsing", () => {
 describe("board text", () => {
   test("historical completion reports a missing contract, not an inferred review", () => {
     const text = overviewText({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)
-    expect(text).toContain("结项契约：未记录")
+    expect(text).toContain("结项记录：未记录")
     expect(text).toContain("审阅情况未知")
   })
   test("labels the newest publication as latest, not final, and hides display items", () => {

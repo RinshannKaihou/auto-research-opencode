@@ -59,7 +59,7 @@ export function overviewText(summary: any, presentation: any): string {
     const value = presentation.value ?? {}
     lines.push("项目展示摘要" + (value.stale ? "（绑定的发布已过期，请核对新材料）" : "") + "：")
     lines.push(value.title ?? "", value.summary ?? "")
-    const shown = (side: any) => (side?.value ?? side?.value === 0 ? String(side.value) : "（冻结值不可用）")
+    const shown = (side: any) => (side?.value ?? side?.value === 0 ? String(side.value) : "（固定版本中的数值不可用）")
     for (const metric of (value.metrics ?? []).slice(0, 4)) {
       const unit = metric.unit ? ` ${metric.unit}` : ""
       const split = metric.split ? `（${metric.split}）` : ""
@@ -100,12 +100,12 @@ export function nodeDetail(node: any, dependencies: any[], attempts: any[]): str
     `问题：${node.question}`,
     `为什么现在做：${node.why_now ?? ""}`,
     `计划：${node.plan ?? ""}`,
-    node.root_reason ? `独立根理由：${node.root_reason}` : "",
+    node.root_reason ? `独立开展的原因：${node.root_reason}` : "",
     `问题版本：${node.question_ref ?? "未记录"}`,
     `固定输入：${(node.inputs ?? []).length ? node.inputs.join(", ") : "无"}`,
     `前驱：${incoming.length ? incoming.map((e) => `${e.predecessor_node_id}（${e.relation_type}）`).join(", ") : "无"}`,
     `后继：${outgoing.length ? outgoing.map((e) => `${e.successor_node_id}（${e.relation_type}）`).join(", ") : "无"}`,
-    `工作段：${work.length ? work.map((a) => `${a.attempt_id} ${a.state}${a.ended_at ? "" : "（进行中）"}`).join(", ") : "无"}`,
+    `执行批次：${work.length ? work.map((a) => `${a.attempt_id} ${a.state}${a.ended_at ? "" : "（进行中）"}`).join(", ") : "无"}`,
   ]
     .filter(Boolean)
     .join("\n")
@@ -164,7 +164,7 @@ export function publicationDetail(publication: any): string {
     ...(display.length ? display : []),
     "",
     `说明：${publication.summary ?? ""}`,
-    (publication.gaps ?? []).length ? `缺口：${publication.gaps.join("；")}` : "",
+    (publication.gaps ?? []).length ? `尚未解决的问题：${publication.gaps.join("；")}` : "",
     "",
     "Enter 打开选中的文件",
   ]
@@ -225,7 +225,7 @@ export function runtimeText(summary: any, session: any, tasks: any[] = []): stri
       `节点：${session.node_id ?? "无"}`,
       ...(session.task_id ? [`专家任务：${session.task_id}`] : []),
       `状态：${sessionActivity(session)}`,
-      `工作段收尾：${session.close_state ?? "无"}`,
+      `本次执行结束状态：${session.close_state ?? "无"}`,
     )
   }
   if (session) lines.push("", "Enter 打开这个会话")
