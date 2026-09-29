@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.service import NativeService
 from auto_research.workflow_store import migrate_schema3
 from auto_research.errors import ConflictError, ValidationError, NotFoundError
@@ -62,7 +62,7 @@ def test_schema2_upgrade_backup_roles_and_idempotent_totals(tmp_path):
         db.execute("PRAGMA user_version=2")
     upgraded = NativeStore(root)
     state = upgraded.query("host", "main")
-    assert state["schema_version"] == 9
+    assert state["schema_version"] == SCHEMA_VERSION
     assert {s["session_id"]: s["role"] for s in state["workflow"]["sessions"]} == {
         "main": "main",
         "branch": "exploration",

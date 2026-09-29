@@ -3,7 +3,7 @@
  * delivery and scientific state stay separate: an ended work segment, a
  * complete publication and a knowledge status are never merged into "done".
  */
-import { pauseReason, roleName, runState } from "../format"
+import { conclusionLines, pauseReason, roleName, runState } from "../format"
 
 export type Tab = "overview" | "process" | "knowledge" | "materials" | "runtime"
 
@@ -46,11 +46,12 @@ function displayBlock(display: any): string[] {
 export function overviewText(summary: any, presentation: any): string {
   if (!summary?.project) return "当前目录没有研究项目。用 /research init <研究目标> 新建。"
   const counts = summary.counts ?? {}
-  const latest = summary.final_publication
+  const latest = summary.latest_publication ?? (summary.conclusion ? null : summary.final_publication)
   const lines = [
     `目标：${summary.project.goal ?? "未记录"}`,
     `项目目录：${summary.project_root ?? ""}`,
     `运行状态：${runState(summary.run?.state)}（这是执行状态，不表示研究结论）`,
+    ...conclusionLines(summary.conclusion, summary.run?.state),
     `节点 ${counts.nodes ?? 0} · 发布 ${counts.publications ?? 0} · 知识 ${counts.knowledge ?? 0} · 检查点 ${counts.checkpoints ?? 0} · 待整理 ${summary.review_queue?.pending_total ?? 0}`,
     "",
   ]
@@ -208,6 +209,7 @@ export function runtimeText(summary: any, session: any, tasks: any[] = []): stri
   const run = summary?.run ?? {}
   const lines = [
     `项目运行状态：${runState(run.state)}`,
+    ...conclusionLines(summary.conclusion, run.state),
     `研究主会话：${run.main_session_id ?? "无"}`,
     "",
     `节点任务（${tasks.length}）：`,

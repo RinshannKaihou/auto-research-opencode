@@ -1,10 +1,39 @@
 # auto-research-opencode · 自主研究插件（OpenCode V2）
 
-版本 v0.1.0。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲插件怎么工作。
+版本 v0.1.1（实验版本）。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲插件怎么工作。
 
 这是面向 OpenCode V2（`@opencode/plugin` 2.0.18）的研究插件。**它以自主推进为底层**：你给出研究目标后，插件驱动模型自己完成规划、派发、执行、综合和收尾。你可以随时插话指导，也可以暂停或停止。
 
-研究账本是仓库根目录 `src/auto_research/` 下的 Python 代码，从 DSH 版 0.6.11 复制而来，数据格式相同（schema 9），数据放在 `<项目>/.research/`。
+研究账本是仓库根目录 `src/auto_research/` 下的 Python 代码，从 DSH 版 0.6.11 的 schema 9 演进到 schema 10，数据放在 `<项目>/.research/`。首次以可写存储打开项目时备份并升级 schema 9，包括研究会话的状态查询或恢复；独立只读浏览不升级。旧版不能直接写入 schema 10，回退代码不会自动降级账本。
+
+## 结项契约
+
+主协调发布 `status: "complete"` 的最终报告后调用：
+
+以下字段从 v0.1.1 起全部必填，旧调用需要更新。
+
+```json
+{
+  "summary": "完成受控实验，长期行为仍需研究",
+  "final_ref": "pub/P-014#report",
+  "outcome": "partial",
+  "gaps": ["尚无长期训练证据"],
+  "review": {
+    "status": "unreviewed",
+    "refs": [],
+    "limitations": ["最终综合尚未独立审阅"]
+  }
+}
+```
+
+- `outcome` 为 `answered`、`partial` 或 `unresolved`；后两种必须有非空 `gaps`。空列表表示未登记未解决项。
+- `review.status` 为 `unreviewed`、`partial` 或 `reviewed`；后两种必须有冻结审阅材料 `refs`，前两种必须有非空 `limitations`。三个字段均必填。它是调用者的覆盖声明，`reviewed` 不表示审阅通过。
+- `final_ref` 支持整份出版物或完整条目引用。父出版物必须 `complete`，整份出版物须非空且所有条目可解析；文件对象校验完整性。`complete` 仅表示报告交付完成，允许报告未解决问题。
+- 引用、契约、调用身份及存活任务检查与结项记录、主工作段结束、运行状态更新在同一事务完成。相同操作重试返回原收据；通知失败不撤销结项。不能用普通工作流状态更新跳过契约。
+- 历史 pending 待审项、open 问题不会一律阻止结项。完整的科学审阅和主张覆盖检查尚未包含在此契约中。
+- 状态和概览显示登记的最终引用、结果及审阅说明；后续出版物不会替换最终引用。历史 `complete` 项目无收据时显示“未记录结项契约”。重新开展研究使用 `/research auto` 创建新运行 generation。
+
+`research_memory action=checkpoint` 默认写入当前工作对象，后端拒绝不同节点和伪造来源。恢复上下文的 `checkpoint_recovery.head_revision` 用于下一次 checkpoint 的 `expected_revision`；它可能大于显示的有效 checkpoint 版本，因为误归属历史记录被保留但隔离。来源未知的历史项目 checkpoint 不参与自动恢复。
 
 ## 一句话开始
 

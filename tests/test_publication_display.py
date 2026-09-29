@@ -33,7 +33,7 @@ def test_display_publish_roundtrip_and_immutable_retry(tmp_path):
     assert page["items"][0]["display"] is None
     assert page["items"][1]["display"]["title"] == "文献调研完成"
     assert [item["item_id"] for item in page["items"][1]["items"]] == ["report"]
-    assert workbench_read.summary(store, "host", "main")["final_publication"]["display"]["primary_item_id"] == "report"
+    assert workbench_read.summary(store, "host", "main")["latest_publication"]["display"]["primary_item_id"] == "report"
     with store._read() as db:
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == before
         assert db.execute("SELECT COUNT(*) FROM publications").fetchone()[0] == 2

@@ -2,7 +2,7 @@ import json
 import sqlite3
 
 import pytest
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.service import NativeService
 
 
@@ -72,7 +72,7 @@ def test_schema6_migration_preserves_results_and_defaults(tmp_path):
     upgraded=NativeStore(store.root)
     old=upgraded.specialist_get(task['task_id'])
     assert old['result']=={'output':'legacy'} and old['context_mode']=='research'
-    assert upgraded.control_state()['schema_version']==9
+    assert upgraded.control_state()['schema_version']==SCHEMA_VERSION
     with sqlite3.connect(store.meta/'schema-5-backup.sqlite3') as db:
         assert db.execute('PRAGMA user_version').fetchone()[0]==5
         assert db.execute('PRAGMA quick_check').fetchone()[0]=='ok'

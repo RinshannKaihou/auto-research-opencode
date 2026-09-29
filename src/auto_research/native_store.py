@@ -24,10 +24,12 @@ from .schema6 import migrate_schema6
 from .schema7 import SCHEMA7_DDL, ensure_schema7_columns, migrate_schema7
 from .schema8 import ensure_schema8_columns, migrate_schema8
 from .schema9 import ensure_schema9, migrate_schema9
+from .schema10 import ensure_schema10, migrate_schema10
+from .conclusion_store import ConclusionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -65,7 +67,7 @@ def _number(value: Any, label: str) -> float:
 from .workflow_store import WorkflowStore, DDL, migrate_schema3
 
 
-class NativeStore(QueryStore, MemoryStore, WorkflowStore):
+class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
     """Transactional store used only by the native DSH plugin."""
 
     def __init__(self, root: str | Path, *, readonly: bool = False):
@@ -75,8 +77,8 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
         self.db_path = self.meta / "state.sqlite3"
         if readonly:
             with self._connection() as db:
-                if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-                    raise ValidationError(f"Read-only view requires schema {SCHEMA_VERSION}")
+                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, SCHEMA_VERSION}:
+                    raise ValidationError(f"Read-only view requires schema 9 or {SCHEMA_VERSION}")
             return
         self.meta.mkdir(parents=True, exist_ok=True)
         if self.db_path.exists():
@@ -103,6 +105,9 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
             if version == 8 and SCHEMA_VERSION >= 9:
                 migrate_schema9(self.db_path)
                 version = 9
+            if version == 9 and SCHEMA_VERSION >= 10:
+                migrate_schema10(self.db_path)
+                version = 10
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -236,7 +241,7 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
             CREATE TABLE IF NOT EXISTS counters (
                 name TEXT PRIMARY KEY, value INTEGER NOT NULL
             );
-            PRAGMA user_version=9;
+            PRAGMA user_version=10;
             """
         )
         db.executescript(DDL)
@@ -268,7 +273,8 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
         for statement in SCHEMA7_DDL.split(";"):
             if statement.strip():
                 db.execute(statement)
-        db.execute("PRAGMA user_version=9")
+        ensure_schema10(db)
+        db.execute("PRAGMA user_version=10")
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -849,70 +855,73 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
             "details": _copy(details),
         }
 
-        def work(db: sqlite3.Connection) -> dict:
-            association = self._association(db, host_id, session_id)
-            attempt = self._attempt(db, association["association_id"])
-            at = _now()
-            db.execute(
-                "UPDATE attempts SET state=?,ended_at=?,details=? WHERE attempt_id=?",
-                (state, at, _json(details), attempt["attempt_id"]),
-            )
-            queued = db.execute(
-                "SELECT * FROM focus_queue WHERE association_id=?", (association["association_id"],)
-            ).fetchone()
-            value = {"attempt_id": attempt["attempt_id"], "state": state, "ended_at": at}
-            self.notify_in_transaction(
-                db,
-                session_id,
-                {
-                    "key": attempt["attempt_id"],
-                    "kind": state,
-                    "summary": details.get("reason", ""),
-                    "gaps": [],
-                },
-            )
-            if attempt["mode"] == "auto":
-                db.execute(
-                    "UPDATE workflow_sessions SET pause_reason=? WHERE session_id=?",
-                    ("finished" if state == "finished" else "stop", session_id),
-                )
-                if state == "finished":
-                    db.execute(
-                        "UPDATE exploration_tasks SET state='finished',updated_at=? WHERE session_id=?",
-                        (at, session_id),
-                    )
-            self._event(db, "attempt.finished", value)
-            self.queue_review_in_tx(db, "attempt-finished", attempt["attempt_id"], attempt["node_id"])
-            if queued:
-                next_id = self._next(db, "attempt", "A")
-                db.execute(
-                    "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        next_id,
-                        association["association_id"],
-                        queued["node_id"],
-                        queued["role"],
-                        "open",
-                        queued["mode"],
-                        at,
-                        None,
-                        "{}",
-                    ),
-                )
-                db.execute(
-                    "DELETE FROM focus_queue WHERE association_id=?",
-                    (association["association_id"],),
-                )
-                if queued["node_id"] is not None:
-                    db.execute(
-                        "UPDATE nodes SET status='open' WHERE node_id=? AND status='proposed'",
-                        (queued["node_id"],),
-                    )
-                value["next_attempt_id"] = next_id
-                value["next_node_id"] = queued["node_id"]
-            return value
+        return self._mutate(
+            "finish", payload, request_id,
+            lambda db: self._finish_in_tx(db, host_id, session_id, state, details),
+        )
 
-        return self._mutate("finish", payload, request_id, work)
+    def _finish_in_tx(self, db, host_id, session_id, state, details):
+        association = self._association(db, host_id, session_id)
+        attempt = self._attempt(db, association["association_id"])
+        at = _now()
+        db.execute(
+            "UPDATE attempts SET state=?,ended_at=?,details=? WHERE attempt_id=?",
+            (state, at, _json(details), attempt["attempt_id"]),
+        )
+        queued = db.execute(
+            "SELECT * FROM focus_queue WHERE association_id=?", (association["association_id"],)
+        ).fetchone()
+        value = {"attempt_id": attempt["attempt_id"], "state": state, "ended_at": at}
+        self.notify_in_transaction(
+            db,
+            session_id,
+            {
+                "key": attempt["attempt_id"],
+                "kind": state,
+                "summary": details.get("reason", ""),
+                "gaps": [],
+            },
+        )
+        if attempt["mode"] == "auto":
+            db.execute(
+                "UPDATE workflow_sessions SET pause_reason=? WHERE session_id=?",
+                ("finished" if state == "finished" else "stop", session_id),
+            )
+            if state == "finished":
+                db.execute(
+                    "UPDATE exploration_tasks SET state='finished',updated_at=? WHERE session_id=?",
+                    (at, session_id),
+                )
+        self._event(db, "attempt.finished", value)
+        self.queue_review_in_tx(db, "attempt-finished", attempt["attempt_id"], attempt["node_id"])
+        if queued:
+            next_id = self._next(db, "attempt", "A")
+            db.execute(
+                "INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    next_id,
+                    association["association_id"],
+                    queued["node_id"],
+                    queued["role"],
+                    "open",
+                    queued["mode"],
+                    at,
+                    None,
+                    "{}",
+                ),
+            )
+            db.execute(
+                "DELETE FROM focus_queue WHERE association_id=?",
+                (association["association_id"],),
+            )
+            if queued["node_id"] is not None:
+                db.execute(
+                    "UPDATE nodes SET status='open' WHERE node_id=? AND status='proposed'",
+                    (queued["node_id"],),
+                )
+            value["next_attempt_id"] = next_id
+            value["next_node_id"] = queued["node_id"]
+        return value
 
     def publish_metadata(
         self,
@@ -1673,7 +1682,8 @@ class NativeStore(QueryStore, MemoryStore, WorkflowStore):
                     (association["association_id"],),
                 ).fetchone()
             result = {
-                "schema_version": SCHEMA_VERSION,
+                "schema_version": db.execute("PRAGMA user_version").fetchone()[0],
+                "conclusions": self.conclusion_history(db),
                 "project": project,
                 "association": dict(association) if association else None,
                 "associations": [

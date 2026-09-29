@@ -493,7 +493,7 @@ class QueryStore:
                 )
             ]
             return {
-                "schema_version": 9,
+                "schema_version": db.execute("PRAGMA user_version").fetchone()[0],
                 "project": project,
                 "association": dict(association) if association else None,
                 "attempt": {**dict(attempt), "details": json.loads(attempt["details"])}

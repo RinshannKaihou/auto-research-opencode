@@ -21,7 +21,7 @@ import tempfile
 
 from .artifacts import ArtifactStore, _open_source
 from .migration import preflight, recovery_preview
-from .native_store import NativeStore
+from .native_store import NativeStore, SCHEMA_VERSION
 from .memory_store import KINDS, STATUSES
 from .errors import ValidationError
 
@@ -694,7 +694,7 @@ class NativeService:
         method = request.get("method")
         if method == "capabilities":
             value = {
-                "schema_version": 9,
+                "schema_version": SCHEMA_VERSION,
                 "execution_owner": "dsh",
                 "model_loop": "native-goals",
                 "manual_research": True,
@@ -1075,6 +1075,8 @@ class NativeService:
                     host_id, session_id, int(request.get("max_chars", 12000)),
                     profile=request.get("profile"),
                 )
+            elif method == "conclude":
+                value = store.conclude(host_id, session_id, request.get("fields", {}), self._operation(request))
             elif method == "context_record":
                 value = store.record_context_request(
                     {**request.get("fields", {}), "host_id": host_id, "session_id": session_id,},
@@ -1098,7 +1100,7 @@ class NativeService:
                     value = store.revise_knowledge(fields, self._operation(request),
                         asserted_at=self._asserted_at(store, request, host_id, session_id))
                 elif action == "checkpoint":
-                    value = store.checkpoint(fields, self._operation(request))
+                    value = store.checkpoint(fields, self._operation(request), execution_identity=(host_id, session_id))
                 elif action == "dispose":
                     value = store.dispose_impact(fields, self._operation(request))
                 elif action == "narrow_scope":

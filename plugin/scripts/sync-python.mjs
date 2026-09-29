@@ -10,6 +10,7 @@ mkdirSync(destination, { recursive: true });
 for (const file of [
   '__init__.py',
   'artifacts.py',
+  'conclusion_store.py',
   'epistemic.py',
   'frozen_refs.py',
   'field_checks.py',
@@ -25,6 +26,7 @@ for (const file of [
   'schema7.py',
   'schema8.py',
   'schema9.py',
+  'schema10.py',
   'workflow_store.py',
   'workbench_read.py',
   'publication_display.py',

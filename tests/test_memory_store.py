@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from auto_research.errors import ConflictError, ValidationError
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.service import NativeService
 
 
@@ -303,7 +303,7 @@ def test_schema3_upgrade_is_backed_up_and_does_not_arm_execution(tmp_path):
         db.execute("UPDATE nodes SET question_ref=NULL")
         db.execute("PRAGMA user_version=3")
     migrated = NativeStore(tmp_path)
-    assert migrated.control_state("host", "main")["schema_version"] == 9
+    assert migrated.control_state("host", "main")["schema_version"] == SCHEMA_VERSION
     with sqlite3.connect(tmp_path / ".research" / "schema-3-backup.sqlite3") as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 3
     question_ref = migrated.reference_query(node["node_id"])["value"]["question_ref"]

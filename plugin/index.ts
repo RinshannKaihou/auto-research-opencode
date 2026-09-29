@@ -10,7 +10,7 @@ import { existsSync } from "node:fs"
 import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
 import { Research, type CommandResult } from "./src/research"
-import { Engine, type ModelRef, type SessionHost } from "./src/engine"
+import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
 import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { parameters, validateArgs } from "./src/schema"
@@ -101,7 +101,7 @@ export default Plugin.define({
         case "finish":
           return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) })
         case "conclude":
-          return engine.conclude(sessionID, String(args.summary), String(args.final_ref))
+          return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID)
         case "delegate":
           return specialists.delegate(sessionID, args as unknown as SpecialistTask, call.signal, operationID)
         case "delegate_batch":

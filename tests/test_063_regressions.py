@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from auto_research.errors import ConflictError, ValidationError
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.schema5 import ensure_schema5_columns, migrate_schema5
 from auto_research.service import NativeService
 
@@ -94,7 +94,7 @@ def test_schema5_upgrade_creates_consistent_schema4_backup_and_marks_legacy_node
         db.execute("PRAGMA user_version=4")
 
     upgraded = NativeStore(root)
-    assert upgraded.query()["schema_version"] == 9
+    assert upgraded.query()["schema_version"] == SCHEMA_VERSION
     with sqlite3.connect(database) as db:
         migrated = db.execute(
             "SELECT origin_kind,root_reason FROM nodes WHERE node_id=?", (node["node_id"],)

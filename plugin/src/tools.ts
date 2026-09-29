@@ -95,7 +95,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "memory_write",
     writes: true,
     description:
-      'Field checks compare only declared fields with a frozen file and do not prove the conclusion. A consistent result does not prove the claim. On revise use changes.checks; omitting checks inherits the declarations. Record or revise sourced knowledge, checkpoint the current node, dispose of an impact, or narrow a scope. Revise never inherits execution_refs: omitting it stores []; supply the references again even when the result sources are unchanged. For record, omitted node_id defaults to the current work segment node. Project-wide placement requires visibility="project" explicitly; without a current node supply node_id or project visibility. Placement is retrieval context, not access isolation; keep scientific applicability in conditions/scope. Claims, observations, and lessons require evidence_refs. S-xxx#path identifies an entry inside a frozen snapshot. Bare S-xxx evidence on claims or observations produces an advisory candidate hint. Retracting requires change_kind="retract" together with affected_scope_mode="versions" naming the version withdrawn. Every revise must declare affected_scope_mode: "versions" with the exact versions it invalidates, "none" if it invalidates nothing, or "unknown" if you cannot tell. Use relations[] with grounded_in for what a statement rests on (it becomes the basis and propagates), and motivated_by for what merely prompted the work (it does not propagate); for an open question, a prior finding is grounded_in when the question presupposes it and motivated_by when it only explains why this node was chosen now.',
+      'Field checks compare only declared fields with a frozen file and do not prove the conclusion. A consistent result does not prove the claim. On revise use changes.checks; omitting checks inherits the declarations. Record or revise sourced knowledge, checkpoint the current work owner, dispose of an impact, or narrow a scope. Checkpoint node_id defaults to the current node (or project for a main session without node work); another owner is rejected. Use checkpoint_recovery.head_revision for checkpoint expected_revision. Revise never inherits execution_refs: omitting it stores []; supply the references again even when the result sources are unchanged. For record, omitted node_id defaults to the current work segment node. Project-wide placement requires visibility="project" explicitly; without a current node supply node_id or project visibility. Placement is retrieval context, not access isolation; keep scientific applicability in conditions/scope. Claims, observations, and lessons require evidence_refs. S-xxx#path identifies an entry inside a frozen snapshot. Bare S-xxx evidence on claims or observations produces an advisory candidate hint. Retracting requires change_kind="retract" together with affected_scope_mode="versions" naming the version withdrawn. Every revise must declare affected_scope_mode: "versions" with the exact versions it invalidates, "none" if it invalidates nothing, or "unknown" if you cannot tell. Use relations[] with grounded_in for what a statement rests on (it becomes the basis and propagates), and motivated_by for what merely prompted the work (it does not propagate); for an open question, a prior finding is grounded_in when the question presupposes it and motivated_by when it only explains why this node was chosen now.',
     parameters: {
       action: { type: "string", required: true, enum: ["record", "revise", "checkpoint", "dispose", "narrow_scope"] },
       kind: { type: "string", enum: ["observation", "hypothesis", "lesson", "decision", "open_question", "claim"] },
@@ -329,10 +329,20 @@ TOOLS.push(
     engine: "conclude",
     writes: true,
     description:
-      "Declare the research project complete after publishing the final report. Autonomous work stops. Refused while node tasks are still running.",
+      "End research execution with an explicit outcome, gaps, and self-declared review coverage after publishing a complete final report. Complete means delivery, not scientific verification. Partial/unresolved outcomes need gaps. Unreviewed/partial review needs limitations; partial/reviewed review needs frozen material refs. Refused while work is live. Pending historical reviews and open questions do not by themselves block conclusion.",
     parameters: {
       summary: { type: "string", required: true },
       final_ref: { type: "string", required: true, description: "Reference of the final report publication, for example pub/P-004 or pub/P-004#report." },
+      outcome: { type: "string", required: true, enum: ["answered", "partial", "unresolved"] },
+      gaps: { type: "array", required: true, items: { type: "string" } },
+      review: {
+        type: "object", required: true, additionalProperties: false,
+        properties: {
+          status: { type: "string", required: true, enum: ["unreviewed", "partial", "reviewed"] },
+          refs: { type: "array", required: true, items: { type: "string" } },
+          limitations: { type: "array", required: true, items: { type: "string" } },
+        },
+      },
     },
     fields: same,
   },
