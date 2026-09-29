@@ -7,7 +7,7 @@ const RUN_STATES: Record<string, string> = {
   stopping: "停止中",
   stopped: "已停止",
   complete: "执行已结束",
-  cold: "待冷恢复",
+  cold: "重启后待恢复",
   unverified: "停止待核实",
 }
 
@@ -48,7 +48,7 @@ export function roleName(role: string | undefined): string {
 }
 
 export function conclusionLines(conclusion: any, state?: string): string[] {
-  if (!conclusion) return state === "complete" ? ["结项契约：未记录；审阅情况未知。"] : []
+  if (!conclusion) return state === "complete" ? ["结项记录：未记录；审阅情况未知。"] : []
   const outcomes: Record<string, string> = { answered: "已回答", partial: "部分回答", unresolved: "未解决" }
   const reviews: Record<string, string> = { unreviewed: "未审阅", partial: "部分审阅", reviewed: "已审阅" }
   return [
@@ -71,9 +71,9 @@ export function associatedStatus(state: any): string {
   const attempt = state.attempt
   const work = attempt
     ? attempt.node_id
-      ? `正在节点 ${attempt.node_id} 上工作（工作段 ${attempt.attempt_id}）`
-      : `规划工作段 ${attempt.attempt_id}（未挂节点）`
-    : "当前没有打开的工作段"
+      ? `正在节点 ${attempt.node_id} 上工作（执行批次 ${attempt.attempt_id}）`
+      : `规划执行批次 ${attempt.attempt_id}（未关联节点）`
+    : "当前没有正在进行的执行批次"
   const pending = state.review_queue?.pending_total
   return [
     `目标：${state.project?.goal ?? "未记录"}`,

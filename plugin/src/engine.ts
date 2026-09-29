@@ -412,7 +412,7 @@ export class Engine {
   finish(sessionID: string, finish: { state: string; summary: string }): unknown {
     if (this.research.roleOf(sessionID) !== "node_core") throw new Error("只有节点执行会话可以调用 research_finish")
     this.finishing.set(sessionID, finish)
-    return { message: "本轮结束后结束节点工作段，并把总结交给主协调。", state: finish.state }
+    return { message: "本轮结束后，节点本次执行结束，总结会交给主协调。", state: finish.state }
   }
 
   conclude(sessionID: string, fields: ConclusionInput, operationID: string): Promise<unknown> {
