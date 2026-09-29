@@ -6,7 +6,7 @@ const RUN_STATES: Record<string, string> = {
   paused: "已暂停",
   stopping: "停止中",
   stopped: "已停止",
-  complete: "已完成",
+  complete: "执行已结束",
   cold: "待冷恢复",
   unverified: "停止待核实",
 }
@@ -47,6 +47,20 @@ export function roleName(role: string | undefined): string {
   return role ? ROLES[role] ?? role : "未登记"
 }
 
+export function conclusionLines(conclusion: any, state?: string): string[] {
+  if (!conclusion) return state === "complete" ? ["结项契约：未记录；审阅情况未知。"] : []
+  const outcomes: Record<string, string> = { answered: "已回答", partial: "部分回答", unresolved: "未解决" }
+  const reviews: Record<string, string> = { unreviewed: "未审阅", partial: "部分审阅", reviewed: "已审阅" }
+  return [
+    `结项结果：${outcomes[conclusion.outcome] ?? conclusion.outcome}`,
+    `最终报告：${conclusion.final_ref}`,
+    `审阅声明：${reviews[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
+    ...(conclusion.gaps ?? []).map((gap: string) => `未解决项：${gap}`),
+    ...(conclusion.review.limitations ?? []).map((gap: string) => `审阅限制：${gap}`),
+    ...(conclusion.review.refs ?? []).map((ref: string) => `审阅材料：${ref}`),
+  ]
+}
+
 function countsLine(counts: Record<string, number> | undefined): string {
   if (!counts) return ""
   return `节点 ${counts.nodes ?? 0} · 发布 ${counts.publications ?? 0} · 知识 ${counts.knowledge ?? 0} · 检查点 ${counts.checkpoints ?? 0}`
@@ -66,6 +80,7 @@ export function associatedStatus(state: any): string {
     `项目：${state.project_root ?? ""}`,
     `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
     work,
+    ...conclusionLines(state.workflow?.conclusion, state.workflow?.run?.state),
     countsLine(state.counts),
     pending ? `待整理 ${pending} 项` : "",
   ]
@@ -83,6 +98,7 @@ export function unassociatedStatus(root: string | null, summary: any, inSession 
     `${who}。`,
     `目录 ${root} 里有一个研究项目：${summary.project.goal ?? ""}`,
     `运行状态：${runState(summary.run?.state)} · ${countsLine(summary.counts)}`,
+    ...conclusionLines(summary.conclusion, summary.run?.state),
     "用 /research auto 继续自主研究，用 /research takeover 接管它，或 /research board 只读浏览。",
   ].join("\n")
 }

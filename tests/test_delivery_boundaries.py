@@ -245,7 +245,7 @@ def test_service_routes_memory_pages_guidance_and_chunks(tmp_path):
         "memory_write",
         "memory-checkpoint",
         action="checkpoint",
-        fields={"node_id": node["node_id"], "state": {"next": "test"}},
+        fields={"state": {"next": "test"}},
     )
     assert call(service, "query", "query-ref", ref=revised["ref"])["kind"] == "knowledge"
     assert call(service, "query", "query-search", query="误报")["items"]

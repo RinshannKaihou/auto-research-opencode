@@ -1,6 +1,6 @@
 {
   "name": "auto-research-opencode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autonomous research for OpenCode V2: coordinator, node sessions, specialists and a research board",
   "private": true,
   "type": "module",
@@ -13,6 +13,7 @@
   },
   "files": ["index.ts", "tui.tsx", "rpc.ts", "src", "python/**/*.py", "README.md"],
   "scripts": {
+    "prepack": "node scripts/sync-python.mjs",
     "sync:python": "node scripts/sync-python.mjs",
     "typecheck": "tsc --noEmit",
     "test": "bun test"

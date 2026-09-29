@@ -106,7 +106,7 @@ OPENCODE_AUTO_ROLES = {
         "arrive, synthesize them: record project-level knowledge with evidence, revise or retract "
         "earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is "
         "answered, or further work cannot change the conclusion, publish a final report with "
-        "research_publish and call research_conclude with its reference. Messages starting with "
+        "research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with "
         "【Research 自动推进】 come from the research engine; other user messages are guidance from "
         "the human lead: follow them and keep going."
     ),
@@ -1031,7 +1031,7 @@ class MemoryStore:
             value["result"] = json.loads(value["result"])
             return value
 
-    def checkpoint(self, fields: dict, request_id: str) -> dict:
+    def checkpoint(self, fields: dict, request_id: str, *, execution_identity=None) -> dict:
         node_id = fields.get("node_id")
         payload = {
             "node_id": node_id,
@@ -1040,7 +1040,39 @@ class MemoryStore:
             "source_identity": _json_value(fields.get("source_identity"), "source_identity", {}),
         }
 
+        if "visibility" in fields:
+            payload["visibility"] = fields["visibility"]
+
         def work(db: sqlite3.Connection) -> dict:
+            effective = dict(payload)
+            if execution_identity is not None:
+                host_id, session_id = execution_identity
+                identity = {'host_id': host_id, 'session_id': session_id}
+                if payload['source_identity'] not in ({}, identity):
+                    raise ValidationError('checkpoint source_identity must match the calling session')
+                association = self._association(db, host_id, session_id)
+                session = db.execute(
+                    'SELECT * FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
+                    execution_identity,
+                ).fetchone()
+                if not session or session['role'] not in {'main', 'node_core', 'exploration'}:
+                    raise ValidationError('checkpoint requires a main or node session')
+                attempt = db.execute('SELECT node_id FROM attempts WHERE association_id=? AND ended_at IS NULL',
+                                     (association['association_id'],)).fetchone()
+                owner = attempt['node_id'] if attempt and attempt['node_id'] else session['node_id']
+                if session['role'] != 'main' and not owner:
+                    raise ValidationError('Node checkpoint has no associated node')
+                if session['node_id'] and owner != session['node_id']:
+                    raise ValidationError('checkpoint attempt and session node disagree')
+                if 'node_id' in fields and fields['node_id'] != owner:
+                    raise ValidationError('checkpoint node_id must match the current work owner')
+                if fields.get('visibility') == 'project' and owner is not None:
+                    raise ValidationError('A node cannot write a project checkpoint')
+                effective['node_id'] = owner
+                effective['source_identity'] = {**identity, 'checkpoint_owner': {'version': 1, 'node_id': owner}}
+            elif 'node_id' not in fields:
+                raise ValidationError('Offline checkpoints require an explicit node_id (null for project)')
+            node_id = effective['node_id']
             if (
                 node_id
                 and not db.execute("SELECT 1 FROM nodes WHERE node_id=?", (node_id,)).fetchone()
@@ -1069,7 +1101,7 @@ class MemoryStore:
                     node_id,
                     revision,
                     _encoded(payload["state"]),
-                    _encoded(payload["source_identity"]),
+                    _encoded(effective["source_identity"]),
                     at,
                 ),
             )
@@ -1078,7 +1110,7 @@ class MemoryStore:
                 "node_id": node_id,
                 "revision": revision,
                 "state": payload["state"],
-                "source_identity": payload["source_identity"],
+                "source_identity": effective["source_identity"],
                 "created_at": at,
             }
             self._event(
@@ -1089,6 +1121,42 @@ class MemoryStore:
             return value
 
         return self._mutate("memory.checkpoint", payload, request_id, work)
+
+    def checkpoint_view(self, db, node_id):
+        """Quarantine misattributed/ambiguous legacy globals without rewriting them."""
+        rows = list(db.execute('SELECT * FROM node_checkpoints WHERE node_id IS ? ORDER BY revision DESC', (node_id,)))
+        info = {'node_id': node_id, 'head_revision': rows[0]['revision'] if rows else 0,
+                'excluded_count': 0, 'excluded': []}
+        selected = None
+        for row in rows:
+            reason = None
+            if node_id is None:
+                identity = json.loads(row['source_identity'])
+                owner = identity.get('checkpoint_owner', {})
+                if owner.get('version') == 1 and 'node_id' in owner:
+                    reason = 'node_origin' if owner['node_id'] is not None else None
+                else:
+                    attempts = list(db.execute(
+                        'SELECT t.node_id FROM attempts t JOIN associations a USING(association_id) '
+                        'WHERE a.host_id=? AND a.session_id=? AND t.started_at<=? '
+                        'AND (t.ended_at IS NULL OR t.ended_at>=?)',
+                        (identity.get('host_id'), identity.get('session_id'), row['created_at'], row['created_at']),
+                    ))
+                    session = db.execute('SELECT * FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                                         (identity.get('host_id'), identity.get('session_id'))).fetchone()
+                    if any(item['node_id'] is not None for item in attempts):
+                        reason = 'node_origin'
+                    elif len(attempts) == 1 and session and session['role'] == 'main':
+                        reason = None
+                    else:
+                        reason = 'ownership_unknown'
+            if reason:
+                info['excluded_count'] += 1
+                if len(info['excluded']) < 8:
+                    info['excluded'].append({'checkpoint_id': row['checkpoint_id'], 'reason': reason})
+            elif selected is None:
+                selected = row
+        return selected, info
 
     def review_todo_next(self, node_id: str | None = None) -> dict | None:
         with self._read() as db:
@@ -1248,10 +1316,7 @@ class MemoryStore:
                 if node_id
                 else None
             )
-            checkpoint = db.execute(
-                "SELECT * FROM node_checkpoints WHERE node_id IS ? ORDER BY revision DESC LIMIT 1",
-                (node_id,),
-            ).fetchone()
+            checkpoint, checkpoint_info = self.checkpoint_view(db, node_id)
             review_rows = list(
                 db.execute(
                     "SELECT rowid AS cursor,* FROM review_todos WHERE state='pending' "
@@ -1526,6 +1591,12 @@ class MemoryStore:
                          if isinstance(knowledge, dict) else without_checks(knowledge))
             blocks = [
                 ("project", {"goal": project["goal"], "control": project["control"]}),
+                ("conclusion", self.conclusion_view(db) or (
+                    {"contract_status": "not_recorded"} if db.execute(
+                        "SELECT 1 FROM workflow_project WHERE state='complete'"
+                    ).fetchone() else None
+                )),
+                ("checkpoint_recovery", checkpoint_info),
                 ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.") if profile == "opencode-auto" else {
                     "main": "Coordinate inventory, planning, dispatch, synthesis and continuation. Propose then dispatch node work; full coding and experiments belong to node_core. Do not use research_finish. In manual mode prepare the plan; /research auto enables node execution. If the user requests plan confirmation, submit the complete plan and wait; clarification answers alone do not approve it. Record acceptance criteria in plans/checkpoints and report evidence, gaps and stopping reasons. A successor must declare its actual predecessors and fixed inputs; a handoff failure does not make it a root. Already authorized execution needs no extra confirmation.",
                     "node_core": "Own this node's planning, coding, experiments and analysis. Delegate bounded read-only specialists, publish node findings and use research_finish to end the work segment. Put explicit evidence references, scope and known applicability limits into structured knowledge fields; do not invent missing conditions.",

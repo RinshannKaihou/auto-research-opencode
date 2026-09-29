@@ -190,6 +190,50 @@ describe("sessions outside a project", () => {
 })
 
 describe("autonomous research", () => {
+  test("conclusion rejects missing contracts and bad final refs without ending work", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "Find X" })
+    const pub = await host.call("research_publish", "ses_main", {
+      status: "complete", summary: "final", items: [{ item_id: "report", kind: "text", content: { text: "unknown" } }],
+    })
+    const base = { summary: "done", final_ref: `pub/${pub.publication_id}#report` }
+    await expect(host.call("research_conclude", "ses_main", base)).rejects.toThrow("outcome is required")
+    const contract = { ...base, outcome: "unresolved", gaps: ["No decisive evidence"],
+      review: { status: "unreviewed", refs: [], limitations: ["No review yet"] } }
+    await expect(host.call("research_conclude", "ses_main", { ...contract, final_ref: `pub/${pub.publication_id}#missing` })).rejects.toThrow("item_missing")
+    expect((await host.summary()).run.state).toBe("running")
+    expect((await host.summary()).conclusion).toBeNull()
+    const partial = await host.call("research_publish", "ses_main", {
+      status: "partial", summary: "draft", items: [{ item_id: "report", kind: "text", content: { text: "draft" } }],
+    })
+    await expect(host.call("research_conclude", "ses_main", { ...contract, final_ref: `pub/${partial.publication_id}#report` })).rejects.toThrow("must be complete")
+    await host.call("research_conclude", "ses_main", contract)
+    const summary = await host.summary()
+    expect(summary.run.state).toBe("complete")
+    expect(summary.final_publication.publication_id).toBe(pub.publication_id)
+    expect(summary.latest_publication.publication_id).toBe(partial.publication_id)
+    expect(overviewText(summary, null)).toContain("结项结果：未解决")
+    expect(overviewText(summary, null)).toContain("不表示结论通过")
+  })
+
+  test("notification failure preserves the committed conclusion across restart", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "Find X" })
+    const pub = await host.call("research_publish", "ses_main", {
+      status: "complete", summary: "final", items: [{ item_id: "report", kind: "text", content: { text: "unknown" } }],
+    })
+    host.ctx.session.synthetic = async () => { throw new Error("notification unavailable") }
+    const result = await host.call("research_conclude", "ses_main", {
+      summary: "ended", final_ref: `pub/${pub.publication_id}#report`, outcome: "partial", gaps: ["Remaining work"],
+      review: { status: "unreviewed", refs: [], limitations: ["Not reviewed"] },
+    })
+    expect(result.notification_warning).toContain("结项已保存")
+    const restarted = await load()
+    expect((await restarted.summary()).conclusion.conclusion_id).toBe(result.conclusion_id)
+    expect((await restarted.summary()).run.state).toBe("complete")
+    expect(restarted.said("ses_main").some((item) => item.resume)).toBe(false)
+  })
+
   test("runs goal → nodes → node sessions → synthesis → conclusion without human messages", async () => {
     const host = await load()
     const started = await host.command("auto", "ses_main", { goal: "Find X" })
@@ -223,6 +267,8 @@ describe("autonomous research", () => {
     await host.call("research_memory", "ses_node_1", {
       action: "record", kind: "observation", statement: "X holds under A", evidence_refs: [`pub/${pub.publication_id}#report`],
     })
+    const checkpoint = await host.call("research_memory", "ses_node_1", { action: "checkpoint", state: { next: "finish" } })
+    expect(checkpoint.node_id).toBe("X-001")
     await host.call("research_finish", "ses_node_1", { state: "finished", summary: "X holds under A" })
     host.turn.end("ses_node_1")
     await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-001 已完成")), "coordinator wake-up")
@@ -248,7 +294,7 @@ describe("autonomous research", () => {
     const final = await host.call("research_publish", "ses_main", {
       status: "complete", summary: "final report", items: [{ item_id: "final", kind: "text", content: { text: "X holds under A; Q2 answered" } }],
     })
-    await host.call("research_conclude", "ses_main", { summary: "done", final_ref: `pub/${final.publication_id}#final` })
+    await host.call("research_conclude", "ses_main", { summary: "done", final_ref: `pub/${final.publication_id}#final`, outcome: "answered", gaps: [], review: { status: "unreviewed", refs: [], limitations: ["Scripted test, no scientific review"] } })
     const afterConclude = host.said("ses_main").length
     host.turn.end("ses_main")
     await Bun.sleep(100)
@@ -595,6 +641,11 @@ describe("command parsing", () => {
 })
 
 describe("board text", () => {
+  test("historical completion reports a missing contract, not an inferred review", () => {
+    const text = overviewText({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)
+    expect(text).toContain("结项契约：未记录")
+    expect(text).toContain("审阅情况未知")
+  })
   test("labels the newest publication as latest, not final, and hides display items", () => {
     const text = overviewText(
       {

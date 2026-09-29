@@ -115,7 +115,7 @@ def test_support_refs_accepts_json_text_and_rejects_malformed():
 def test_fresh_project_is_schema7_with_every_epistemic_table(tmp_path):
     instance = store(tmp_path)
     with instance._read() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 9
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         present = {
             row[0]
             for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -152,7 +152,7 @@ def test_schema6_migration_backs_up_backfills_and_is_idempotent(tmp_path):
         assert db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
 
     with upgraded._read() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
     assert edges(upgraded) == expected, "backfill reconstructs edges from the revisions"
 

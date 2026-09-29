@@ -3,7 +3,7 @@ import json
 import pytest
 
 from auto_research.maintenance_cli import execute, main, parser, validate_project
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 
 
 def test_default_cli_does_not_expose_legacy_runtime_commands():
@@ -18,11 +18,11 @@ def test_validate_and_export_schema_five_project(tmp_path):
 
     report = validate_project(root)
     assert report["ok"] is True
-    assert report["schema_version"] == 9
+    assert report["schema_version"] == SCHEMA_VERSION
 
     output = tmp_path / "state.json"
     args = parser().parse_args(["-p", str(root), "export", "--output", str(output)])
-    assert execute(args) == {"output": str(output), "schema_version": 9}
+    assert execute(args) == {"output": str(output), "schema_version": SCHEMA_VERSION}
     assert json.loads(output.read_text())["project"]["goal"] == "offline export"
 
 

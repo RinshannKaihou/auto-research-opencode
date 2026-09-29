@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from auto_research.errors import ConflictError, NotFoundError, ValidationError
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.service import NativeService, ProjectRegistry
 
 
@@ -389,8 +389,8 @@ def test_schema2_compatibility_columns_and_validation(tmp_path):
     wrong = tmp_path / "wrong"
     (wrong / ".research").mkdir(parents=True)
     with __import__("sqlite3").connect(wrong / ".research" / "state.sqlite3") as db:
-        db.execute("PRAGMA user_version=10")
-    with pytest.raises(ValidationError, match="Schema 10"):
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
+    with pytest.raises(ValidationError, match=f"Schema {SCHEMA_VERSION + 1}"):
         NativeStore(wrong)
     with pytest.raises(ValidationError):
         NativeStore(tmp_path / "text").initialize("", "text")
@@ -400,7 +400,7 @@ def test_native_service_control_projection_and_registry_conflicts(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
     service = NativeService(tmp_path / "registry.sqlite3")
-    assert request(service, "capabilities", operation="capabilities")["schema_version"] == 9
+    assert request(service, "capabilities", operation="capabilities")["schema_version"] == SCHEMA_VERSION
     state = request(service, "open", root=str(root), goal="Goal", operation="open")
     reopened = request(service, "open", root=str(root), operation="reopen")
     assert reopened["project"] == state["project"]

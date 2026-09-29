@@ -204,6 +204,7 @@ class WorkflowStore:
         ).fetchone()
         result.update(
             run=dict(row) if row else None,
+            conclusion=self.conclusion_view(db),
             session=dict(current) if current else None,
             cursors=next_cursors,
         )
@@ -258,6 +259,7 @@ class WorkflowStore:
             notifications.append(value)
         return {
             "run": dict(project) if project else None,
+            "conclusion": self.conclusion_view(db),
             "sessions": sessions,
             "tasks": tasks,
             "intents": [
@@ -319,6 +321,12 @@ class WorkflowStore:
                     )
             elif action == "run":
                 state = fields["state"]
+                if state == "complete":
+                    raise ValidationError("Use conclude with an explicit conclusion contract to complete a run")
+                if state == "running" and not fields.get("new_generation") and (
+                    view["run"]["state"] == "complete" or self.conclusion_view(db)
+                ):
+                    raise ValidationError("Restarting a completed run requires new_generation")
                 if state not in {
                     "manual",
                     "running",

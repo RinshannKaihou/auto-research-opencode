@@ -20,7 +20,7 @@ from typing import Iterator
 from uuid import uuid4
 
 from .artifacts import _open_source
-from .native_store import NativeStore, _json as _dump_json
+from .native_store import NativeStore, SCHEMA_VERSION, _json as _dump_json
 
 
 def now() -> str:
@@ -373,11 +373,11 @@ def migrate_native_copy(source: Path, destination: Path) -> dict:
             db.execute(
                 "INSERT OR IGNORE INTO workflow_project VALUES (1,NULL,'cold',0,?)", (now(),)
             )
-            db.execute("UPDATE workflow_project SET state='cold'")
+            db.execute("UPDATE workflow_project SET state='cold' WHERE state<>'complete'")
         state = store.query()
         value = {
             "source_root": str(source),
-            "schema_version": 9,
+            "schema_version": SCHEMA_VERSION,
             "known_usage": state["usage"]["known"],
             "attempt_count": len(state["attempts"]),
             "files": project_file_manifest(temporary, []),
@@ -391,14 +391,14 @@ def migrate_native_copy(source: Path, destination: Path) -> dict:
 
 
 def migrate_copy(source: str | Path, destination: str | Path) -> dict:
-    """Copy a legacy or native project into schema 9 without mutating source."""
+    """Copy a legacy or native project into the current schema without mutating source."""
     source = Path(source).expanduser().resolve(strict=True)
     destination = Path(destination).expanduser().resolve()
     if destination.is_relative_to(source):
         raise ValueError("Migration destination must be outside the source project")
     with readonly_database(source) as original:
         version = original.execute("PRAGMA user_version").fetchone()[0]
-    if version in {2, 3, 4, 5, 6, 7, 8, 9}:
+    if version in range(2, SCHEMA_VERSION + 1):
         return migrate_native_copy(source, destination)
     marker = destination / ".research" / "migration-schema1-to-2.json"
     if marker.is_file():
@@ -601,7 +601,7 @@ def migrate_copy(source: str | Path, destination: str | Path) -> dict:
             "source_database_sha256": source_db_digest,
             "migrated_at": imported_at,
             "project_id": project["project_id"],
-            "target_schema_version": 9,
+            "target_schema_version": SCHEMA_VERSION,
             "legacy_known_usage": report["budget"]["known_spent"],
             "legacy_unknown_attempts": report["budget"]["unknown_attempts"],
             "file_manifest": report["files"],

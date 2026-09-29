@@ -44,11 +44,17 @@ def summary(store, host_id: str, session_id: str) -> dict:
     state = store.control_state(host_id, session_id)
     with store._read() as db:
         revision = int(db.execute("SELECT COALESCE(MAX(event_id),0) FROM events").fetchone()[0])
-        final = db.execute(
+        latest = db.execute(
             "SELECT publication_id,summary,status,node_id FROM publications "
             "ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
-        final = project_publication(db, dict(final)) if final else None
+        latest = project_publication(db, dict(latest)) if latest else None
+        conclusion = state.get("workflow", {}).get("conclusion")
+        final = None
+        if conclusion:
+            pid = frozen_refs.parse(conclusion['final_ref'])['publication_id']
+            row = db.execute("SELECT publication_id,summary,status,node_id FROM publications WHERE publication_id=?", (pid,)).fetchone()
+            final = project_publication(db, dict(row)) if row else None
     workflow = state.get("workflow", {})
     return {
         "schema_version": state["schema_version"],
@@ -60,6 +66,8 @@ def summary(store, host_id: str, session_id: str) -> dict:
         "session": workflow.get("session"),
         "attempt": state.get("attempt"),
         "final_publication": final,
+        "latest_publication": latest,
+        "conclusion": conclusion,
     }
 
 

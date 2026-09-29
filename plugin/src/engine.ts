@@ -38,6 +38,14 @@ export interface SessionHost {
   messages(sessionID: string): Promise<any[]>
 }
 
+export interface ConclusionInput {
+  summary: string
+  final_ref: string
+  outcome: "answered" | "partial" | "unresolved"
+  gaps: string[]
+  review: { status: "unreviewed" | "partial" | "reviewed"; refs: string[]; limitations: string[] }
+}
+
 export type Outcome = "succeeded" | "failed" | "interrupted"
 
 export const PREFIX = "【Research 自动推进】"
@@ -407,22 +415,20 @@ export class Engine {
     return { message: "本轮结束后结束节点工作段，并把总结交给主协调。", state: finish.state }
   }
 
-  conclude(sessionID: string, summary: string, finalRef: string): Promise<unknown> {
+  conclude(sessionID: string, fields: ConclusionInput, operationID: string): Promise<unknown> {
     const root = this.research.requireAssociated(sessionID)
+    if (this.research.roleOf(sessionID) !== "main") throw new Error("只有主协调可以结束研究")
     return this.serial(root, async () => {
-      const state = await this.state(sessionID)
-      const active = (state.workflow?.tasks ?? []).filter((task: any) => LIVE_TASK.has(task.state))
-      if (active.length) {
-        throw new Error(`还有 ${active.length} 个节点任务没有结束；先用 research_wait 等待它们，或在最终报告里说明后再结束它们。`)
+      const conclusion = await this.call("conclude", sessionID, { fields }, operationID)
+      let notification_warning: string | undefined
+      try {
+        this.research.notifyChanged(root)
+        await this.say(sessionID, `研究执行已结束，结果 ${conclusion.outcome}，最终报告 ${conclusion.final_ref}。审阅状态 ${conclusion.review.status} 为调用者声明，不表示结论通过。`)
+      } catch {
+        notification_warning = "结项已保存，但会话通知发送失败；可通过状态或项目概览查看。"
       }
-      const reference = await this.call("query", sessionID, { ref: finalRef.split("#")[0] }).catch(() => null)
-      if (!reference || reference.kind !== "publication") throw new Error(`找不到最终报告 ${finalRef}；先用 research_publish 发布`)
-      await this.call("note", sessionID, { body: `研究结束：${summary}（最终报告 ${finalRef}）`, kind: "progress" })
-      if (state.attempt) await this.call("finish", sessionID, { state: "finished", details: { reason: "project-concluded" } })
-      await this.call("workflow", sessionID, { action: "run", fields: { state: "complete" } })
-      this.research.notifyChanged(root)
-      await this.say(sessionID, `研究已完成，最终报告 ${finalRef}。`)
-      return { message: "研究已标记为完成，自动推进停止。", final_ref: finalRef }
+      return { message: "研究执行已结束，结项记录已保存，自动推进停止。", ...conclusion,
+        ...(notification_warning ? { notification_warning } : {}) }
     })
   }
 

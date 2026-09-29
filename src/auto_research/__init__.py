@@ -1,3 +1,3 @@
-"""Durable research state for the OpenCode research plugin; copied from the DSH plugin's ledger (schema 9)."""
+"""Durable research state for OpenCode; schema 10, derived from the DSH ledger."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
