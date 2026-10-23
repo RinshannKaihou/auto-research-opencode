@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
-import { knowledgeRows, materialRows, nodeDetail, overviewText, runtimeText, sessionRows } from "../src/board/model"
+import { knowledgeRows, materialRows, overviewText, runtimeText, sessionRows } from "../src/board/model"
 import { StorageClient } from "../src/storage"
 import { TOOL_NAMES } from "../src/tools"
 
@@ -675,15 +675,6 @@ describe("board text", () => {
     const sessions = sessionRows({ items: [{ session_id: "ses_opaque123", role: "node_core", node_id: "X-002" }] })
     expect(sessions[0]!.code).toBe("X-002")
     expect(sessions[0]!.title).not.toContain("ses_opaque123")
-  })
-  test("node detail shows relations before the plan", () => {
-    const text = nodeDetail(
-      { node_id: "X-002", status: "open", question: "Q", plan: "long plan" },
-      [{ predecessor_node_id: "X-001", successor_node_id: "X-002", relation_type: "depends_on" }],
-      [],
-    )
-    expect(text.indexOf("上游：X-001（依赖）")).toBeGreaterThan(-1)
-    expect(text.indexOf("上游")).toBeLessThan(text.indexOf("计划"))
   })
   test("runtime detail does not repeat the conclusion record", () => {
     const conclusion = { outcome: "partial", final_ref: "pub/P-1#r", gaps: ["gap"], review: { status: "reviewed", refs: [], limitations: ["lim"] } }

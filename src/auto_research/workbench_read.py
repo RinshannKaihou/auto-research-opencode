@@ -73,7 +73,7 @@ def summary(store, host_id: str, session_id: str) -> dict:
 
 _PAGE_TABLES = {
     "nodes": ("nodes", "node_id", ("node_id", "status", "question", "origin_kind", "root_reason", "strategy", "created_at")),
-    "dependencies": ("node_dependencies", "dependency_id", ("dependency_id", "predecessor_node_id", "successor_node_id", "relation_type", "scheduling")),
+    "dependencies": ("node_dependencies", "dependency_id", ("dependency_id", "predecessor_node_id", "successor_node_id", "relation_type", "scheduling", "rationale", "input_refs")),
     "relations": ("relations", "relation_id", ("relation_id", "source_ref", "target_ref", "relation_type", "label", "note")),
     "publications": ("publications", "publication_id", ("publication_id", "node_id", "summary", "status", "created_at")),
     "attempts": ("attempts", "attempt_id", ("attempt_id", "node_id", "state", "mode", "started_at", "ended_at")),
@@ -138,8 +138,11 @@ def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
         if collection == "publications":
             for record in visible:
                 project_publication(db, record)
+        if collection == "dependencies":
+            for record in visible:
+                record["input_refs"] = json.loads(record["input_refs"] or "[]")
     for item in visible:
-        for key in ("question", "summary", "note", "error", "purpose", "label"):
+        for key in ("question", "summary", "note", "error", "purpose", "label", "rationale"):
             if key in item:
                 item[key] = _short(item[key], 240)
     return {"collection": collection, "items": visible, "total": total, "upper_id": upper_id,
