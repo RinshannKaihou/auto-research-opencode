@@ -5,6 +5,7 @@
  */
 import type { Context } from "@opencode/plugin/tui/context"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
+import { useTerminalDimensions } from "@opentui/solid"
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { ResearchRpc } from "../../rpc"
 import { errorText } from "../format"
@@ -14,8 +15,6 @@ import {
   knowledgeDetail,
   knowledgeRows,
   materialRows,
-  nodeDetail,
-  nodeRows,
   overviewText,
   publicationDetail,
   runtimeText,
@@ -23,6 +22,8 @@ import {
   type Row,
   type Tab,
 } from "./model"
+import { displayWidth, fit, processView, type ProcessView } from "./process"
+import { ProcessDetail, ProcessLegend, ProcessList } from "./ProcessView"
 
 const POLL_MS = 5000
 const CHUNK = 32 * 1024
@@ -54,8 +55,12 @@ export function ResearchBoard(props: {
   const [loading, setLoading] = createSignal(false)
   const [kindFilter, setKindFilter] = createSignal("")
   const [statusFilter, setStatusFilter] = createSignal("")
-  let dependencies: any[] = []
-  let attempts: any[] = []
+  const [graph, setGraph] = createSignal<ProcessView | null>(null)
+  const [processNode, setProcessNode] = createSignal<any>(null)
+  // Integer pane widths: a percentage can leave a fractional column for wrapped text.
+  const dimensions = useTerminalDimensions()
+  const listWidth = () => Math.max(28, Math.floor((dimensions().width - 5) * 0.45))
+  const detailWidth = () => dimensions().width - 5 - listWidth()
   let tasks: any[] = []
   let list: ScrollBoxRenderable | undefined
   let detailBox: ScrollBoxRenderable | undefined
@@ -82,14 +87,26 @@ export function ResearchBoard(props: {
       } else if (target === "overview") {
         setPresentation(await board("presentation"))
       } else if (target === "process") {
-        const [nodes, edges, work] = await Promise.all([
-          board("page", { collection: "nodes", limit: 100 }),
-          board("page", { collection: "dependencies", limit: 100 }),
-          board("page", { collection: "attempts", limit: 100 }),
-        ])
-        dependencies = edges?.items ?? []
-        attempts = work?.items ?? []
-        nextRows = nodeRows(nodes)
+        const pages = await Promise.all(
+          ["nodes", "dependencies", "attempts", "tasks", "sessions", "publications", "snapshots"].map((collection) =>
+            board("page", { collection, limit: 100 }),
+          ),
+        )
+        const knowledge = await board("knowledge", { limit: 100 })
+        const [nodes, dependencies, attempts, taskPage, sessions, publications, snapshots] = pages.map((page) => page?.items ?? [])
+        const view = processView({
+          nodes: nodes!,
+          dependencies: dependencies!,
+          attempts: attempts!,
+          tasks: taskPage!,
+          sessions: sessions!,
+          publications: publications!,
+          snapshots: snapshots!,
+          knowledge: knowledge?.items ?? [],
+        })
+        if (run !== generation) return
+        setGraph(view)
+        nextRows = view.nodes.map((node) => ({ id: node.id, code: node.id, title: node.title, data: node }))
       } else if (target === "knowledge") {
         nextRows = knowledgeRows(
           await board("knowledge", {
@@ -125,8 +142,10 @@ export function ResearchBoard(props: {
     if (tab() === "runtime") return setDetail(runtimeText(summary(), row?.data, tasks))
     if (!row) return setDetail(summary()?.project ? "（没有条目）" : overviewText(summary(), null))
     if (tab() === "process") {
+      // The page view shortens long fields; the detail shows the full node.
       const node = await board("reference_get", { ref: row.id }).catch(() => null)
-      return setDetail(nodeDetail(node?.value ?? row.data, dependencies, attempts))
+      if (rows()[selected()]?.id === row.id) setProcessNode(node?.value ?? null)
+      return
     }
     if (tab() === "knowledge") return setDetail(knowledgeDetail(row.data))
     return setDetail(publicationDetail(row.data))
@@ -291,33 +310,45 @@ export function ResearchBoard(props: {
       >
         <box flexDirection="row" flexGrow={1} minHeight={0} marginTop={1} columnGap={1}>
           <Show when={tab() !== "overview"}>
-            <scrollbox
-              ref={list}
-              width="45%"
-              minHeight={0}
-              scrollX={false}
-              border
-              borderColor={theme.border.base}
-            >
-              <box paddingX={1}>
-                <For each={rows()} fallback={<text fg={theme.text.muted}>（没有条目）</text>}>
-                  {(row, index) => (
-                    <text id={`research-row-${index()}`} wrapMode="none">
-                      <span style={{ fg: theme.text.base }}>{index() === selected() ? "› " : "  "}</span>
-                      <span style={{ fg: theme.text.muted }}>{`${row.code}  `}</span>
-                      <span
-                        style={{
-                          fg: theme.text.base,
-                          attributes: index() === selected() ? TextAttributes.BOLD : TextAttributes.NONE,
-                        }}
-                      >
-                        {row.title}
-                      </span>
-                    </text>
-                  )}
-                </For>
-              </box>
-            </scrollbox>
+            <box flexDirection="column" width={listWidth()} minHeight={0}>
+              <scrollbox
+                ref={list}
+                flexGrow={1}
+                minHeight={0}
+                scrollX={false}
+                border
+                borderColor={theme.border.base}
+              >
+                <box paddingX={1}>
+                  <Show
+                    when={tab() === "process" ? graph() : null}
+                    fallback={
+                      <For each={rows()} fallback={<text fg={theme.text.muted}>（没有条目）</text>}>
+                        {(row, index) => (
+                          <text id={`research-row-${index()}`} wrapMode="none">
+                            <span style={{ fg: theme.text.base }}>{index() === selected() ? "› " : "  "}</span>
+                            <span style={{ fg: theme.text.muted }}>{`${row.code}  `}</span>
+                            <span
+                              style={{
+                                fg: theme.text.base,
+                                attributes: index() === selected() ? TextAttributes.BOLD : TextAttributes.NONE,
+                              }}
+                            >
+                              {fit(row.title, listWidth() - 4 - 2 - displayWidth(row.code) - 2)}
+                            </span>
+                          </text>
+                        )}
+                      </For>
+                    }
+                  >
+                    {(view) => <ProcessList context={context} view={view()} selected={selected()} width={listWidth() - 4} />}
+                  </Show>
+                </box>
+              </scrollbox>
+              <Show when={tab() === "process" && graph()}>
+                <ProcessLegend context={context} />
+              </Show>
+            </box>
           </Show>
           <scrollbox
             ref={detailBox}
@@ -328,7 +359,20 @@ export function ResearchBoard(props: {
             borderColor={theme.border.base}
           >
             <box paddingX={1}>
-              <text fg={theme.text.base}>{detail()}</text>
+              <Show
+                when={tab() === "process" ? graph() : null}
+                fallback={<text fg={theme.text.base}>{detail()}</text>}
+              >
+                {(view) => (
+                  <ProcessDetail
+                    context={context}
+                    view={view()}
+                    selected={selected()}
+                    node={processNode()}
+                    width={detailWidth() - 4}
+                  />
+                )}
+              </Show>
             </box>
           </scrollbox>
         </box>

@@ -136,6 +136,21 @@ def test_binary_and_oversized_materials_have_bounded_read_states(tmp_path):
     assert "chunk" not in workbench_read.reference_content(store, root, "pub/P-999#absent")
 
 
+def test_dependency_page_explains_each_edge_without_ledger_writes(tmp_path):
+    store, _, _ = initialized(tmp_path)
+    root = store.propose("Root?", "why", "plan", "root", root_reason="First node")
+    child = store.propose("Child?", "why", "plan", "child", predecessors=[{
+        "node_id": root["node_id"], "relation_type": "branches_from",
+        "rationale": "Reuses the root framing " * 20, "input_refs": []}])
+    before = hashlib.sha256(store.db_path.read_bytes()).hexdigest()
+    row = workbench_read.page(store, "dependencies")["items"][0]
+    assert row["predecessor_node_id"] == root["node_id"]
+    assert row["successor_node_id"] == child["node_id"]
+    assert row["rationale"].startswith("Reuses the root framing") and len(row["rationale"]) <= 241
+    assert row["input_refs"] == []
+    assert hashlib.sha256(store.db_path.read_bytes()).hexdigest() == before
+
+
 def test_specialist_page_retains_durable_parent_after_exit(tmp_path):
     store, _, _ = initialized(tmp_path)
     task = store.specialist_create({"parent_session_id": "parent-node", "purpose": "domain",

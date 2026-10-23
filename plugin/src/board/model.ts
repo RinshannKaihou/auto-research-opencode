@@ -45,8 +45,6 @@ export const KNOWLEDGE_KINDS: Record<string, string> = {
   open_question: "未决问题",
 }
 
-const NODE_STATUS: Record<string, string> = { proposed: "提议中", closed: "已关闭" }
-
 /** `knowledge/K-007@1` → `K-007`; later revisions keep their number. */
 function knowledgeCode(ref: string): string {
   const match = /^knowledge\/([^@]+)(?:@(\d+))?$/.exec(ref ?? "")
@@ -106,39 +104,6 @@ export function overviewText(summary: any, presentation: any): string {
     lines.push("尚无已登记的阶段成果。")
   }
   return lines.filter((line) => line !== undefined).join("\n")
-}
-
-export function nodeRows(page: any): Row[] {
-  return (page?.items ?? []).map((node: any) => ({
-    id: node.node_id,
-    code: node.node_id,
-    title: `${NODE_STATUS[node.status] ? `（${NODE_STATUS[node.status]}）` : ""}${oneLine(node.question, 70)}`,
-    data: node,
-  }))
-}
-
-/** Relations come first: they are short, and a long plan must not push them out of view. */
-export function nodeDetail(node: any, dependencies: any[], attempts: any[]): string {
-  if (!node) return ""
-  const incoming = dependencies.filter((edge) => edge.successor_node_id === node.node_id)
-  const outgoing = dependencies.filter((edge) => edge.predecessor_node_id === node.node_id)
-  const work = attempts.filter((attempt) => attempt.node_id === node.node_id)
-  const relation = (edge: any) => RELATION_TYPES[edge.relation_type] ?? edge.relation_type
-  const links = [
-    `${node.node_id}（${node.status}）`,
-    `上游：${incoming.length ? incoming.map((e) => `${e.predecessor_node_id}（${relation(e)}）`).join(", ") : "无"}`,
-    `下游：${outgoing.length ? outgoing.map((e) => `${e.successor_node_id}（${relation(e)}）`).join(", ") : "无"}`,
-    `执行批次：${work.length ? work.map((a) => `${a.attempt_id} ${a.state}${a.ended_at ? "" : "（进行中）"}`).join(", ") : "无"}`,
-  ]
-  const body = [
-    `问题：${node.question}`,
-    `为什么现在做：${node.why_now ?? ""}`,
-    `计划：${node.plan ?? ""}`,
-    node.root_reason ? `独立开展的原因：${node.root_reason}` : "",
-    `问题版本：${node.question_ref ?? "未记录"}`,
-    `固定输入：${(node.inputs ?? []).length ? node.inputs.join(", ") : "无"}`,
-  ]
-  return `${links.join("\n")}\n\n${body.filter(Boolean).join("\n")}`
 }
 
 export function knowledgeRows(page: any): Row[] {
