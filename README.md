@@ -236,3 +236,7 @@ make test-plugin   # 只跑插件测试（假宿主 + 真实 Python）
 ```
 
 改完插件代码后，要执行 `opencode service restart`，正在用的 OpenCode 才会加载新代码。插件的工作机制、工具和角色见 [plugin/README.md](plugin/README.md)。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE) 授权。
