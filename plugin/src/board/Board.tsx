@@ -4,7 +4,7 @@
  * browsing the board never writes the ledger or starts a model.
  */
 import type { Context } from "@opencode/plugin/tui/context"
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { ResearchRpc } from "../../rpc"
 import { errorText } from "../format"
@@ -58,6 +58,8 @@ export function ResearchBoard(props: {
   let attempts: any[] = []
   let tasks: any[] = []
   let list: ScrollBoxRenderable | undefined
+  let detailBox: ScrollBoxRenderable | undefined
+  let readerBox: ScrollBoxRenderable | undefined
   let generation = 0
 
   async function board(view: string, fields: Record<string, unknown> = {}): Promise<any> {
@@ -151,6 +153,7 @@ export function ResearchBoard(props: {
     setReader(null)
     setSelected(0)
     setTab(next)
+    detailBox?.scrollTo(0)
     void load(next)
   }
 
@@ -160,6 +163,8 @@ export function ResearchBoard(props: {
     const next = Math.max(0, Math.min(count - 1, selected() + delta))
     setSelected(next)
     list?.scrollChildIntoView(`research-row-${next}`)
+    // A refresh keeps the reading position; only a new selection starts from the top.
+    detailBox?.scrollTo(0)
     void describe()
   }
 
@@ -184,6 +189,8 @@ export function ResearchBoard(props: {
           else void openReader()
         },
       },
+      { bind: "pagedown", run: () => (reader() ? readerBox : detailBox)?.scrollBy(0.8, "viewport") },
+      { bind: "pageup", run: () => (reader() ? readerBox : detailBox)?.scrollBy(-0.8, "viewport") },
       { bind: "n", enabled: () => reader()?.nextOffset != null, run: () => void openReader(reader()!.nextOffset!) },
       { bind: "r", run: () => void load() },
       {
@@ -230,14 +237,23 @@ export function ResearchBoard(props: {
   )
   const footer = createMemo(() =>
     reader()
-      ? `Esc 返回${reader()?.nextOffset != null ? " · n 读取下一段" : ""}`
+      ? `Esc 返回 · PgUp/PgDn 翻页${reader()?.nextOffset != null ? " · n 读取下一段" : ""}`
       : tab() === "runtime"
-        ? "1-5 切换视图 · j/k 移动 · Enter 打开会话 · r 刷新 · Esc 关闭"
-        : "1-5 切换视图 · j/k 移动 · Enter 打开文件 · r 刷新 · Esc 关闭",
+        ? "1-5 切换视图 · j/k 移动 · PgUp/PgDn 滚动详情 · Enter 打开会话 · r 刷新 · Esc 关闭"
+        : "1-5 切换视图 · j/k 移动 · PgUp/PgDn 滚动详情 · Enter 打开文件 · r 刷新 · Esc 关闭",
   )
 
+  // Scrollbox content is padded: besides the breathing room, the padding keeps
+  // wrapped text out of the column the vertical scrollbar draws over.
   return (
-    <box flexDirection="column" width="100%" height="100%" paddingX={1} backgroundColor={theme.background.base}>
+    <box
+      flexDirection="column"
+      width="100%"
+      height="100%"
+      paddingX={2}
+      paddingTop={1}
+      backgroundColor={theme.background.base}
+    >
       <text fg={theme.text.base} wrapMode="none" flexShrink={0}>
         {`Research · ${summary()?.project?.goal ?? "研究看板"}${loading() ? " · 读取中…" : ""}`}
       </text>
@@ -257,12 +273,23 @@ export function ResearchBoard(props: {
       <Show
         when={!reader()}
         fallback={
-          <scrollbox flexGrow={1} minHeight={0} focused scrollX={false} border borderColor={theme.border.base}>
-            <text fg={theme.text.base}>{`${reader()?.ref}\n\n${reader()?.text}`}</text>
+          <scrollbox
+            ref={readerBox}
+            flexGrow={1}
+            minHeight={0}
+            marginTop={1}
+            focused
+            scrollX={false}
+            border
+            borderColor={theme.border.base}
+          >
+            <box paddingX={1}>
+              <text fg={theme.text.base}>{`${reader()?.ref}\n\n${reader()?.text}`}</text>
+            </box>
           </scrollbox>
         }
       >
-        <box flexDirection="row" flexGrow={1} minHeight={0} columnGap={1}>
+        <box flexDirection="row" flexGrow={1} minHeight={0} marginTop={1} columnGap={1}>
           <Show when={tab() !== "overview"}>
             <scrollbox
               ref={list}
@@ -272,21 +299,37 @@ export function ResearchBoard(props: {
               border
               borderColor={theme.border.base}
             >
-              <For each={rows()} fallback={<text fg={theme.text.muted}>（没有条目）</text>}>
-                {(row, index) => (
-                  <text
-                    id={`research-row-${index()}`}
-                    wrapMode="none"
-                    fg={index() === selected() ? theme.text.base : theme.text.muted}
-                  >
-                    {`${index() === selected() ? "› " : "  "}${row.label}`}
-                  </text>
-                )}
-              </For>
+              <box paddingX={1}>
+                <For each={rows()} fallback={<text fg={theme.text.muted}>（没有条目）</text>}>
+                  {(row, index) => (
+                    <text id={`research-row-${index()}`} wrapMode="none">
+                      <span style={{ fg: theme.text.base }}>{index() === selected() ? "› " : "  "}</span>
+                      <span style={{ fg: theme.text.muted }}>{`${row.code}  `}</span>
+                      <span
+                        style={{
+                          fg: theme.text.base,
+                          attributes: index() === selected() ? TextAttributes.BOLD : TextAttributes.NONE,
+                        }}
+                      >
+                        {row.title}
+                      </span>
+                    </text>
+                  )}
+                </For>
+              </box>
             </scrollbox>
           </Show>
-          <scrollbox flexGrow={1} minHeight={0} scrollX={false} border borderColor={theme.border.base}>
-            <text fg={theme.text.base}>{detail()}</text>
+          <scrollbox
+            ref={detailBox}
+            flexGrow={1}
+            minHeight={0}
+            scrollX={false}
+            border
+            borderColor={theme.border.base}
+          >
+            <box paddingX={1}>
+              <text fg={theme.text.base}>{detail()}</text>
+            </box>
           </scrollbox>
         </box>
       </Show>

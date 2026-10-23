@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
-import { materialRows, overviewText } from "../src/board/model"
+import { knowledgeRows, materialRows, nodeDetail, overviewText, runtimeText, sessionRows } from "../src/board/model"
 import { StorageClient } from "../src/storage"
 import { TOOL_NAMES } from "../src/tools"
 
@@ -662,5 +662,34 @@ describe("board text", () => {
       ] }],
     })
     expect(rows.map((row) => row.ref)).toEqual(["pub/P-001#report"])
+  })
+  test("rows lead with a short code and the content, not the full reference", () => {
+    const rows = knowledgeRows({
+      items: [
+        { ref: "knowledge/K-007@1", kind: "observation", status: "proposed", statement: "GPU 7 idle" },
+        { ref: "knowledge/K-031@2", kind: "claim", status: "proposed", statement: "F5 dominates" },
+      ],
+    })
+    expect(rows.map((row) => row.code)).toEqual(["K-007", "K-031@2"])
+    expect(rows[0]!.title).toBe("[观察] GPU 7 idle")
+    const sessions = sessionRows({ items: [{ session_id: "ses_opaque123", role: "node_core", node_id: "X-002" }] })
+    expect(sessions[0]!.code).toBe("X-002")
+    expect(sessions[0]!.title).not.toContain("ses_opaque123")
+  })
+  test("node detail shows relations before the plan", () => {
+    const text = nodeDetail(
+      { node_id: "X-002", status: "open", question: "Q", plan: "long plan" },
+      [{ predecessor_node_id: "X-001", successor_node_id: "X-002", relation_type: "depends_on" }],
+      [],
+    )
+    expect(text.indexOf("上游：X-001（依赖）")).toBeGreaterThan(-1)
+    expect(text.indexOf("上游")).toBeLessThan(text.indexOf("计划"))
+  })
+  test("runtime detail does not repeat the conclusion record", () => {
+    const conclusion = { outcome: "partial", final_ref: "pub/P-1#r", gaps: ["gap"], review: { status: "reviewed", refs: [], limitations: ["lim"] } }
+    const text = runtimeText({ run: { state: "complete" }, conclusion }, null, [])
+    expect(text).toContain("结项记录：已登记，见概览")
+    expect(text).not.toContain("未解决项")
+    expect(runtimeText({ run: { state: "complete" }, conclusion: null }, null, [])).toContain("结项记录：未记录")
   })
 })
