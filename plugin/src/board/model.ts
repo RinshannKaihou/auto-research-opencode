@@ -17,7 +17,9 @@ export const TABS: readonly { id: Tab; key: string; title: string }[] = [
 
 export interface Row {
   id: string
-  label: string
+  /** Short ledger identifier, shown dimmed in front of the title. */
+  code: string
+  title: string
   /** Frozen reference the reader can open, when the row is a file. */
   ref?: string
   data?: any
@@ -26,6 +28,30 @@ export interface Row {
 const PUBLICATION_STATUS: Record<string, string> = {
   partial: "阶段材料（partial）",
   complete: "交付完成（complete，不等于科学验证）",
+}
+
+export const RELATION_TYPES: Record<string, string> = {
+  depends_on: "依赖",
+  branches_from: "衍生自",
+  revises: "修订",
+}
+
+export const KNOWLEDGE_KINDS: Record<string, string> = {
+  claim: "主张",
+  observation: "观察",
+  hypothesis: "假设",
+  decision: "决定",
+  lesson: "经验",
+  open_question: "未决问题",
+}
+
+const NODE_STATUS: Record<string, string> = { proposed: "提议中", closed: "已关闭" }
+
+/** `knowledge/K-007@1` → `K-007`; later revisions keep their number. */
+function knowledgeCode(ref: string): string {
+  const match = /^knowledge\/([^@]+)(?:@(\d+))?$/.exec(ref ?? "")
+  if (!match) return ref ?? ""
+  return match[2] && match[2] !== "1" ? `${match[1]}@${match[2]}` : match[1]!
 }
 
 function oneLine(value: unknown, limit = 90): string {
@@ -85,36 +111,41 @@ export function overviewText(summary: any, presentation: any): string {
 export function nodeRows(page: any): Row[] {
   return (page?.items ?? []).map((node: any) => ({
     id: node.node_id,
-    label: `${node.node_id} · ${node.status} · ${oneLine(node.question, 70)}`,
+    code: node.node_id,
+    title: `${NODE_STATUS[node.status] ? `（${NODE_STATUS[node.status]}）` : ""}${oneLine(node.question, 70)}`,
     data: node,
   }))
 }
 
+/** Relations come first: they are short, and a long plan must not push them out of view. */
 export function nodeDetail(node: any, dependencies: any[], attempts: any[]): string {
   if (!node) return ""
   const incoming = dependencies.filter((edge) => edge.successor_node_id === node.node_id)
   const outgoing = dependencies.filter((edge) => edge.predecessor_node_id === node.node_id)
   const work = attempts.filter((attempt) => attempt.node_id === node.node_id)
-  return [
+  const relation = (edge: any) => RELATION_TYPES[edge.relation_type] ?? edge.relation_type
+  const links = [
     `${node.node_id}（${node.status}）`,
+    `上游：${incoming.length ? incoming.map((e) => `${e.predecessor_node_id}（${relation(e)}）`).join(", ") : "无"}`,
+    `下游：${outgoing.length ? outgoing.map((e) => `${e.successor_node_id}（${relation(e)}）`).join(", ") : "无"}`,
+    `执行批次：${work.length ? work.map((a) => `${a.attempt_id} ${a.state}${a.ended_at ? "" : "（进行中）"}`).join(", ") : "无"}`,
+  ]
+  const body = [
     `问题：${node.question}`,
     `为什么现在做：${node.why_now ?? ""}`,
     `计划：${node.plan ?? ""}`,
     node.root_reason ? `独立开展的原因：${node.root_reason}` : "",
     `问题版本：${node.question_ref ?? "未记录"}`,
     `固定输入：${(node.inputs ?? []).length ? node.inputs.join(", ") : "无"}`,
-    `前驱：${incoming.length ? incoming.map((e) => `${e.predecessor_node_id}（${e.relation_type}）`).join(", ") : "无"}`,
-    `后继：${outgoing.length ? outgoing.map((e) => `${e.successor_node_id}（${e.relation_type}）`).join(", ") : "无"}`,
-    `执行批次：${work.length ? work.map((a) => `${a.attempt_id} ${a.state}${a.ended_at ? "" : "（进行中）"}`).join(", ") : "无"}`,
   ]
-    .filter(Boolean)
-    .join("\n")
+  return `${links.join("\n")}\n\n${body.filter(Boolean).join("\n")}`
 }
 
 export function knowledgeRows(page: any): Row[] {
   return (page?.items ?? []).map((item: any) => ({
     id: item.ref,
-    label: `${item.ref} · ${item.kind} · ${item.status} · ${oneLine(item.statement, 60)}`,
+    code: knowledgeCode(item.ref),
+    title: `[${KNOWLEDGE_KINDS[item.kind] ?? item.kind}] ${oneLine(item.statement, 60)}`,
     data: item,
   }))
 }
@@ -141,12 +172,13 @@ export function materialRows(page: any): Row[] {
     const items = (publication.items ?? []).filter((item: any) => item.item_id !== "__research_display")
     const title = publication.display?.title ?? oneLine(publication.summary, 40)
     if (!items.length) {
-      rows.push({ id: publication.publication_id, label: `${publication.publication_id} · ${publication.status} · ${title}`, data: publication })
+      rows.push({ id: publication.publication_id, code: publication.publication_id, title, data: publication })
     }
     for (const item of items) {
       rows.push({
         id: item.ref ?? `pub/${publication.publication_id}#${item.item_id}`,
-        label: `${publication.publication_id}#${item.item_id} · ${item.source_path ?? item.kind ?? ""} · ${title}`,
+        code: publication.publication_id,
+        title: `${item.item_id}  ${item.source_path ?? item.kind ?? ""}`,
         ref: item.object_kind === "file" || item.source_path ? item.ref ?? `pub/${publication.publication_id}#${item.item_id}` : undefined,
         data: publication,
       })
@@ -187,10 +219,12 @@ function sessionActivity(session: any): string {
   return pauseReason(session.pause_reason) || "活动"
 }
 
+/** Session IDs are opaque; the row names the role and node, the detail keeps the ID. */
 export function sessionRows(page: any): Row[] {
   return (page?.items ?? []).map((session: any) => ({
     id: session.session_id,
-    label: `${roleName(session.role)}${session.node_id ? ` ${session.node_id}` : ""}${session.detached ? "（已移出）" : ""} · ${sessionActivity(session)} · ${session.session_id}`,
+    code: session.node_id ?? "项目",
+    title: `${roleName(session.role)}${session.detached ? "（已移出）" : ""} · ${sessionActivity(session)}`,
     data: session,
   }))
 }
@@ -205,16 +239,17 @@ const TASK_STATES: Record<string, string> = {
   unverified: "待核实",
 }
 
+/** Execution only: the conclusion record lives on the overview and is not repeated here. */
 export function runtimeText(summary: any, session: any, tasks: any[] = []): string {
   const run = summary?.run ?? {}
   const lines = [
     `项目运行状态：${runState(run.state)}`,
-    ...conclusionLines(summary.conclusion, run.state),
+    ...(summary?.conclusion ? ["结项记录：已登记，见概览"] : conclusionLines(null, run.state)),
     `研究主会话：${run.main_session_id ?? "无"}`,
     "",
     `节点任务（${tasks.length}）：`,
     ...(tasks.length
-      ? tasks.map((task) => `  ${task.task_id} · ${task.node_id} · ${TASK_STATES[task.state] ?? task.state}${task.error ? ` · ${task.error}` : ""}`)
+      ? tasks.map((task) => `  ${task.node_id} · ${TASK_STATES[task.state] ?? task.state}${task.error ? ` · ${task.error}` : ""} · ${task.task_id}`)
       : ["  无"]),
   ]
   if (session) {
