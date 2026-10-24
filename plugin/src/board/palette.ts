@@ -54,10 +54,17 @@ export function palette(context: Context) {
 /** Markdown styled with the theme's own markdown and syntax tokens, as in the chat. */
 export function markdownStyle(context: Context): SyntaxStyle {
   const theme = context.theme
+  // The highlighter tags headings by level; style names do not fall back to a parent.
+  const heading = { fg: theme.markdown.heading, bold: true }
+  const headings = Object.fromEntries([1, 2, 3, 4, 5, 6].map((level) => [`markup.heading.${level}`, heading]))
   return SyntaxStyle.fromStyles({
     default: { fg: theme.markdown.text },
     conceal: { fg: theme.text.muted },
-    "markup.heading": { fg: theme.markdown.heading, bold: true },
+    "markup.heading": heading,
+    ...headings,
+    "markup.raw.block": { fg: theme.markdown.codeBlock },
+    "markup.list.checked": { fg: theme.markdown.listItem },
+    "markup.list.unchecked": { fg: theme.markdown.listItem },
     "markup.strong": { fg: theme.markdown.strong, bold: true },
     "markup.italic": { fg: theme.markdown.emphasis, italic: true },
     "markup.strikethrough": { fg: theme.text.muted },
