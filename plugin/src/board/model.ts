@@ -1,9 +1,9 @@
 /**
- * Pure projections from ledger views to board rows and detail text. Execution,
+ * Pure projections from ledger views to board rows and view models. Execution,
  * delivery and scientific state stay separate: an ended work segment, a
  * complete publication and a knowledge status are never merged into "done".
  */
-import { conclusionLines, pauseReason, roleName, runState } from "../format"
+import { OUTCOMES, REVIEWS, conclusionLines, pauseReason, roleName, runState } from "../format"
 
 export type Tab = "overview" | "process" | "knowledge" | "materials" | "runtime"
 
@@ -25,10 +25,13 @@ export interface Row {
   data?: any
 }
 
-const PUBLICATION_STATUS: Record<string, string> = {
-  partial: "阶段材料（partial）",
-  complete: "交付完成（complete，不等于科学验证）",
-}
+export const DELIVERY: Record<string, string> = { partial: "阶段材料", complete: "交付完成" }
+/** Said once per page: delivery is about the report, not about the science. */
+export const DELIVERY_NOTE = "complete 只表示交付完成，不等于科学验证"
+export const LATEST_NOTE = "最新，不代表最终结论"
+export const RUN_NOTE = "执行状态，不代表研究结论"
+export const REVIEW_NOTE = "不表示结论通过"
+export const STATUS_NOTE = "状态不表示科学验证"
 
 export const RELATION_TYPES: Record<string, string> = {
   depends_on: "依赖",
@@ -45,8 +48,16 @@ export const KNOWLEDGE_KINDS: Record<string, string> = {
   open_question: "未决问题",
 }
 
+export const KNOWLEDGE_STATUSES: Record<string, string> = {
+  proposed: "已提出",
+  working: "进行中",
+  disputed: "有争议",
+  superseded: "已被取代",
+  retracted: "已撤回",
+}
+
 /** `knowledge/K-007@1` → `K-007`; later revisions keep their number. */
-function knowledgeCode(ref: string): string {
+export function knowledgeCode(ref: string): string {
   const match = /^knowledge\/([^@]+)(?:@(\d+))?$/.exec(ref ?? "")
   if (!match) return ref ?? ""
   return match[2] && match[2] !== "1" ? `${match[1]}@${match[2]}` : match[1]!
@@ -57,53 +68,116 @@ function oneLine(value: unknown, limit = 90): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
 }
 
-function displayBlock(display: any): string[] {
-  if (!display || typeof display !== "object") return []
-  const lines = [display.title ? `「${display.title}」` : "", display.overview ?? ""]
-  for (const section of display.sections ?? []) {
-    lines.push(`${section.heading}：`)
-    for (const item of section.items ?? []) lines.push(`  · ${item}`)
-  }
-  return lines.filter(Boolean)
+export interface PublicationCard {
+  id: string
+  status: string
+  node?: string
+  title?: string
+  overview?: string
+  sections: { heading: string; items: string[] }[]
+  summary: string
+  gaps: string[]
 }
 
-export function overviewText(summary: any, presentation: any): string {
-  if (!summary?.project) return "当前目录没有研究项目。用 /research init <研究目标> 新建。"
+export function publicationCard(publication: any): PublicationCard | undefined {
+  if (!publication?.publication_id) return undefined
+  const display = publication.display && typeof publication.display === "object" ? publication.display : {}
+  return {
+    id: publication.publication_id,
+    status: publication.status,
+    node: publication.node_id ?? undefined,
+    title: display.title || undefined,
+    overview: display.overview || undefined,
+    sections: (display.sections ?? []).map((section: any) => ({ heading: section.heading, items: section.items ?? [] })),
+    summary: String(publication.summary ?? ""),
+    gaps: publication.gaps ?? [],
+  }
+}
+
+export interface OverviewModel {
+  goal: string
+  root: string
+  runState?: string
+  runLabel: string
+  runNote: string
+  /** Verbatim notices, such as a historical completion without a conclusion record. */
+  notices: string[]
+  conclusion?: {
+    outcome: string
+    outcomeLabel: string
+    finalRef: string
+    reviewLabel: string
+    reviewNote: string
+    gaps: string[]
+    limitations: string[]
+    refs: string[]
+  }
+  counts: { label: string; value: number }[]
+  /** The publication the conclusion names. */
+  final?: PublicationCard
+  /** The newest publication, when it is not the final one. */
+  latest?: PublicationCard
+  presentation?: {
+    title: string
+    summary: string
+    stale: boolean
+    metrics: { label: string; values: string; warning?: string }[]
+    deliverables: { label: string; ref: string }[]
+  }
+  presentationError?: string
+}
+
+export function overviewModel(summary: any, presentation: any): OverviewModel | null {
+  if (!summary?.project) return null
   const counts = summary.counts ?? {}
-  const latest = summary.latest_publication ?? (summary.conclusion ? null : summary.final_publication)
-  const lines = [
-    `目标：${summary.project.goal ?? "未记录"}`,
-    `项目目录：${summary.project_root ?? ""}`,
-    `运行状态：${runState(summary.run?.state)}（这是执行状态，不表示研究结论）`,
-    ...conclusionLines(summary.conclusion, summary.run?.state),
-    `节点 ${counts.nodes ?? 0} · 发布 ${counts.publications ?? 0} · 知识 ${counts.knowledge ?? 0} · 检查点 ${counts.checkpoints ?? 0} · 待整理 ${summary.review_queue?.pending_total ?? 0}`,
-    "",
-  ]
-  if (presentation?.status === "ready") {
-    const value = presentation.value ?? {}
-    lines.push("项目展示摘要" + (value.stale ? "（绑定的发布已过期，请核对新材料）" : "") + "：")
-    lines.push(value.title ?? "", value.summary ?? "")
-    const shown = (side: any) => (side?.value ?? side?.value === 0 ? String(side.value) : "（固定版本中的数值不可用）")
-    for (const metric of (value.metrics ?? []).slice(0, 4)) {
-      const unit = metric.unit ? ` ${metric.unit}` : ""
-      const split = metric.split ? `（${metric.split}）` : ""
-      lines.push(`  · ${metric.label ?? metric.id}${split}：${shown(metric.baseline)} → ${shown(metric.current)}${unit}`)
-      if (metric.comparison_warning) lines.push(`    ${metric.comparison_warning}`)
-    }
-    for (const deliverable of value.deliverables ?? []) lines.push(`  交付：${deliverable.label} ${deliverable.ref}`)
-    lines.push("")
-  } else if (presentation?.status === "invalid") {
-    lines.push(`项目展示摘要不可用：${presentation.message ?? ""}`, "")
+  const conclusion = summary.conclusion
+  const final = conclusion ? publicationCard(summary.final_publication) : undefined
+  const newest = publicationCard(summary.latest_publication ?? (conclusion ? null : summary.final_publication))
+  const shown = (side: any) => (side?.value ?? side?.value === 0 ? String(side.value) : "（固定版本中的数值不可用）")
+  const value = presentation?.status === "ready" ? presentation.value ?? {} : null
+  return {
+    goal: summary.project.goal ?? "未记录",
+    root: summary.project_root ?? "",
+    runState: summary.run?.state,
+    runLabel: runState(summary.run?.state),
+    runNote: RUN_NOTE,
+    notices: conclusion ? [] : conclusionLines(null, summary.run?.state),
+    conclusion: conclusion
+      ? {
+          outcome: conclusion.outcome,
+          outcomeLabel: OUTCOMES[conclusion.outcome] ?? conclusion.outcome,
+          finalRef: conclusion.final_ref,
+          reviewLabel: REVIEWS[conclusion.review?.status] ?? conclusion.review?.status,
+          reviewNote: REVIEW_NOTE,
+          gaps: conclusion.gaps ?? [],
+          limitations: conclusion.review?.limitations ?? [],
+          refs: conclusion.review?.refs ?? [],
+        }
+      : undefined,
+    counts: [
+      { label: "节点", value: counts.nodes ?? 0 },
+      { label: "发布", value: counts.publications ?? 0 },
+      { label: "知识", value: counts.knowledge ?? 0 },
+      { label: "检查点", value: counts.checkpoints ?? 0 },
+      { label: "待整理", value: summary.review_queue?.pending_total ?? 0 },
+    ],
+    final,
+    latest: newest && newest.id !== final?.id ? newest : undefined,
+    presentation: value
+      ? {
+          title: value.title ?? "",
+          summary: value.summary ?? "",
+          stale: Boolean(value.stale),
+          metrics: (value.metrics ?? []).slice(0, 4).map((metric: any) => ({
+            label: `${metric.label ?? metric.id}${metric.split ? `（${metric.split}）` : ""}`,
+            values: `${shown(metric.baseline)} → ${shown(metric.current)}${metric.unit ? ` ${metric.unit}` : ""}`,
+            warning: metric.comparison_warning || undefined,
+          })),
+          deliverables: (value.deliverables ?? []).map((item: any) => ({ label: item.label, ref: item.ref })),
+        }
+      : undefined,
+    presentationError: presentation?.status === "invalid" ? presentation.message ?? "" : undefined,
   }
-  if (latest) {
-    lines.push(`最新阶段成果 ${latest.publication_id}（最新，不代表最终结论）`)
-    lines.push(`交付状态：${PUBLICATION_STATUS[latest.status] ?? latest.status} · 节点 ${latest.node_id ?? "未挂节点"}`)
-    const display = displayBlock(latest.display)
-    lines.push(...(display.length ? display : [oneLine(latest.summary, 400)]))
-  } else {
-    lines.push("尚无已登记的阶段成果。")
-  }
-  return lines.filter((line) => line !== undefined).join("\n")
 }
 
 export function knowledgeRows(page: any): Row[] {
@@ -115,19 +189,10 @@ export function knowledgeRows(page: any): Row[] {
   }))
 }
 
-export function knowledgeDetail(item: any): string {
-  if (!item) return ""
-  return [
-    `${item.ref}（${item.kind}，状态 ${item.status}；状态不表示科学验证）`,
-    item.statement ?? "",
-    `节点：${item.node_id ?? "项目级"}`,
-    `证据：${(item.evidence_refs ?? []).join(", ") || "无"}`,
-    item.conditions && Object.keys(item.conditions).length ? `条件：${JSON.stringify(item.conditions)}` : "",
-    item.scope && Object.keys(item.scope).length ? `范围：${JSON.stringify(item.scope)}` : "",
-    (item.supersedes ?? []).length ? `取代：${item.supersedes.join(", ")}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n")
+export function knowledgeCounts(items: any[]): { kind: string; count: number }[] {
+  const counts = new Map<string, number>()
+  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1)
+  return [...counts].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count)
 }
 
 /** One row per publication item, so Enter can open the frozen file. */
@@ -145,28 +210,15 @@ export function materialRows(page: any): Row[] {
         code: publication.publication_id,
         title: `${item.item_id}  ${item.source_path ?? item.kind ?? ""}`,
         ref: item.object_kind === "file" || item.source_path ? item.ref ?? `pub/${publication.publication_id}#${item.item_id}` : undefined,
-        data: publication,
+        data: { ...publication, item },
       })
     }
   }
   return rows
 }
 
-export function publicationDetail(publication: any): string {
-  if (!publication) return ""
-  const display = displayBlock(publication.display)
-  return [
-    `${publication.publication_id} · ${PUBLICATION_STATUS[publication.status] ?? publication.status}`,
-    `节点：${publication.node_id ?? "未挂节点"} · ${publication.created_at ?? ""}`,
-    ...(display.length ? display : []),
-    "",
-    `说明：${publication.summary ?? ""}`,
-    (publication.gaps ?? []).length ? `尚未解决的问题：${publication.gaps.join("；")}` : "",
-    "",
-    "Enter 打开选中的文件",
-  ]
-    .filter((line) => line !== "")
-    .join("\n")
+export function isMarkdown(path: string | undefined): boolean {
+  return /\.(md|markdown)$/i.test(path ?? "")
 }
 
 const SPECIALIST_STATES: Record<string, string> = {
@@ -179,7 +231,7 @@ const SPECIALIST_STATES: Record<string, string> = {
 }
 
 /** A specialist session shows its task; other sessions their pause state. */
-function sessionActivity(session: any): string {
+export function sessionActivity(session: any): string {
   if (session.task_id) return `${session.label} · ${SPECIALIST_STATES[session.specialist_state] ?? session.specialist_state}`
   return pauseReason(session.pause_reason) || "活动"
 }
@@ -194,7 +246,7 @@ export function sessionRows(page: any): Row[] {
   }))
 }
 
-const TASK_STATES: Record<string, string> = {
+export const TASK_STATES: Record<string, string> = {
   queued: "排队",
   starting: "启动中",
   running: "运行中",
@@ -205,37 +257,22 @@ const TASK_STATES: Record<string, string> = {
 }
 
 /** Execution only: the conclusion record lives on the overview and is not repeated here. */
-export function runtimeText(summary: any, session: any, tasks: any[] = []): string {
-  const run = summary?.run ?? {}
-  const lines = [
-    `项目运行状态：${runState(run.state)}`,
-    ...(summary?.conclusion ? ["结项记录：已登记，见概览"] : conclusionLines(null, run.state)),
-    `研究主会话：${run.main_session_id ?? "无"}`,
-    "",
-    `节点任务（${tasks.length}）：`,
-    ...(tasks.length
-      ? tasks.map((task) => `  ${task.node_id} · ${TASK_STATES[task.state] ?? task.state}${task.error ? ` · ${task.error}` : ""} · ${task.task_id}`)
-      : ["  无"]),
-  ]
-  if (session) {
-    lines.push(
-      "",
-      `会话：${session.session_id}`,
-      `角色：${roleName(session.role)}${session.detached ? "（已移出项目）" : ""}`,
-      `节点：${session.node_id ?? "无"}`,
-      ...(session.task_id ? [`专家任务：${session.task_id}`] : []),
-      `状态：${sessionActivity(session)}`,
-      `本次执行结束状态：${session.close_state ?? "无"}`,
-    )
-  }
-  if (session) lines.push("", "Enter 打开这个会话")
-  return lines.join("\n")
+export function runtimeNotes(summary: any): string[] {
+  return summary?.conclusion ? ["结项记录：已登记，见概览"] : conclusionLines(null, summary?.run?.state)
+}
+
+const UNAVAILABLE: Record<string, string> = {
+  object_missing: "这个文件的固定版本不在本机：.research/objects 里没有它，所以打不开。",
 }
 
 export function decodeChunk(content: any): string {
   if (!content) return ""
   if (content.kind === "directory") return "（这是一个目录）"
   if (content.kind === "binary") return `（二进制文件，${content.total_bytes ?? "?"} 字节，终端里不显示）`
-  if (content.kind !== "text") return content.resolution?.message ?? "（无法读取）"
+  if (content.kind !== "text") {
+    const reason = content.resolution?.reason
+    const message = content.resolution?.message ?? "（无法读取）"
+    return UNAVAILABLE[reason] ? `${UNAVAILABLE[reason]}（${reason}）` : message
+  }
   return Buffer.from(content.chunk ?? "", "base64").toString("utf8")
 }

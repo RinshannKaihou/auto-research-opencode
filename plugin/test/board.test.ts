@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { fit, formatDuration, nodeTitle, processView, railLayout } from "../src/board/process"
+import {
+  fit,
+  formatDuration,
+  knowledgeOwners,
+  nodeTitle,
+  nodeTitles,
+  processView,
+  railLayout,
+  runExecution,
+  sessionExecution,
+  taskExecution,
+} from "../src/board/process"
 
 const edge = (from: string, to: string, relation_type = "depends_on") => ({
   predecessor_node_id: from,
@@ -96,5 +107,39 @@ describe("process channels", () => {
   test("fit counts wide characters as two cells", () => {
     expect(fit("误差结构与三命题判定", 9)).toBe("误差结构…")
     expect(fit("abc", 3)).toBe("abc")
+  })
+})
+
+describe("shared channels", () => {
+  test("run, session and task states map onto the execution channel", () => {
+    expect(["complete", "running", "paused", "cold", "manual", "unverified"].map(runExecution)).toEqual([
+      "finished",
+      "running",
+      "paused",
+      "paused",
+      "pending",
+      "unknown",
+    ])
+    expect(sessionExecution({ pause_reason: "segment_complete" })).toBe("finished")
+    expect(sessionExecution({ pause_reason: "wait" })).toBe("running")
+    expect(sessionExecution({ pause_reason: "fault" })).toBe("paused")
+    expect(sessionExecution({ task_id: "T-1", specialist_state: "completed" })).toBe("finished")
+    expect(sessionExecution({ detached: 1, pause_reason: "detached" })).toBe("pending")
+    expect(["queued", "running", "failed", "cancelled"].map(taskExecution)).toEqual(["queued", "running", "failed", "stopped"])
+  })
+
+  test("knowledge belongs to nodes through cited publications and snapshots", () => {
+    const owners = knowledgeOwners({
+      publications: [{ publication_id: "P-1", node_id: "X-1" }],
+      snapshots: [{ snapshot_id: "S-2", attempt_id: "A-2" }],
+      attempts: [{ attempt_id: "A-2", node_id: "X-2" }],
+    })
+    expect(owners({ node_id: null, evidence_refs: ["pub/P-1#a", "S-2", "pub/P-1#b"] })).toEqual([
+      { node: "X-1", via: "P-1" },
+      { node: "X-2", via: "S-2" },
+    ])
+    expect(owners({ node_id: "X-9", evidence_refs: [] })).toEqual([{ node: "X-9", via: undefined }])
+    const titles = nodeTitles([{ node_id: "X-1", question: "如何建立基础：细节" }], [{ node_id: "X-1", display: { title: "X-1：执行基础" } }])
+    expect(titles.get("X-1")).toBe("执行基础")
   })
 })
