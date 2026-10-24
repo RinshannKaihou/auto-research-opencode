@@ -10,7 +10,7 @@
  * host's and stops the TUI half of the plugin from loading.
  */
 import type { Context } from "@opencode/plugin/tui/context"
-import { RGBA, SyntaxStyle } from "@opentui/core"
+import { RGBA, SyntaxStyle, type StyleDefinitionInput } from "@opentui/core"
 import type { Execution } from "./process"
 
 const KIND_HUE: Record<string, number> = { observation: 0, claim: 1, lesson: 2, hypothesis: 3, decision: 4, open_question: 5 }
@@ -56,13 +56,21 @@ export function palette(context: Context) {
   }
 }
 
+/**
+ * Newer OpenTUI (OpenCode 2.1) ties a style's native resources to an owner, the
+ * renderer's scene, and throws without one; 0.5.12 has no owner and ignores the
+ * extra argument. The types here are 0.5.12's, hence the narrow casts.
+ */
+type StyleFactory = { fromStyles(styles: Record<string, StyleDefinitionInput>, owner?: unknown): SyntaxStyle }
+
 /** Markdown styled with the theme's own markdown and syntax tokens, as in the chat. */
 export function markdownStyle(context: Context): SyntaxStyle {
   const theme = context.theme
+  const owner = (context.renderer as unknown as { nativeScene?: unknown }).nativeScene
   // The highlighter tags headings by level; style names do not fall back to a parent.
   const heading = { fg: theme.markdown.heading, bold: true }
   const headings = Object.fromEntries([1, 2, 3, 4, 5, 6].map((level) => [`markup.heading.${level}`, heading]))
-  return SyntaxStyle.fromStyles({
+  return (SyntaxStyle as unknown as StyleFactory).fromStyles({
     default: { fg: theme.markdown.text },
     conceal: { fg: theme.text.muted },
     "markup.heading": heading,
@@ -88,5 +96,5 @@ export function markdownStyle(context: Context): SyntaxStyle {
     type: { fg: theme.syntax.type },
     operator: { fg: theme.syntax.operator },
     punctuation: { fg: theme.syntax.punctuation },
-  })
+  }, owner)
 }
