@@ -3,6 +3,11 @@
  * thing on every tab: feedback colors show execution state, the categorical
  * palette tells knowledge kinds apart, and only the conclusion outcome uses
  * feedback colors for a scientific result.
+ *
+ * This file is .tsx on purpose: OpenCode points value imports of
+ * `@opentui/core` at its own OpenTUI only in files it compiles as JSX. From a
+ * .ts file the import loads the plugin's local copy, which clashes with the
+ * host's and stops the TUI half of the plugin from loading.
  */
 import type { Context } from "@opencode/plugin/tui/context"
 import { RGBA, SyntaxStyle } from "@opentui/core"
