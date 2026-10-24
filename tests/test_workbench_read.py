@@ -185,3 +185,16 @@ def test_session_page_projects_bounded_specialist_identity_without_ledger_writes
     assert len(row["label"]) <= 241 and "prompt" not in row
     assert first["items"][0]["role"] == "main"
     assert hashlib.sha256(store.db_path.read_bytes()).hexdigest() == before
+
+
+def test_knowledge_kind_totals_cover_entries_beyond_the_first_page(tmp_path):
+    store, _, _ = initialized(tmp_path)
+    for index in range(100):
+        store.record_knowledge({"kind": "open_question", "statement": f"question {index}"}, f"q{index}")
+    store.record_knowledge({"kind": "hypothesis", "statement": "late hypothesis"}, "h1")
+    first = workbench_read.knowledge_page(store, limit=100)
+    assert first["total"] == 101
+    assert {item["kind"] for item in first["items"]} == {"open_question"}
+    # The board counts each kind with a one-row query instead of reading the page.
+    assert workbench_read.knowledge_page(store, kind="hypothesis", limit=1)["total"] == 1
+    assert workbench_read.knowledge_page(store, kind="open_question", limit=1)["total"] == 100
