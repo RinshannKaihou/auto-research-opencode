@@ -15,7 +15,7 @@ import {
   TABS,
   decodeChunk,
   isMarkdown,
-  knowledgeCounts,
+  kindChips,
   knowledgeRows,
   materialRows,
   overviewModel,
@@ -67,7 +67,10 @@ export function ResearchBoard(props: {
   const [graph, setGraph] = createSignal<ProcessView | null>(null)
   const [processNode, setProcessNode] = createSignal<any>(null)
   const [tasks, setTasks] = createSignal<any[]>([])
-  const [knowledgeAll, setKnowledgeAll] = createSignal<any[]>([])
+  const [knowledgeTotals, setKnowledgeTotals] = createSignal<{ kind?: string; total: number }[]>([])
+  /** How many entries match the current filters; the list shows at most the first page. */
+  const [knowledgeListed, setKnowledgeListed] = createSignal(0)
+  const chips = createMemo(() => kindChips(knowledgeTotals()))
   const [owners, setOwners] = createSignal<(item: any) => { node: string; via?: string }[]>(() => [])
   const [titles, setTitles] = createSignal(new Map<string, string>())
   // Integer pane widths: a percentage can leave a fractional column for wrapped text.
@@ -127,24 +130,29 @@ export function ResearchBoard(props: {
         setGraph(view)
         nextRows = view.nodes.map((node) => ({ id: node.id, code: node.id, title: node.title, data: node }))
       } else if (target === "knowledge") {
-        const filtered = Boolean(kindFilter() || statusFilter())
-        const [all, shown, [nodes, publications, snapshots, attempts]] = await Promise.all([
-          board("knowledge", { limit: 100 }),
-          filtered
-            ? board("knowledge", {
-                limit: 100,
-                ...(kindFilter() ? { kind: kindFilter() } : {}),
-                ...(statusFilter() ? { status: statusFilter() } : {}),
-              })
-            : null,
+        // Rows are the first page; chip counts come from one count query per
+        // kind under the same status filter, so they cover every entry.
+        const status = statusFilter() ? { status: statusFilter() } : {}
+        const kinds: string[] = nextSummary.knowledge_kinds ?? []
+        const [shown, totals, [nodes, publications, snapshots, attempts]] = await Promise.all([
+          board("knowledge", { limit: 100, ...(kindFilter() ? { kind: kindFilter() } : {}), ...status }),
+          Promise.all(
+            [undefined, ...kinds].map((kind) =>
+              board("knowledge", { limit: 1, ...(kind ? { kind } : {}), ...status }).then((page) => ({
+                kind,
+                total: Number(page?.total ?? 0),
+              })),
+            ),
+          ),
           pages(["nodes", "publications", "snapshots", "attempts"]),
         ])
         if (run !== generation) return
-        setKnowledgeAll(all?.items ?? [])
+        setKnowledgeTotals(totals)
+        setKnowledgeListed(Number(shown?.total ?? 0))
         const resolve = knowledgeOwners({ publications: publications!, snapshots: snapshots!, attempts: attempts! })
         setOwners(() => resolve)
         setTitles(nodeTitles(nodes!, publications!))
-        nextRows = knowledgeRows(filtered ? shown : all)
+        nextRows = knowledgeRows(shown)
       } else if (target === "materials") {
         nextRows = materialRows(await board("page", { collection: "publications", limit: 100 }))
       } else {
@@ -242,7 +250,10 @@ export function ResearchBoard(props: {
       {
         bind: "f",
         enabled: () => tab() === "knowledge",
-        run: () => cycle(knowledgeCounts(knowledgeAll()).map((entry) => entry.kind), kindFilter(), setKindFilter),
+        run: () => {
+          const kinds = chips().kinds.map((entry) => entry.kind)
+          cycle(kinds.length ? kinds : summary()?.knowledge_kinds ?? [], kindFilter(), setKindFilter)
+        },
       },
       {
         bind: "s",
@@ -316,12 +327,12 @@ export function ResearchBoard(props: {
           )}
         </For>
       </text>
-      <Show when={tab() === "knowledge" && !reader() && knowledgeAll().length}>
+      <Show when={tab() === "knowledge" && !reader() && knowledgeTotals().length}>
         <box marginTop={1} flexShrink={0}>
           <KnowledgeFilter
             context={context}
-            counts={knowledgeCounts(knowledgeAll())}
-            total={knowledgeAll().length}
+            counts={chips().kinds}
+            total={chips().total}
             kind={kindFilter()}
             status={statusFilter()}
           />
@@ -385,6 +396,12 @@ export function ResearchBoard(props: {
               </scrollbox>
               <Show when={tab() === "process" && graph()}>
                 <ProcessLegend context={context} />
+              </Show>
+              {/* Outside the scrolling list, so it stays visible: the list is one page, the counts are not. */}
+              <Show when={tab() === "knowledge" && knowledgeListed() > rows().length}>
+                <text fg={colors.muted} wrapMode="none" flexShrink={0}>
+                  {` 只列出前 ${rows().length} 条，共 ${knowledgeListed()} 条`}
+                </text>
               </Show>
             </box>
           </Show>

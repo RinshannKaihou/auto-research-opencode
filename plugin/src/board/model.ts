@@ -189,10 +189,19 @@ export function knowledgeRows(page: any): Row[] {
   }))
 }
 
-export function knowledgeCounts(items: any[]): { kind: string; count: number }[] {
-  const counts = new Map<string, number>()
-  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1)
-  return [...counts].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count)
+/**
+ * Kind chips from server-side totals (one count query per kind), so a kind
+ * that first appears after the loaded page is still listed and selectable.
+ * The entry without a kind carries the total for all kinds.
+ */
+export function kindChips(totals: { kind?: string; total: number }[]): { total: number; kinds: { kind: string; count: number }[] } {
+  return {
+    total: totals.find((entry) => !entry.kind)?.total ?? 0,
+    kinds: totals
+      .filter((entry) => entry.kind && entry.total > 0)
+      .map((entry) => ({ kind: entry.kind!, count: entry.total }))
+      .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind)),
+  }
 }
 
 /** One row per publication item, so Enter can open the frozen file. */
