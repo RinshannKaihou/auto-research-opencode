@@ -143,3 +143,28 @@ describe("shared channels", () => {
     expect(titles.get("X-1")).toBe("执行基础")
   })
 })
+
+describe("host runtime", () => {
+  test("OpenTUI values are imported only from .tsx files", () => {
+    // OpenCode redirects @opentui imports to its own instance only in files it
+    // compiles as JSX. A value import in a .ts file loads the plugin's local
+    // OpenTUI, which clashes with the host's and the TUI plugin fails to load.
+    const { readFileSync } = require("node:fs") as typeof import("node:fs")
+    const { join } = require("node:path") as typeof import("node:path")
+    const glob = new Bun.Glob("**/*.ts")
+    const root = join(import.meta.dir, "..")
+    const offenders: string[] = []
+    for (const file of [...glob.scanSync({ cwd: join(root, "src") })].map((path) => join("src", path)).concat(["index.ts", "rpc.ts"])) {
+      const source = readFileSync(join(root, file), "utf8")
+      // One brace group or a one-line clause, so a match never spans another import.
+      for (const match of source.matchAll(/^import\s+((?:type\s+)?\{[^}]*\}|[^\n{]+?)\s+from\s+["']@opentui\/[^"']*["']/gm)) {
+        const clause = match[1]!.trim()
+        if (clause.startsWith("type ")) continue
+        const named = /^\{([^}]*)\}$/.exec(clause)?.[1]
+        if (named !== undefined && named.split(",").every((part) => !part.trim() || part.trim().startsWith("type "))) continue
+        offenders.push(`${file}: ${match[0]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
