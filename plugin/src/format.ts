@@ -47,14 +47,15 @@ export function roleName(role: string | undefined): string {
   return role ? ROLES[role] ?? role : "未登记"
 }
 
+export const OUTCOMES: Record<string, string> = { answered: "已回答", partial: "部分回答", unresolved: "未解决" }
+export const REVIEWS: Record<string, string> = { unreviewed: "未审阅", partial: "部分审阅", reviewed: "已审阅" }
+
 export function conclusionLines(conclusion: any, state?: string): string[] {
   if (!conclusion) return state === "complete" ? ["结项记录：未记录；审阅情况未知。"] : []
-  const outcomes: Record<string, string> = { answered: "已回答", partial: "部分回答", unresolved: "未解决" }
-  const reviews: Record<string, string> = { unreviewed: "未审阅", partial: "部分审阅", reviewed: "已审阅" }
   return [
-    `结项结果：${outcomes[conclusion.outcome] ?? conclusion.outcome}`,
+    `结项结果：${OUTCOMES[conclusion.outcome] ?? conclusion.outcome}`,
     `最终报告：${conclusion.final_ref}`,
-    `审阅声明：${reviews[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
+    `审阅声明：${REVIEWS[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
     ...(conclusion.gaps ?? []).map((gap: string) => `未解决项：${gap}`),
     ...(conclusion.review.limitations ?? []).map((gap: string) => `审阅限制：${gap}`),
     ...(conclusion.review.refs ?? []).map((ref: string) => `审阅材料：${ref}`),

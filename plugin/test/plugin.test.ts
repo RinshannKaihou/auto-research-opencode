@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
-import { knowledgeRows, materialRows, overviewText, runtimeText, sessionRows } from "../src/board/model"
+import { decodeChunk, knowledgeCounts, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
 import { StorageClient } from "../src/storage"
 import { TOOL_NAMES } from "../src/tools"
 
@@ -212,8 +212,9 @@ describe("autonomous research", () => {
     expect(summary.run.state).toBe("complete")
     expect(summary.final_publication.publication_id).toBe(pub.publication_id)
     expect(summary.latest_publication.publication_id).toBe(partial.publication_id)
-    expect(overviewText(summary, null)).toContain("结项结果：未解决")
-    expect(overviewText(summary, null)).toContain("不表示结论通过")
+    const overview = overviewModel(summary, null)!
+    expect(overview.conclusion?.outcomeLabel).toBe("未解决")
+    expect(overview.conclusion?.reviewNote).toBe("不表示结论通过")
   })
 
   test("notification failure preserves the committed conclusion across restart", async () => {
@@ -642,19 +643,21 @@ describe("command parsing", () => {
 
 describe("board text", () => {
   test("historical completion reports a missing contract, not an inferred review", () => {
-    const text = overviewText({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)
-    expect(text).toContain("结项记录：未记录")
-    expect(text).toContain("审阅情况未知")
+    const overview = overviewModel({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)!
+    expect(overview.notices).toEqual(["结项记录：未记录；审阅情况未知。"])
+    expect(overview.conclusion).toBeUndefined()
   })
   test("labels the newest publication as latest, not final, and hides display items", () => {
-    const text = overviewText(
+    const overview = overviewModel(
       {
         project: { goal: "G" }, project_root: "/p", run: { state: "running" }, counts: {}, review_queue: {},
         final_publication: { publication_id: "P-003", status: "complete", summary: "s" },
       },
       null,
-    )
-    expect(text).toContain("最新阶段成果 P-003")
+    )!
+    // Without a conclusion the newest publication is shown as latest, never as final.
+    expect(overview.final).toBeUndefined()
+    expect(overview.latest?.id).toBe("P-003")
     const rows = materialRows({
       items: [{ publication_id: "P-001", status: "partial", summary: "s", items: [
         { item_id: "__research_display", ref: "pub/P-001#__research_display" },
@@ -678,9 +681,28 @@ describe("board text", () => {
   })
   test("runtime detail does not repeat the conclusion record", () => {
     const conclusion = { outcome: "partial", final_ref: "pub/P-1#r", gaps: ["gap"], review: { status: "reviewed", refs: [], limitations: ["lim"] } }
-    const text = runtimeText({ run: { state: "complete" }, conclusion }, null, [])
-    expect(text).toContain("结项记录：已登记，见概览")
-    expect(text).not.toContain("未解决项")
-    expect(runtimeText({ run: { state: "complete" }, conclusion: null }, null, [])).toContain("结项记录：未记录")
+    expect(runtimeNotes({ run: { state: "complete" }, conclusion })).toEqual(["结项记录：已登记，见概览"])
+    expect(runtimeNotes({ run: { state: "complete" }, conclusion: null })).toEqual(["结项记录：未记录；审阅情况未知。"])
+  })
+  test("overview shows the final report once and a newer publication as latest", () => {
+    const conclusion = { outcome: "partial", final_ref: "pub/P-2#r", gaps: ["g1", "g2"], review: { status: "reviewed", refs: ["pub/P-3#review"], limitations: ["l1"] } }
+    const final = { publication_id: "P-2", status: "complete", summary: "final", display: { title: "Final", overview: "o", sections: [{ heading: "h", items: ["i"] }] } }
+    const base = { project: { goal: "G" }, project_root: "/p", run: { state: "complete" }, counts: { nodes: 7 }, review_queue: { pending_total: 3 }, conclusion, final_publication: final }
+    const same = overviewModel({ ...base, latest_publication: final }, null)!
+    expect(same.final?.title).toBe("Final")
+    expect(same.latest).toBeUndefined()
+    expect(same.conclusion?.gaps).toEqual(["g1", "g2"])
+    expect(same.counts.find((count) => count.label === "待整理")?.value).toBe(3)
+    const newer = overviewModel({ ...base, latest_publication: { publication_id: "P-4", status: "partial", summary: "later" } }, null)!
+    expect(newer.latest?.id).toBe("P-4")
+  })
+  test("knowledge counts and unreadable files read as plain language", () => {
+    expect(knowledgeCounts([{ kind: "claim" }, { kind: "observation" }, { kind: "claim" }])).toEqual([
+      { kind: "claim", count: 2 },
+      { kind: "observation", count: 1 },
+    ])
+    const missing = decodeChunk({ ref: "pub/P-1#a", resolution: { outcome: "unavailable", reason: "object_missing", message: "pub/P-1#a: object_missing" } })
+    expect(missing).toContain("不在本机")
+    expect(missing).toContain("object_missing")
   })
 })
