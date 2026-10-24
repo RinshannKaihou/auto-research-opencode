@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
-import { decodeChunk, knowledgeCounts, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
+import { decodeChunk, kindChips, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
 import { StorageClient } from "../src/storage"
 import { TOOL_NAMES } from "../src/tools"
 
@@ -696,11 +696,21 @@ describe("board text", () => {
     const newer = overviewModel({ ...base, latest_publication: { publication_id: "P-4", status: "partial", summary: "later" } }, null)!
     expect(newer.latest?.id).toBe("P-4")
   })
-  test("knowledge counts and unreadable files read as plain language", () => {
-    expect(knowledgeCounts([{ kind: "claim" }, { kind: "observation" }, { kind: "claim" }])).toEqual([
-      { kind: "claim", count: 2 },
-      { kind: "observation", count: 1 },
+  test("kind chips come from server totals, not from the loaded page", () => {
+    // The first page holds 100 open questions; the one hypothesis is entry 101.
+    const chips = kindChips([
+      { kind: undefined, total: 101 },
+      { kind: "claim", total: 0 },
+      { kind: "hypothesis", total: 1 },
+      { kind: "open_question", total: 100 },
     ])
+    expect(chips.total).toBe(101)
+    expect(chips.kinds).toEqual([
+      { kind: "open_question", count: 100 },
+      { kind: "hypothesis", count: 1 },
+    ])
+  })
+  test("unreadable files read as plain language", () => {
     const missing = decodeChunk({ ref: "pub/P-1#a", resolution: { outcome: "unavailable", reason: "object_missing", message: "pub/P-1#a: object_missing" } })
     expect(missing).toContain("不在本机")
     expect(missing).toContain("object_missing")
