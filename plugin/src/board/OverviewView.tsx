@@ -183,10 +183,14 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
             </Section>
           </box>
         )
-        // The goal is already in the board header; the page opens with the verdict.
+        // The full goal, wrapped: the header shortens it to one line, and a long
+        // goal's scope and constraints come last. The header omits it on this tab.
         return (
           <box flexDirection="column">
-            <text wrapMode="none">
+            <text>
+              <span style={{ fg: colors.base, attributes: TextAttributes.BOLD }}>{model().goal}</span>
+            </text>
+            <text wrapMode="none" marginTop={1}>
               <span style={{ fg: colors.execution[execution()] }}>
                 {`${EXECUTION[execution()].glyph} ${model().runLabel}`}
               </span>

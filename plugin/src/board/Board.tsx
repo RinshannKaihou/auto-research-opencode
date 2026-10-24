@@ -306,7 +306,10 @@ export function ResearchBoard(props: {
     <box flexDirection="column" width="100%" height="100%" paddingX={2} paddingTop={1} backgroundColor={theme.background.base}>
       <text wrapMode="none" flexShrink={0}>
         <span style={{ fg: colors.brand, attributes: TextAttributes.BOLD }}>Research</span>
-        <span style={{ fg: colors.base }}>{`  ${fit(summary()?.project?.goal ?? "研究看板", dimensions().width - 24)}`}</span>
+        {/* The overview shows the full goal; elsewhere one line keeps the context. */}
+        <span style={{ fg: colors.base }}>
+          {tab() === "overview" && summary()?.project ? "" : `  ${fit(summary()?.project?.goal ?? "研究看板", dimensions().width - 24)}`}
+        </span>
         <span style={{ fg: colors.muted }}>{loading() ? "  读取中…" : ""}</span>
       </text>
       <text wrapMode="none" flexShrink={0} marginTop={1}>
