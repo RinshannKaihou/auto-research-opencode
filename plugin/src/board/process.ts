@@ -63,9 +63,9 @@ const QUIET_PAUSES = new Set(["wait", "segment_complete", "finished", "complete"
 
 const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]|[\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u
 
-export function displayWidth(text: string): number {
+export function displayWidth(text: string | undefined): number {
   let width = 0
-  for (const char of text) width += WIDE.test(char) ? 2 : 1
+  for (const char of text ?? "") width += WIDE.test(char) ? 2 : 1
   return width
 }
 
@@ -123,6 +123,56 @@ function executionOf(attempt: any, task: any, session: any): Execution {
   if (attempt?.state === "stopped" || task?.state === "cancelled") return "stopped"
   if (attempt?.state === "unknown" || task?.state === "unverified") return "unknown"
   return "pending"
+}
+
+const RUN_EXECUTION: Record<string, Execution> = {
+  manual: "pending",
+  running: "running",
+  paused: "paused",
+  stopping: "stopped",
+  stopped: "stopped",
+  complete: "finished",
+  cold: "paused",
+  unverified: "unknown",
+}
+
+/** The project's run state on the execution channel; never a statement about results. */
+export function runExecution(state: string | undefined): Execution {
+  return (state && RUN_EXECUTION[state]) || "unknown"
+}
+
+const TASK_EXECUTION: Record<string, Execution> = {
+  queued: "queued",
+  starting: "running",
+  running: "running",
+  finished: "finished",
+  failed: "failed",
+  cancelled: "stopped",
+  unverified: "unknown",
+}
+
+export function taskExecution(state: string | undefined): Execution {
+  return (state && TASK_EXECUTION[state]) || "unknown"
+}
+
+const SPECIALIST_EXECUTION: Record<string, Execution> = {
+  starting: "running",
+  running: "running",
+  completed: "finished",
+  incomplete: "unknown",
+  unverified: "unknown",
+  cancelled: "stopped",
+}
+
+/** A session's execution state from its pause reason; specialists report their own task state. */
+export function sessionExecution(session: any): Execution {
+  if (session?.task_id) return SPECIALIST_EXECUTION[session.specialist_state] ?? "unknown"
+  if (session?.detached) return "pending"
+  const reason = session?.pause_reason
+  if (!reason || reason === "wait") return "running"
+  if (["segment_complete", "finished", "complete"].includes(reason)) return "finished"
+  if (reason === "stop") return "stopped"
+  return "paused"
 }
 
 /** Kahn's order with ledger order as the tie-break; a cycle falls back to ledger order. */
@@ -209,6 +259,36 @@ export function railLayout(ids: string[], successors: Map<string, string[]>): { 
   return { rail: rail.map((line) => ({ ...line, rail: line.rail.slice(0, width).padEnd(width) })), width }
 }
 
+/** Node titles by ID, each from the node's newest publication that has a display title. */
+export function nodeTitles(nodes: any[], publications: any[]): Map<string, string> {
+  return new Map(
+    nodes.map((node) => {
+      const titled = publications.filter((item) => item.node_id === node.node_id && item.display?.title).at(-1)
+      return [node.node_id, nodeTitle(node, titled)]
+    }),
+  )
+}
+
+/**
+ * Which nodes a knowledge entry belongs to: its own node, or the nodes whose
+ * publications and snapshots its evidence cites. `via` names the citing ref.
+ */
+export function knowledgeOwners(data: { publications: any[]; snapshots: any[]; attempts: any[] }) {
+  const publicationNode = new Map(data.publications.map((publication) => [publication.publication_id, publication.node_id]))
+  const attemptNode = new Map(data.attempts.map((attempt) => [attempt.attempt_id, attempt.node_id]))
+  const snapshotNode = new Map(data.snapshots.map((snapshot) => [snapshot.snapshot_id, attemptNode.get(snapshot.attempt_id)]))
+  return (item: any): { node: string; via?: string }[] => {
+    const owners = new Map<string, string | undefined>(item.node_id ? [[item.node_id, undefined]] : [])
+    for (const ref of item.evidence_refs ?? []) {
+      const publication = /^pub\/([^#/]+)/.exec(ref)?.[1]
+      const snapshot = /^(?:snap\/)?(S-\d+)/.exec(ref)?.[1]
+      const owner = publication ? publicationNode.get(publication) : snapshot ? snapshotNode.get(snapshot) : undefined
+      if (owner && !owners.has(owner)) owners.set(owner, publication ?? snapshot)
+    }
+    return [...owners].map(([node, via]) => ({ node, via }))
+  }
+}
+
 export function processView(
   data: {
     nodes: any[]
@@ -231,23 +311,10 @@ export function processView(
   }))
   const ids = order(data.nodes.map((node) => node.node_id), edges)
   const nodeById = new Map(data.nodes.map((node) => [node.node_id, node]))
-  const publicationNode = new Map(data.publications.map((publication) => [publication.publication_id, publication.node_id]))
-  const attemptNode = new Map(data.attempts.map((attempt) => [attempt.attempt_id, attempt.node_id]))
-  const snapshotNode = new Map(data.snapshots.map((snapshot) => [snapshot.snapshot_id, attemptNode.get(snapshot.attempt_id)]))
-  // Knowledge belongs to a node directly, or through the publications and snapshots it cites.
-  const knowledgeNodes = (item: any): Set<string> => {
-    const owners = new Set<string>(item.node_id ? [item.node_id] : [])
-    for (const ref of item.evidence_refs ?? []) {
-      const publication = /^pub\/([^#/]+)/.exec(ref)?.[1]
-      const snapshot = /^(?:snap\/)?(S-\d+)/.exec(ref)?.[1]
-      const owner = publication ? publicationNode.get(publication) : snapshot ? snapshotNode.get(snapshot) : undefined
-      if (owner) owners.add(owner)
-    }
-    return owners
-  }
+  const owners = knowledgeOwners(data)
   const knowledgeByNode = new Map<string, any[]>()
   for (const item of data.knowledge) {
-    for (const owner of knowledgeNodes(item)) knowledgeByNode.set(owner, [...(knowledgeByNode.get(owner) ?? []), item])
+    for (const { node } of owners(item)) knowledgeByNode.set(node, [...(knowledgeByNode.get(node) ?? []), item])
   }
   const nodes: NodeView[] = ids.map((id) => {
     const node = nodeById.get(id)

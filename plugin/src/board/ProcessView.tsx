@@ -5,8 +5,9 @@
  * knowledge is a square or tag in a per-kind hue.
  */
 import type { Context } from "@opencode/plugin/tui/context"
-import { TextAttributes, type RGBA } from "@opentui/core"
+import { TextAttributes, type RGBA, type SyntaxStyle } from "@opentui/core"
 import { For, Show, createMemo } from "solid-js"
+import { palette } from "./palette"
 import {
   EXECUTION,
   displayWidth,
@@ -15,40 +16,12 @@ import {
   kindName,
   relationName,
   type Edge,
-  type Execution,
   type NodeView,
   type ProcessView,
 } from "./process"
+import { Markdown, Section, clock } from "./ui"
 
-const KIND_HUE: Record<string, number> = { observation: 0, claim: 1, lesson: 2, hypothesis: 3, decision: 4, open_question: 5 }
 const KNOWLEDGE_SHOWN = 6
-
-function palette(context: Context) {
-  const theme = context.theme
-  const dark = context.themeMode !== "light"
-  const tone = (scale: unknown, step: number) => (scale as Record<number, RGBA>)[dark ? step : 1000 - step]!
-  return {
-    base: theme.text.base,
-    muted: theme.text.muted,
-    rail: theme.border.base,
-    band: tone(theme.hue.accent, 800),
-    marker: tone(theme.hue.accent, 300),
-    link: tone(theme.hue.interactive, 200),
-    chip: theme.background.raised.high,
-    kind: (kind: string) =>
-      tone(theme.categorical[(KIND_HUE[kind] ?? 0) % Math.max(1, theme.categorical.length)], 300) ?? theme.text.muted,
-    execution: {
-      pending: theme.text.muted,
-      queued: theme.text.feedback.info.base,
-      running: theme.text.feedback.info.base,
-      paused: theme.text.feedback.warning.base,
-      finished: theme.text.feedback.success.base,
-      failed: theme.text.feedback.error.base,
-      stopped: theme.text.feedback.warning.base,
-      unknown: theme.text.feedback.warning.base,
-    } as Record<Execution, RGBA>,
-  }
-}
 
 const DELIVERY: Record<string, string> = { complete: "交付完成", partial: "阶段材料" }
 
@@ -168,21 +141,6 @@ export function ProcessLegend(props: { context: Context }) {
   )
 }
 
-function Section(props: { context: Context; title: string; count?: number; children: any }) {
-  const colors = palette(props.context)
-  return (
-    <box flexDirection="column" marginTop={1}>
-      <text wrapMode="none">
-        <span style={{ fg: colors.base, attributes: TextAttributes.BOLD }}>{props.title}</span>
-        <span style={{ fg: colors.muted }}>{props.count !== undefined ? `  ${props.count}` : ""}</span>
-      </text>
-      <box flexDirection="column" paddingLeft={2}>
-        {props.children}
-      </box>
-    </box>
-  )
-}
-
 function Relation(props: { context: Context; view: ProcessView; edge: Edge; direction: "up" | "down"; width: number }) {
   const colors = palette(props.context)
   const other = () => (props.direction === "up" ? props.edge.from : props.edge.to)
@@ -205,15 +163,14 @@ function Relation(props: { context: Context; view: ProcessView; edge: Edge; dire
   )
 }
 
-function clock(value: string | null | undefined): string {
-  if (!value) return "进行中"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  const pad = (number: number) => String(number).padStart(2, "0")
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-export function ProcessDetail(props: { context: Context; view: ProcessView; selected: number; node: any; width: number }) {
+export function ProcessDetail(props: {
+  context: Context
+  view: ProcessView
+  selected: number
+  node: any
+  width: number
+  markdown: SyntaxStyle
+}) {
   const colors = palette(props.context)
   const current = () => props.view.nodes[props.selected]
   // The full record arrives after the selection moves; never mix in the previous node's.
@@ -300,7 +257,7 @@ export function ProcessDetail(props: { context: Context; view: ProcessView; sele
           </Show>
           <Show when={record().plan}>
             <Section context={props.context} title="计划">
-              <text fg={colors.base}>{record().plan}</text>
+              <Markdown style={props.markdown} content={record().plan} />
             </Section>
           </Show>
           <Section context={props.context} title="执行批次" count={node().attempts.length}>
