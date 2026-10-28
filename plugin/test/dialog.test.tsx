@@ -4,15 +4,22 @@ import { testRender } from "@opentui/solid"
 import { TextDialog, showText } from "../src/dialog"
 
 type Command = { bind: string; run: () => void }
+type Layer = { priority?: number; commands: Command[] }
 
 /** Just the parts of the host the dialog touches; the dialog stack is one slot. */
 function host() {
+  const layers: Layer[] = []
   const commands: Command[] = []
   const calls: string[] = []
   let onClose: (() => void) | undefined
   const context = {
     theme: { text: { base: "#ffffff", muted: "#888888" } },
-    keymap: { layer: (input: () => { commands: Command[] }) => void commands.push(...input().commands) },
+    keymap: {
+      layer: (input: () => Layer) => {
+        layers.push(input())
+        commands.push(...input().commands)
+      },
+    },
     ui: {
       dialog: {
         show: (_render: unknown, close?: () => void) => {
@@ -27,27 +34,28 @@ function host() {
       },
     },
   } as unknown as Context
-  return { context, calls, press: (key: string) => commands.find((command) => command.bind === key)!.run() }
+  return { context, calls, layers, press: (key: string) => commands.find((command) => command.bind === key)!.run() }
 }
 
 /** Places the dialog like the host's container: a quarter of the way down, at most the screen width. */
-function render(context: Context, message: string) {
+function render(context: Context, message: string, height = 24) {
   return testRender(
     () => (
-      <box position="absolute" left={0} top={0} width={80} height={24} paddingTop={6} alignItems="center">
+      <box position="absolute" left={0} top={0} width={80} height={height} paddingTop={Math.floor(height / 4)} alignItems="center">
         <box paddingTop={1} width={88} maxWidth={78}>
           <TextDialog context={context} title="Research" message={message} />
         </box>
       </box>
     ),
-    { width: 80, height: 24 },
+    { width: 80, height },
   )
 }
 
+const rows = (count: number) => Array.from({ length: count }, (_, index) => `row ${String(index).padStart(2, "0")}`).join("\n")
+
 test("text taller than the screen scrolls inside the dialog instead of running off it", async () => {
-  const { context, calls, press } = host()
-  const message = Array.from({ length: 40 }, (_, index) => `row ${String(index).padStart(2, "0")}`).join("\n")
-  const screen = await render(context, message)
+  const { context, calls, layers, press } = host()
+  const screen = await render(context, rows(40))
   try {
     await screen.renderOnce()
     let frame = screen.captureCharFrame()
@@ -56,6 +64,10 @@ test("text taller than the screen scrolls inside the dialog instead of running o
     // The hint below the text stays on screen.
     expect(frame).toContain("enter")
     expect(calls).toContain("set:large")
+    // OpenCode 2.1 draws a scrollbar over the last column, so none is drawn at all.
+    expect(frame).not.toMatch(/[█▀▄]/)
+    // The session's global page keys would otherwise take PageUp/PageDown and close the dialog.
+    expect(layers[0]!.priority).toBeGreaterThan(0)
 
     press("end")
     await screen.renderOnce()
@@ -69,6 +81,19 @@ test("text taller than the screen scrolls inside the dialog instead of running o
 
     press("return")
     expect(calls.at(-1)).toBe("clear")
+  } finally {
+    screen.renderer.destroy()
+  }
+})
+
+test("on a 12-row screen the text gets the 3-row minimum and the hint still shows", async () => {
+  const screen = await render(host().context, rows(40), 12)
+  try {
+    await screen.renderOnce()
+    const frame = screen.captureCharFrame()
+    expect(frame).toContain("row 02")
+    expect(frame).not.toContain("row 03")
+    expect(frame).toContain("enter/esc")
   } finally {
     screen.renderer.destroy()
   }

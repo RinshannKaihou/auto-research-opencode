@@ -22,15 +22,20 @@ export function TextDialog(props: { context: Context; title: string; message: st
   let body: ScrollBoxRenderable | undefined
   // Starts from the line count, which only wrapping changes once the text is laid out.
   const [textHeight, setTextHeight] = createSignal(props.message.split("\n").length)
-  // The host draws a dialog a quarter of the way down the screen; its padding,
-  // the title, the hint and the gaps between them take 7 more rows.
+  // The host draws a dialog a quarter of the way down the screen. Below that, 7
+  // rows are not text: the host's top padding, the title, the gap under it, the
+  // gap above the hint, the hint, the bottom padding, and one spare row.
   const room = () => Math.max(3, dimensions().height - Math.floor(dimensions().height / 4) - 7)
 
   // show() resets the size to medium; a wider dialog wraps fewer lines.
   onMount(() => dialog.set({ size: "large" }))
   // The layer lives exactly as long as the dialog, so it needs no input mode of its own.
+  // The session's page keys are global as well and close any open dialog; the
+  // priority keeps them from winning while this one is up. Escape stays the
+  // host's: it closes any dialog, after clearing a text selection.
   props.context.keymap.layer(() => ({
     mode: "global",
+    priority: 1,
     commands: [
       { bind: "return", run: () => dialog.clear() },
       { bind: "up", run: () => body?.scrollBy(-1) },
@@ -64,10 +69,12 @@ export function TextDialog(props: { context: Context; title: string; message: st
         height={Math.min(textHeight(), room())}
         scrollX={false}
         contentOptions={{ minHeight: 0 }}
+        // Newer OpenTUI draws the bar over the text's last column, which erases a wide character on each line.
+        scrollbarOptions={{ visible: false }}
       >
         <text fg={theme.text.muted}>{props.message}</text>
       </scrollbox>
-      <text fg={theme.text.muted}>↑↓ 滚动 · enter 关闭</text>
+      <text fg={theme.text.muted}>↑↓ 滚动 · enter/esc 关闭</text>
     </box>
   )
 }
