@@ -10,7 +10,7 @@
  * from inside a decision must not queue another decision for the same root.
  */
 import type { CommandResult, Research } from "./research"
-import { findProjectRoot } from "./research"
+import { findProjectRoot, guidanceNote } from "./research"
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -446,15 +446,20 @@ export class Engine {
     return root
   }
 
-  /** Starts or restarts autonomous research; creates the project first when a goal is given. */
-  async auto(sessionID: string | null, directory: string, goal: string, model?: ModelRef): Promise<CommandResult> {
+  /**
+   * Starts or restarts autonomous research. Without a project, `text` is the
+   * goal of a new one; with a project the goal stays and `text` is the user's
+   * guidance for the new run.
+   */
+  async auto(sessionID: string | null, directory: string, text: string, model?: ModelRef): Promise<CommandResult> {
     await this.research.ready()
     let created: CommandResult | null = null
     if (!findProjectRoot(directory)) {
       if (!sessionID) throw new Error("请在会话里执行，或给出研究目标。")
-      if (!goal.trim()) throw new Error("当前目录还没有研究项目。用法：/research auto <研究目标>")
-      created = await this.research.init(sessionID, directory, goal)
+      if (!text.trim()) throw new Error("当前目录还没有研究项目。用法：/research auto <研究目标>")
+      created = await this.research.init(sessionID, directory, text)
     }
+    const guidance = created ? "" : text.trim()
     const root = this.rootFor(sessionID, directory)
     const main = this.mainIn(root)
     if (!main) throw new Error("这个项目的主会话不在 OpenCode 里。先用 /research takeover 接管。")
@@ -464,10 +469,15 @@ export class Engine {
       const state = await this.state(main)
       const run = state.workflow?.run?.state
       if (run === "running") {
+        if (guidance) throw new Error("自主研究已经在运行，补充指令没有发送；请直接在主会话里发消息，会记为用户指导。")
         return { message: "自主研究已经在运行。", sessionID: main }
       }
       if (run === "paused" || run === "cold") {
-        throw new Error("项目处于暂停状态；用 /research resume 继续。")
+        throw new Error(
+          guidance
+            ? "项目处于暂停状态，补充指令没有发送；先在主会话里发消息说明，再用 /research resume 继续。"
+            : "项目处于暂停状态；用 /research resume 继续。",
+        )
       }
       await this.call("workflow", main, { action: "run", fields: { state: "running", new_generation: true } })
       if (state.attempt && state.attempt.mode !== "auto") {
@@ -476,20 +486,20 @@ export class Engine {
       if (!state.attempt || state.attempt.mode !== "auto") {
         await this.call("focus", main, { node_id: null, role: "planner", mode: "auto" })
       }
+      // Only now is a work segment open to file the note in; it carries the guidance into later requests.
+      if (guidance) await this.call("note", main, guidanceNote(guidance))
       await this.call("workflow", main, { action: "session", fields: { pause_reason: null, waiting: [] } })
       this.idle.delete(main)
       this.research.notifyChanged(root)
       if (!this.busy.has(main)) {
-        await this.say(
-          main,
-          `开始自主研究。目标：${state.project?.goal}\n先盘点已有材料和记录，然后规划节点、派发执行；结果回来后综合，目标回答后发布最终报告并调用 research_conclude。`,
-          true,
-          "开始自主研究",
-        )
+        const kickoff = [`开始自主研究。目标：${state.project?.goal}`]
+        if (guidance) kickoff.push(`本轮附带用户指导（已记入研究记录，项目目标不变），请遵循：\n${guidance}`)
+        kickoff.push("先盘点已有材料和记录，然后规划节点、派发执行；结果回来后综合，目标回答后发布最终报告并调用 research_conclude。")
+        await this.say(main, kickoff.join("\n"), true, "开始自主研究")
       }
       await this.schedule(root)
       return {
-        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。进展会显示在侧栏、状态条和 /research board 里。`,
+        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${guidance ? "项目目标不变，补充指令已记为用户指导。" : ""}进展会显示在侧栏、状态条和 /research board 里。`,
         sessionID: main,
       }
     })

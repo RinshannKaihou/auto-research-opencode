@@ -9,7 +9,7 @@ import { Plugin } from "@opencode/plugin"
 import { existsSync } from "node:fs"
 import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
-import { Research, type CommandResult } from "./src/research"
+import { Research, guidanceNote, type CommandResult } from "./src/research"
 import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
 import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
@@ -161,7 +161,7 @@ export default Plugin.define({
         if (!research.isAssociated(input.sessionID)) return
         const text = String((input.prompt as any)?.text ?? "").trim()
         if (!text || text.startsWith("/")) return
-        await research.call("note", input.sessionID, { body: `用户指导：${text.slice(0, 2000)}`, kind: "correction" })
+        await research.call("note", input.sessionID, guidanceNote(text))
       } catch {
         // Without an open work segment there is nowhere to file the note; the message still goes through.
       }

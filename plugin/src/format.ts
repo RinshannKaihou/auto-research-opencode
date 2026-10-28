@@ -110,7 +110,7 @@ export function unassociatedStatus(root: string | null, summary: any, inSession 
 }
 
 export const USAGE = [
-  "/research auto <研究目标>     建立项目并开始自主研究（已有项目时不用写目标）",
+  "/research auto [目标或指令]   建立项目并开始自主研究；已有项目时文字作为补充指令，目标不变",
   "/research pause               暂停自主研究（当前这一轮会做完）",
   "/research resume              恢复自主研究",
   "/research stop                停止自主研究，取消节点任务（需确认）",
