@@ -5,6 +5,7 @@ import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
 import { decodeChunk, kindChips, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
+import { associatedStatus } from "../src/format"
 import { StorageClient } from "../src/storage"
 import { TOOL_NAMES } from "../src/tools"
 
@@ -646,6 +647,15 @@ describe("board text", () => {
     const overview = overviewModel({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)!
     expect(overview.notices).toEqual(["结项记录：未记录；审阅情况未知。"])
     expect(overview.conclusion).toBeUndefined()
+  })
+  test("status counts the conclusion lists and leaves the entries to the board", () => {
+    const gaps = Array.from({ length: 12 }, (_, index) => `gap ${index}`)
+    const conclusion = { outcome: "partial", final_ref: "pub/P-2#r", gaps, review: { status: "partial", refs: ["pub/P-3#review"], limitations: ["l1", "l2"] } }
+    const text = associatedStatus({ project: { goal: "G" }, workflow: { run: { state: "complete" }, conclusion } })
+    expect(text).toContain("未解决项 12 条 · 审阅限制 2 条 · 审阅材料 1 条，逐条见 /research board 概览")
+    expect(text).not.toContain("gap 0")
+    const clean = associatedStatus({ workflow: { run: { state: "complete" }, conclusion: { ...conclusion, gaps: [], review: { status: "reviewed", refs: [], limitations: [] } } } })
+    expect(clean).not.toContain("逐条见")
   })
   test("labels the newest publication as latest, not final, and hides display items", () => {
     const overview = overviewModel(

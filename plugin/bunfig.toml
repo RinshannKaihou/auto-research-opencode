@@ -1,0 +1,3 @@
+[test]
+# Compiles Solid JSX for the TUI component tests.
+preload = ["@opentui/solid/preload"]
