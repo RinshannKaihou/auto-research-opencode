@@ -10,6 +10,7 @@ import { ResearchRpc } from "./rpc"
 import { parseResearchCommand } from "./src/commands"
 import { errorText } from "./src/format"
 import { ResearchBoard } from "./src/board/Board"
+import { showText } from "./src/dialog"
 import { ResearchComposerLine, ResearchSidebar, createSessionStatus } from "./src/status"
 
 const BOARD = "research-board"
@@ -20,7 +21,7 @@ export default Plugin.define({
   setup(context) {
     const [previous, setPrevious] = createSignal({ ...context.ui.router.current() })
     const location = () => context.location ?? context.data.location.default()
-    const alert = (message: string) => context.ui.dialog.alert({ title: "Research", message })
+    const alert = (message: string) => showText(context, "Research", message)
     const status = createSessionStatus(context)
 
     const disposeRoute = context.ui.router.register({

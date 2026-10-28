@@ -52,13 +52,18 @@ export const REVIEWS: Record<string, string> = { unreviewed: "未审阅", partia
 
 export function conclusionLines(conclusion: any, state?: string): string[] {
   if (!conclusion) return state === "complete" ? ["结项记录：未记录；审阅情况未知。"] : []
+  // Counts only: these lists have no bound, and the board overview shows every entry.
+  const lists: [string, string[] | undefined][] = [
+    ["未解决项", conclusion.gaps],
+    ["审阅限制", conclusion.review.limitations],
+    ["审阅材料", conclusion.review.refs],
+  ]
+  const counted = lists.filter(([, items]) => items?.length).map(([label, items]) => `${label} ${items!.length} 条`)
   return [
     `结项结果：${OUTCOMES[conclusion.outcome] ?? conclusion.outcome}`,
     `最终报告：${conclusion.final_ref}`,
     `审阅声明：${REVIEWS[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
-    ...(conclusion.gaps ?? []).map((gap: string) => `未解决项：${gap}`),
-    ...(conclusion.review.limitations ?? []).map((gap: string) => `审阅限制：${gap}`),
-    ...(conclusion.review.refs ?? []).map((ref: string) => `审阅材料：${ref}`),
+    ...(counted.length ? [`${counted.join(" · ")}，逐条见 /research board 概览`] : []),
   ]
 }
 
