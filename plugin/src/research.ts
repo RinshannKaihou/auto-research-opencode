@@ -32,6 +32,11 @@ export function findProjectRoot(directory: string): string | null {
   }
 }
 
+/** The note that files a user's words to a research session as guidance in the open work segment. */
+export function guidanceNote(text: string): { body: string; kind: string } {
+  return { body: `用户指导：${text.slice(0, 2000)}`, kind: "correction" }
+}
+
 export interface CommandResult {
   message: string
   state?: unknown

@@ -452,6 +452,45 @@ describe("autonomous research", () => {
     expect(JSON.stringify(notes)).toContain("用户指导：先测小事务")
   })
 
+  test("auto with text on an existing project keeps the goal and records the text as guidance", async () => {
+    const host = await load()
+    const first = await host.command("auto", "ses_main", { goal: "Find X" })
+    expect(first.message).not.toContain("补充指令")
+    const pub = await host.call("research_publish", "ses_main", {
+      status: "complete", summary: "final", items: [{ item_id: "report", kind: "text", content: { text: "partial" } }],
+    })
+    await host.call("research_conclude", "ses_main", {
+      summary: "ended", final_ref: `pub/${pub.publication_id}#report`, outcome: "partial", gaps: ["Y untested"],
+      review: { status: "unreviewed", refs: [], limitations: ["Not reviewed"] },
+    })
+    const restarted = await host.command("auto", "ses_main", { goal: "重点验证 Y，放弃 Z" })
+    expect(restarted.message).toContain("补充指令已记为用户指导")
+    const summary = await host.summary()
+    expect(summary.project.goal).toBe("Find X")
+    expect(summary.run.state).toBe("running")
+    const kickoff = host.said("ses_main").at(-1)
+    expect(kickoff).toMatchObject({ resume: true })
+    expect(kickoff.text).toContain("目标：Find X")
+    expect(kickoff.text).toContain("重点验证 Y，放弃 Z")
+    // Filed in the new work segment, so later requests carry it, not only the kickoff message.
+    const request = modelRequest("ses_main")
+    await host.hooks.get("context")!(request)
+    expect(JSON.stringify(request.system)).toContain("用户指导：重点验证 Y，放弃 Z")
+  })
+
+  test("auto with text is refused, not dropped, while research runs or is paused", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "Find X" })
+    const running = await host.command("auto", "ses_main", { goal: "改看 Y" })
+    expect(running.error).toContain("补充指令没有发送")
+    await host.command("pause", "ses_main")
+    const paused = await host.command("auto", "ses_main", { goal: "改看 Y" })
+    expect(paused.error).toContain("补充指令没有发送")
+    expect(paused.error).toContain("/research resume")
+    const note = await host.rpc().board({ view: "reference_get", directory: project, fields: { ref: "N-001" } })
+    expect(JSON.stringify(note)).not.toContain("用户指导")
+  })
+
   test("an instance opened in a subdirectory never drives the project", async () => {
     const root = await load()
     await root.command("auto", "ses_main", { goal: "Find X" })
