@@ -504,18 +504,27 @@ export class Engine {
       await this.call("workflow", main, { action: "session", fields: { pause_reason: null, waiting: [] } })
       this.idle.delete(main)
       this.research.notifyChanged(root)
-      if (!this.busy.has(main)) {
+      // The busy check above came before several awaits; a turn that started since means no kickoff goes out.
+      const kickoffSent = !this.busy.has(main)
+      if (kickoffSent) {
         const kickoff = [`开始自主研究。目标：${state.project?.goal}`]
         if (guidance) kickoff.push(`本轮附带用户指导（项目目标不变），请遵循：\n${guidance}`)
         kickoff.push("先盘点已有材料和记录，然后规划节点、派发执行；结果回来后综合，目标回答后发布最终报告并调用 research_conclude。")
         await this.say(main, kickoff.join("\n"), true, "开始自主研究")
       }
       await this.schedule(root)
-      const filed = noteError
-        ? `项目目标不变；补充指令写进了启动消息，但没能记入研究记录（${noteError}）。`
-        : "项目目标不变，补充指令已记为用户指导。"
+      let filed = ""
+      if (guidance && kickoffSent) {
+        filed = noteError
+          ? `项目目标不变；补充指令写进了启动消息，但没能记入研究记录（${noteError}）。`
+          : "项目目标不变，补充指令已记为用户指导。"
+      } else if (guidance) {
+        filed = noteError
+          ? `项目目标不变；但补充指令没能记入研究记录（${noteError}），主会话又刚开始了一轮、启动消息没有发出，请在主会话里重新发送这段指令。`
+          : "项目目标不变，补充指令已记为用户指导；但主会话刚开始了一轮，启动消息没有发出，模型只能从研究上下文里读到这段指令。"
+      }
       return {
-        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${guidance ? filed : ""}进展会显示在侧栏、状态条和 /research board 里。`,
+        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${filed}进展会显示在侧栏、状态条和 /research board 里。`,
         sessionID: main,
       }
     })

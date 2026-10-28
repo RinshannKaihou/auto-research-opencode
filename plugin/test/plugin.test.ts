@@ -530,6 +530,27 @@ describe("autonomous research", () => {
     expect(host.said("ses_main").at(-1).text).toContain("按方案 B 继续")
   })
 
+  test("a turn that starts while auto sets up the run gets no kickoff, and the result says so", async () => {
+    const host = await load()
+    await host.command("init", "ses_main", { goal: "Find X" })
+    const request = StorageClient.prototype.request
+    StorageClient.prototype.request = async function (this: StorageClient, method: string, ...rest: any[]) {
+      if (method === "note") {
+        // The user presses Enter in the main session after the busy check has passed.
+        host.turn.start("ses_main")
+        await Bun.sleep(30)
+      }
+      return (request as any).call(this, method, ...rest)
+    } as typeof request
+    cleanups.push(() => (StorageClient.prototype.request = request))
+    const started = await host.command("auto", "ses_main", { goal: "按方案 B 继续" })
+    expect(started.message).toContain("启动消息没有发出")
+    expect(host.said("ses_main").some((item) => item.text.includes("按方案 B 继续"))).toBe(false)
+    const context = modelRequest("ses_main")
+    await host.hooks.get("context")!(context)
+    expect(JSON.stringify(context.system)).toContain("用户指导：按方案 B 继续")
+  })
+
   test("an instance opened in a subdirectory never drives the project", async () => {
     const root = await load()
     await root.command("auto", "ses_main", { goal: "Find X" })
