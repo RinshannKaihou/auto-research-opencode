@@ -24,6 +24,7 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
     case "resume":
       return { kind: "rpc", action, args: {} }
     case "auto":
+      // Still `goal` on the wire; on an existing project the engine treats it as guidance for the new run.
       return { kind: "rpc", action, args: { goal: tail || null } }
     case "stop":
       return { kind: "rpc", action, args: {}, confirm: STOP_WARNING }

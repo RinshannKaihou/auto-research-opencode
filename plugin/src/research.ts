@@ -32,9 +32,12 @@ export function findProjectRoot(directory: string): string | null {
   }
 }
 
+/** Longest user guidance the ledger keeps, in characters. */
+export const GUIDANCE_LIMIT = 2000
+
 /** The note that files a user's words to a research session as guidance in the open work segment. */
 export function guidanceNote(text: string): { body: string; kind: string } {
-  return { body: `用户指导：${text.slice(0, 2000)}`, kind: "correction" }
+  return { body: `用户指导：${text.slice(0, GUIDANCE_LIMIT)}`, kind: "correction" }
 }
 
 export interface CommandResult {

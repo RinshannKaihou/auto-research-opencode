@@ -10,7 +10,7 @@
  * from inside a decision must not queue another decision for the same root.
  */
 import type { CommandResult, Research } from "./research"
-import { findProjectRoot, guidanceNote } from "./research"
+import { findProjectRoot, GUIDANCE_LIMIT, guidanceNote } from "./research"
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -460,6 +460,9 @@ export class Engine {
       created = await this.research.init(sessionID, directory, text)
     }
     const guidance = created ? "" : text.trim()
+    if (guidance.length > GUIDANCE_LIMIT) {
+      throw new Error(`补充指令超过 ${GUIDANCE_LIMIT} 字，没有发送；请缩短。长期有效的规则可以写成文档，用 /research guidance 登记。`)
+    }
     const root = this.rootFor(sessionID, directory)
     const main = this.mainIn(root)
     if (!main) throw new Error("这个项目的主会话不在 OpenCode 里。先用 /research takeover 接管。")
@@ -479,6 +482,10 @@ export class Engine {
             : "项目处于暂停状态；用 /research resume 继续。",
         )
       }
+      // A busy session gets no kickoff, so the guidance would reach the model only through the note.
+      if (guidance && this.busy.has(main)) {
+        throw new Error("主会话这一轮还没结束，补充指令没有发送；等这一轮结束后再执行 /research auto。")
+      }
       await this.call("workflow", main, { action: "run", fields: { state: "running", new_generation: true } })
       if (state.attempt && state.attempt.mode !== "auto") {
         await this.call("finish", main, { state: "finished", details: { reason: "switch-to-autonomous" } })
@@ -487,19 +494,28 @@ export class Engine {
         await this.call("focus", main, { node_id: null, role: "planner", mode: "auto" })
       }
       // Only now is a work segment open to file the note in; it carries the guidance into later requests.
-      if (guidance) await this.call("note", main, guidanceNote(guidance))
+      // The run has already switched, so a failed note is reported, not thrown: the kickoff still carries the text.
+      let noteError = ""
+      if (guidance) {
+        await this.call("note", main, guidanceNote(guidance)).catch((error) => {
+          noteError = error instanceof Error ? error.message : String(error)
+        })
+      }
       await this.call("workflow", main, { action: "session", fields: { pause_reason: null, waiting: [] } })
       this.idle.delete(main)
       this.research.notifyChanged(root)
       if (!this.busy.has(main)) {
         const kickoff = [`开始自主研究。目标：${state.project?.goal}`]
-        if (guidance) kickoff.push(`本轮附带用户指导（已记入研究记录，项目目标不变），请遵循：\n${guidance}`)
+        if (guidance) kickoff.push(`本轮附带用户指导（项目目标不变），请遵循：\n${guidance}`)
         kickoff.push("先盘点已有材料和记录，然后规划节点、派发执行；结果回来后综合，目标回答后发布最终报告并调用 research_conclude。")
         await this.say(main, kickoff.join("\n"), true, "开始自主研究")
       }
       await this.schedule(root)
+      const filed = noteError
+        ? `项目目标不变；补充指令写进了启动消息，但没能记入研究记录（${noteError}）。`
+        : "项目目标不变，补充指令已记为用户指导。"
       return {
-        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${guidance ? "项目目标不变，补充指令已记为用户指导。" : ""}进展会显示在侧栏、状态条和 /research board 里。`,
+        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${guidance ? filed : ""}进展会显示在侧栏、状态条和 /research board 里。`,
         sessionID: main,
       }
     })

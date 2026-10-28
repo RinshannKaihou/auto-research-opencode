@@ -479,7 +479,7 @@ describe("autonomous research", () => {
     expect(JSON.stringify(request.system)).toContain("用户指导：重点验证 Y，放弃 Z")
   })
 
-  test("auto with text is refused, not dropped, while research runs or is paused", async () => {
+  test("auto with text is refused, not dropped, while research runs or is paused, or when too long", async () => {
     const host = await load()
     await host.command("auto", "ses_main", { goal: "Find X" })
     const running = await host.command("auto", "ses_main", { goal: "改看 Y" })
@@ -488,8 +488,46 @@ describe("autonomous research", () => {
     const paused = await host.command("auto", "ses_main", { goal: "改看 Y" })
     expect(paused.error).toContain("补充指令没有发送")
     expect(paused.error).toContain("/research resume")
-    const note = await host.rpc().board({ view: "reference_get", directory: project, fields: { ref: "N-001" } })
-    expect(JSON.stringify(note)).not.toContain("用户指导")
+    const long = await host.command("auto", "ses_main", { goal: "长".repeat(2001) })
+    expect(long.error).toContain("超过 2000 字")
+    // Notes of the open work segment reach the research context; the typed one shows that, the refused text is absent.
+    await host.hooks.get("prompt")!({ sessionID: "ses_main", prompt: { text: "先测小事务" } })
+    const request = modelRequest("ses_main")
+    await host.hooks.get("context")!(request)
+    const context = JSON.stringify(request.system)
+    expect(context).toContain("用户指导：先测小事务")
+    expect(context).not.toContain("改看 Y")
+    expect(context).not.toContain("长长长")
+  })
+
+  test("auto with text waits until the coordinator's current turn ends", async () => {
+    const host = await load()
+    await host.command("init", "ses_main", { goal: "Find X" })
+    host.turn.start("ses_main")
+    await Bun.sleep(30)
+    const busy = await host.command("auto", "ses_main", { goal: "按方案 B 继续" })
+    expect(busy.error).toContain("这一轮还没结束")
+    expect((await host.summary()).run.state).toBe("manual")
+    host.turn.end("ses_main")
+    await Bun.sleep(30)
+    const started = await host.command("auto", "ses_main", { goal: "按方案 B 继续" })
+    expect(started.message).toContain("补充指令已记为用户指导")
+    expect(host.said("ses_main").at(-1).text).toContain("按方案 B 继续")
+  })
+
+  test("a guidance note that cannot be filed still starts the run and says so", async () => {
+    const host = await load()
+    await host.command("init", "ses_main", { goal: "Find X" })
+    const request = StorageClient.prototype.request
+    StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {
+      return method === "note" ? Promise.reject(new Error("ledger unavailable")) : (request as any).call(this, method, ...rest)
+    } as typeof request
+    cleanups.push(() => (StorageClient.prototype.request = request))
+    const started = await host.command("auto", "ses_main", { goal: "按方案 B 继续" })
+    expect(started.message).toContain("没能记入研究记录")
+    expect(started.message).toContain("ledger unavailable")
+    expect((await host.summary()).run.state).toBe("running")
+    expect(host.said("ses_main").at(-1).text).toContain("按方案 B 继续")
   })
 
   test("an instance opened in a subdirectory never drives the project", async () => {
