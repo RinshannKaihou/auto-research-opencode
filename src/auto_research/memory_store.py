@@ -1191,8 +1191,12 @@ class MemoryStore:
 
         return self._mutate("review.todo", payload, request_id, work)
 
-    def knowledge_query(
-        self,
+    def knowledge_query(self, **fields):
+        with self._read() as db:
+            return self._knowledge_query(db, **fields)
+
+    def _knowledge_query(
+        self, db,
         *,
         query: str | None = None,
         node_id: str | None = None,
@@ -1207,607 +1211,673 @@ class MemoryStore:
         after = max(0, int(after))
         if conditions is not None and not isinstance(conditions, dict):
             raise ValidationError("conditions filter must be an object")
-        with self._read() as db:
-            clauses = ["r.rowid>?"]
-            args: list[Any] = [after]
-            if revision is None:
-                clauses.append(
-                    "r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id)"
-                )
-            else:
-                clauses.append("r.revision=?")
-                args.append(int(revision))
-            if node_id:
-                clauses.append("e.node_id=?")
-                args.append(node_id)
-            if kind:
-                clauses.append("e.kind=?")
-                args.append(kind)
-            if status:
-                clauses.append("r.status=?")
-                args.append(status)
-            for key, expected in sorted((conditions or {}).items()):
-                if not isinstance(key, str) or not re.fullmatch(r"[\w\u3400-\u9fff.-]+", key):
-                    raise ValidationError("condition filter keys contain unsupported characters")
-                clauses.append("json_extract(r.conditions,?)=json_extract(?,'$')")
-                args.extend((f'$."{key}"', _encoded(expected)))
-            if query:
-                bigrams, chars, terms = tokenize(query)
-                candidates = []
-                if bigrams:
-                    candidates.append(
-                        ("s.zh_bigrams LIKE ?", "%" + "%".join(bigrams.split()) + "%")
-                    )
-                if terms:
-                    candidates.append(("s.terms LIKE ?", "%" + terms.split()[0] + "%"))
-                if chars and len(query.strip()) == 1:
-                    candidates.append(("s.zh_chars LIKE ?", f"%{query.strip()}%"))
-                candidates.append(("s.original LIKE ?", f"%{query}%"))
-                clauses.append("(" + " OR ".join(item[0] for item in candidates) + ")")
-                args.extend(item[1] for item in candidates)
-            rows = list(
-                db.execute(
-                    "SELECT r.rowid cursor,e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) JOIN knowledge_search s ON s.knowledge_ref=('knowledge/'||r.knowledge_id||'@'||r.revision) WHERE "
-                    + " AND ".join(clauses)
-                    + " ORDER BY r.rowid LIMIT ?",
-                    (*args, limit + 1),
-                )
+        clauses = ["r.rowid>?"]
+        args: list[Any] = [after]
+        if revision is None:
+            clauses.append(
+                "r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id)"
             )
-            reasons = [
-                name
-                for name, enabled in (
-                    ("text", query),
-                    ("node", node_id),
-                    ("kind", kind),
-                    ("status", status),
-                    ("revision", revision),
-                    ("conditions", conditions),
+        else:
+            clauses.append("r.revision=?")
+            args.append(int(revision))
+        if node_id:
+            clauses.append("e.node_id=?")
+            args.append(node_id)
+        if kind:
+            clauses.append("e.kind=?")
+            args.append(kind)
+        if status:
+            clauses.append("r.status=?")
+            args.append(status)
+        for key, expected in sorted((conditions or {}).items()):
+            if not isinstance(key, str) or not re.fullmatch(r"[\w\u3400-\u9fff.-]+", key):
+                raise ValidationError("condition filter keys contain unsupported characters")
+            clauses.append("json_extract(r.conditions,?)=json_extract(?,'$')")
+            args.extend((f'$."{key}"', _encoded(expected)))
+        if query:
+            bigrams, chars, terms = tokenize(query)
+            candidates = []
+            if bigrams:
+                candidates.append(
+                    ("s.zh_bigrams LIKE ?", "%" + "%".join(bigrams.split()) + "%")
                 )
-                if enabled is not None and enabled != {}
-            ]
-            items = [
-                {**self._decode_knowledge(row, db), "match_reason": reasons or ["latest"]}
-                for row in rows[:limit]
-            ]
-            return {
-                "items": items,
-                "next_cursor": rows[limit - 1]["cursor"] if len(rows) > limit else None,
-                "has_more": len(rows) > limit,
-            }
+            if terms:
+                candidates.append(("s.terms LIKE ?", "%" + terms.split()[0] + "%"))
+            if chars and len(query.strip()) == 1:
+                candidates.append(("s.zh_chars LIKE ?", f"%{query.strip()}%"))
+            candidates.append(("s.original LIKE ?", f"%{query}%"))
+            clauses.append("(" + " OR ".join(item[0] for item in candidates) + ")")
+            args.extend(item[1] for item in candidates)
+        rows = list(
+            db.execute(
+                "SELECT r.rowid cursor,e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) JOIN knowledge_search s ON s.knowledge_ref=('knowledge/'||r.knowledge_id||'@'||r.revision) WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY r.rowid LIMIT ?",
+                (*args, limit + 1),
+            )
+        )
+        reasons = [
+            name
+            for name, enabled in (
+                ("text", query),
+                ("node", node_id),
+                ("kind", kind),
+                ("status", status),
+                ("revision", revision),
+                ("conditions", conditions),
+            )
+            if enabled is not None and enabled != {}
+        ]
+        items = [
+            {**self._decode_knowledge(row, db), "match_reason": reasons or ["latest"]}
+            for row in rows[:limit]
+        ]
+        return {
+            "items": items,
+            "next_cursor": rows[limit - 1]["cursor"] if len(rows) > limit else None,
+            "has_more": len(rows) > limit,
+        }
+
 
     def context_view(
-        self, host_id: str, session_id: str, max_chars: int = 12_000, profile: str | None = None
+        self, host_id: str, session_id: str, max_chars: int = 12_000,
+        profile: str | None = None, *, policy=None, decision_refs=None, final_ref=None,
     ) -> dict:
         if profile not in CONTEXT_PROFILES:
             raise ValidationError(f"Unknown context profile: {profile}")
+        from .context_policy import POLICIES
         with self._read() as db:
+            selected = self._project(db)["config"].get("context_policy", "memory-v2") if policy is None else policy
+            if selected not in POLICIES:
+                raise ValidationError(f"Unknown context policy: {selected}")
+            return self._context_view(db, host_id, session_id, max_chars, profile,
+                                      selected, decision_refs, final_ref)
+
+    def context_shadow(self, host_id, session_id, max_chars=12000, profile=None,
+                       *, decision_refs=None, final_ref=None):
+        if profile not in CONTEXT_PROFILES:
+            raise ValidationError(f"Unknown context profile: {profile}")
+        with self._read() as db:
+            return {policy: self._context_view(db, host_id, session_id, max_chars, profile,
+                                               policy, decision_refs, final_ref)
+                    for policy in ("memory-v2", "memory-r1-v1")}
+
+    def context_preview(self, session_id=None):
+        """Host-only preview, comparison and last recorded injection; never writes."""
+        from .context_policy import context_metrics
+        with self._read() as db:
+            sessions = [dict(row) for row in db.execute(
+                "SELECT DISTINCT w.host_id,w.session_id,w.role,w.node_id FROM workflow_sessions w "
+                "JOIN associations a ON a.host_id=w.host_id AND a.session_id=w.session_id "
+                "WHERE a.ended_at IS NULL AND w.detached=0 "
+                "ORDER BY CASE w.role WHEN 'main' THEN 0 WHEN 'node_core' THEN 1 ELSE 2 END,w.created_at"
+            )]
             project = self._project(db)
-            association = db.execute(
-                "SELECT * FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL",
-                (host_id, session_id),
+            result = {"policy_version": project["config"].get("context_policy", "memory-v2"),
+                      "sessions": sessions, "available": bool(sessions)}
+            if not sessions:
+                return {**result, "reason": "没有仍关联本项目的会话，无法构建该会话的模型上下文。"}
+            selected = next((s for s in sessions if s["session_id"] == session_id), None)
+            if session_id is not None and selected is None:
+                raise ValidationError("Preview session is not associated with this project")
+            selected = sessions[0] if selected is None else selected
+            views = {policy: self._context_view(db, selected["host_id"], selected["session_id"],
+                         12000, "opencode-auto", policy, None, None)
+                     for policy in ("memory-v2", "memory-r1-v1")}
+            last = db.execute(
+                "SELECT r.source_sequence,r.created_at,r.selection,p.policy_version,p.body AS text "
+                "FROM context_requests r JOIN context_packs p USING(pack_id) "
+                "WHERE r.host_id=? AND r.session_id=? ORDER BY r.context_id DESC LIMIT 1",
+                (selected["host_id"], selected["session_id"]),
             ).fetchone()
-            if not association:
-                raise NotFoundError("Session is not associated with this project")
-            session = db.execute(
-                "SELECT * FROM workflow_sessions WHERE session_id=?", (session_id,)
-            ).fetchone()
-            attempt = db.execute(
-                "SELECT * FROM attempts WHERE association_id=? AND ended_at IS NULL",
-                (association["association_id"],),
-            ).fetchone()
-            task = db.execute(
-                "SELECT * FROM exploration_tasks WHERE session_id=? AND state IN ('queued','starting','running','waiting','stopping','unverified')",
-                (session_id,),
-            ).fetchone()
-            specialist = db.execute(
-                "SELECT t.* FROM specialist_tasks t JOIN specialist_bindings b USING(task_id) "
-                "WHERE b.session_id=? ORDER BY t.created_at DESC LIMIT 1",
-                (session_id,),
-            ).fetchone()
-            if specialist and specialist["context_mode"] == "blind":
-                body = _encoded({"role": "blind reviewer", "instructions": "Evaluate only the assigned frozen inputs. Use research_read_input; do not infer hidden labels or seek project background.", "inputs": [{"input_id": f"input-{i + 1}"} for i, _ in enumerate(json.loads(specialist["inputs"]))]})
-                return {"context_mode": "blind", "text": body, "source_digest": hashlib.sha256(body.encode()).hexdigest(), "source_sequence": db.execute("SELECT COALESCE(MAX(event_id),0) FROM events").fetchone()[0], "dependencies": [f"specialist/{specialist['task_id']}"], "omitted": []}
-            node_id = attempt["node_id"] if attempt else session["node_id"] if session else None
-            node_row = (
-                db.execute(
-                    "SELECT node_id,question,plan,question_ref,inputs FROM nodes WHERE node_id=?",
-                    (node_id,),
-                ).fetchone()
-                if node_id
-                else None
-            )
-            checkpoint, checkpoint_info = self.checkpoint_view(db, node_id)
-            review_rows = list(
-                db.execute(
-                    "SELECT rowid AS cursor,* FROM review_todos WHERE state='pending' "
-                    "AND (? IS NULL OR node_id IS ? OR node_id IS NULL) ORDER BY rowid LIMIT 8",
-                    (node_id, node_id),
-                )
-            )
-            pending_total = int(
-                db.execute(
-                    "SELECT COUNT(*) FROM review_todos WHERE state='pending' "
-                    "AND (? IS NULL OR node_id IS ? OR node_id IS NULL)",
-                    (node_id, node_id),
-                ).fetchone()[0]
-            )
-            review_todos = {
-                "pending_total": pending_total,
-                "shown_count": len(review_rows),
-                "has_more": pending_total > len(review_rows),
-                "cursor": review_rows[-1]["cursor"] if review_rows else None,
-                "trigger_types": sorted({row["trigger_kind"] for row in review_rows}),
-                "claim_owner": session_id if any(row["state"] == "running" for row in review_rows) else None,
-                "items": [dict(row) for row in review_rows],
-            }
-            # The coordinator reads the same semantics the workbench and the
-            # publication check do. Risks and version notices stay in separate
-            # fields: a newer revision existing is a pointer, not a verdict.
-            epistemic = _epistemic()
-            # Select first, page second. Taking a page and then dropping the
-            # settled rows reports a total nobody can reach: once the first
-            # eight are disposed of, everything behind them disappears from the
-            # default view (R18 supplement, CE-12v).
-            bound = epistemic.read_bound(db)
-            from .hints import structure_hints
-            hints = structure_hints(db, bound)
-            anchors = epistemic.anchor_set(db)
-            def still_open(row: sqlite3.Row) -> bool:
-                disposition = epistemic.current_disposition(
-                    db, row["change_id"], row["affected_version"], bound
-                )
-                return (disposition["kind"] if disposition else None) in (None, "unresolved")
+            return {**result, "session": selected, "views": views,
+                    "metrics": {policy: context_metrics(view) for policy, view in views.items()},
+                    "last_recorded": {**dict(last), "selection": json.loads(last["selection"])} if last else None}
 
-            open_rows = [row for row in epistemic.valid_impacts(db, bound) if still_open(row)]
-            open_rows.sort(key=lambda row: (row["detected_sequence"], row["impact_id"]))
-            affected_items = []
-            for row in open_rows[:8]:
-                version = row["affected_version"]
-                roots = epistemic.change_roots(db, row["change_id"], bound)
-                affected_items.append(
-                    {
-                        "change_id": row["change_id"],
-                        "affected_version": version,
-                        "hop": row["hop"],
-                        "edge_source": row["edge_source"],
-                        "review_state": row["review_state"],
-                        "scope_unconfirmed": epistemic.effective_scope(
-                            db, row["change_id"], bound
-                        )["mode"]
-                        == "unknown",
-                        "uncovered_refs": epistemic.uncovered_refs(db, version),
-                        "explanation": epistemic.explain_path(db, version, roots),
-                        "in_use": epistemic.in_use(db, version, anchors=anchors)["in_use"],
-                        "residual_use_risk": epistemic.residual_use_risk(db, version, bound),
-                        "version_notices": epistemic.version_notices(db, version, bound),
-                    }
-                )
-            affected_knowledge = {
-                "total": len(open_rows),
-                "shown_count": len(affected_items),
-                "not_in_use_count": sum(
-                    1 for item in affected_items if item["in_use"] is False
-                ),
-                "sequence_bound": bound,
-                # On the whole open set, not on the eight shown: a ninth
-                # pending row does not make the set undetermined (CE-12v-2).
-                "targets_complete": epistemic.targets_are_complete(db, open_rows, bound),
-                "targets_truncated": len(open_rows) > len(affected_items),
-                "paths_truncated": any(
-                    epistemic.has_alternate_path(
-                        db,
-                        item["affected_version"],
-                        epistemic.change_roots(db, item["change_id"], bound),
-                    )
-                    for item in affected_items
-                ),
-                "items": affected_items,
-            }
-            # A version can carry RR1 with no impact row at all: nothing put it
-            # in a scope, it simply cites a retracted version (CE-10b). A citer
-            # that has itself been retracted is not an action item -- retraction
-            # appends a revision inheriting the old references, so listing it
-            # would ask the reader to fix something already withdrawn (CE-10b-2).
-            retracted_rows = db.execute(
-                "SELECT DISTINCT e.user_ref, e.used_ref FROM knowledge_support_edges e"
-                " JOIN knowledge_revisions r"
-                "  ON ('knowledge/' || r.knowledge_id || '@' || r.revision) = e.used_ref"
-                " JOIN knowledge_revisions u"
-                "  ON ('knowledge/' || u.knowledge_id || '@' || u.revision) = e.user_ref"
-                " WHERE r.status='retracted' AND u.status<>'retracted'"
-                " ORDER BY e.user_ref",
-            ).fetchall()
-            # Not in use is still listed, never silently dropped, and counted
-            # the same way the affected set counts it.
-            retracted_items = [
+    def _context_view(self, db, host_id, session_id, max_chars, profile,
+                      policy, decision_refs, final_ref):
+        project = self._project(db)
+        association = db.execute(
+            "SELECT * FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL",
+            (host_id, session_id),
+        ).fetchone()
+        if not association:
+            raise NotFoundError("Session is not associated with this project")
+        session = db.execute(
+            "SELECT * FROM workflow_sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+        attempt = db.execute(
+            "SELECT * FROM attempts WHERE association_id=? AND ended_at IS NULL",
+            (association["association_id"],),
+        ).fetchone()
+        task = db.execute(
+            "SELECT * FROM exploration_tasks WHERE session_id=? AND state IN ('queued','starting','running','waiting','stopping','unverified')",
+            (session_id,),
+        ).fetchone()
+        specialist = db.execute(
+            "SELECT t.* FROM specialist_tasks t JOIN specialist_bindings b USING(task_id) "
+            "WHERE b.session_id=? ORDER BY t.created_at DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if specialist and specialist["context_mode"] == "blind":
+            body = _encoded({"role": "blind reviewer", "instructions": "Evaluate only the assigned frozen inputs. Use research_read_input; do not infer hidden labels or seek project background.", "inputs": [{"input_id": f"input-{i + 1}"} for i, _ in enumerate(json.loads(specialist["inputs"]))]})
+            return {"policy_version": policy, "context_mode": "blind", "text": body, "source_digest": hashlib.sha256(body.encode()).hexdigest(), "source_sequence": db.execute("SELECT COALESCE(MAX(event_id),0) FROM events").fetchone()[0], "dependencies": [f"specialist/{specialist['task_id']}"], "omitted": []}
+        node_id = attempt["node_id"] if attempt else session["node_id"] if session else None
+        node_row = (
+            db.execute(
+                "SELECT node_id,question,plan,question_ref,inputs FROM nodes WHERE node_id=?",
+                (node_id,),
+            ).fetchone()
+            if node_id
+            else None
+        )
+        checkpoint, checkpoint_info = self.checkpoint_view(db, node_id)
+        review_rows = list(
+            db.execute(
+                "SELECT rowid AS cursor,* FROM review_todos WHERE state='pending' "
+                "AND (? IS NULL OR node_id IS ? OR node_id IS NULL) ORDER BY rowid LIMIT 8",
+                (node_id, node_id),
+            )
+        )
+        pending_total = int(
+            db.execute(
+                "SELECT COUNT(*) FROM review_todos WHERE state='pending' "
+                "AND (? IS NULL OR node_id IS ? OR node_id IS NULL)",
+                (node_id, node_id),
+            ).fetchone()[0]
+        )
+        review_todos = {
+            "pending_total": pending_total,
+            "shown_count": len(review_rows),
+            "has_more": pending_total > len(review_rows),
+            "cursor": review_rows[-1]["cursor"] if review_rows else None,
+            "trigger_types": sorted({row["trigger_kind"] for row in review_rows}),
+            "claim_owner": session_id if any(row["state"] == "running" for row in review_rows) else None,
+            "items": [dict(row) for row in review_rows],
+        }
+        # The coordinator reads the same semantics the workbench and the
+        # publication check do. Risks and version notices stay in separate
+        # fields: a newer revision existing is a pointer, not a verdict.
+        epistemic = _epistemic()
+        # Select first, page second. Taking a page and then dropping the
+        # settled rows reports a total nobody can reach: once the first
+        # eight are disposed of, everything behind them disappears from the
+        # default view (R18 supplement, CE-12v).
+        bound = epistemic.read_bound(db)
+        from .hints import structure_hints
+        hints = structure_hints(db, bound)
+        anchors = epistemic.anchor_set(db)
+        def still_open(row: sqlite3.Row) -> bool:
+            disposition = epistemic.current_disposition(
+                db, row["change_id"], row["affected_version"], bound
+            )
+            return (disposition["kind"] if disposition else None) in (None, "unresolved")
+
+        open_rows = [row for row in epistemic.valid_impacts(db, bound) if still_open(row)]
+        open_rows.sort(key=lambda row: (row["detected_sequence"], row["impact_id"]))
+        affected_items = []
+        for row in open_rows[:8]:
+            version = row["affected_version"]
+            roots = epistemic.change_roots(db, row["change_id"], bound)
+            affected_items.append(
                 {
-                    "version": row["user_ref"],
-                    "retracted_ref": row["used_ref"],
-                    "in_use": epistemic.in_use(db, row["user_ref"], anchors=anchors)["in_use"],
+                    "change_id": row["change_id"],
+                    "affected_version": version,
+                    "hop": row["hop"],
+                    "edge_source": row["edge_source"],
+                    "review_state": row["review_state"],
+                    "scope_unconfirmed": epistemic.effective_scope(
+                        db, row["change_id"], bound
+                    )["mode"]
+                    == "unknown",
+                    "uncovered_refs": epistemic.uncovered_refs(db, version),
+                    "explanation": epistemic.explain_path(db, version, roots),
+                    "in_use": epistemic.in_use(db, version, anchors=anchors)["in_use"],
+                    "residual_use_risk": epistemic.residual_use_risk(db, version, bound),
+                    "version_notices": epistemic.version_notices(db, version, bound),
                 }
-                for row in retracted_rows[:8]
-            ]
-            retracted_refs = {
-                "total": len(retracted_rows),
-                "shown_count": len(retracted_items),
-                "not_in_use_count": sum(
-                    1 for item in retracted_items if item["in_use"] is False
-                ),
-                "items": retracted_items,
+            )
+        affected_knowledge = {
+            "total": len(open_rows),
+            "shown_count": len(affected_items),
+            "not_in_use_count": sum(
+                1 for item in affected_items if item["in_use"] is False
+            ),
+            "sequence_bound": bound,
+            # On the whole open set, not on the eight shown: a ninth
+            # pending row does not make the set undetermined (CE-12v-2).
+            "targets_complete": epistemic.targets_are_complete(db, open_rows, bound),
+            "targets_truncated": len(open_rows) > len(affected_items),
+            "paths_truncated": any(
+                epistemic.has_alternate_path(
+                    db,
+                    item["affected_version"],
+                    epistemic.change_roots(db, item["change_id"], bound),
+                )
+                for item in affected_items
+            ),
+            "items": affected_items,
+        }
+        # A version can carry RR1 with no impact row at all: nothing put it
+        # in a scope, it simply cites a retracted version (CE-10b). A citer
+        # that has itself been retracted is not an action item -- retraction
+        # appends a revision inheriting the old references, so listing it
+        # would ask the reader to fix something already withdrawn (CE-10b-2).
+        retracted_rows = db.execute(
+            "SELECT DISTINCT e.user_ref, e.used_ref FROM knowledge_support_edges e"
+            " JOIN knowledge_revisions r"
+            "  ON ('knowledge/' || r.knowledge_id || '@' || r.revision) = e.used_ref"
+            " JOIN knowledge_revisions u"
+            "  ON ('knowledge/' || u.knowledge_id || '@' || u.revision) = e.user_ref"
+            " WHERE r.status='retracted' AND u.status<>'retracted'"
+            " ORDER BY e.user_ref",
+        ).fetchall()
+        # Not in use is still listed, never silently dropped, and counted
+        # the same way the affected set counts it.
+        retracted_items = [
+            {
+                "version": row["user_ref"],
+                "retracted_ref": row["used_ref"],
+                "in_use": epistemic.in_use(db, row["user_ref"], anchors=anchors)["in_use"],
             }
+            for row in retracted_rows[:8]
+        ]
+        retracted_refs = {
+            "total": len(retracted_rows),
+            "shown_count": len(retracted_items),
+            "not_in_use_count": sum(
+                1 for item in retracted_items if item["in_use"] is False
+            ),
+            "items": retracted_items,
+        }
 
-            # Fixed inputs determine provenance. Global question recency must never
-            # crowd out an input's early negative results or later corrections.
-            related_nodes = {node_id} if node_id else set()
-            pinned = []
-            inputs = json.loads(node_row["inputs"]) if node_row else []
-            if specialist:
-                inputs += json.loads(specialist["inputs"])
-            for ref in inputs:
-                if ref.startswith("knowledge/"):
-                    pinned.append(ref)
-                elif frozen_refs.parse(ref).get("publication_id"):
-                    pid = frozen_refs.parse(ref)["publication_id"]
-                    pub = db.execute(
-                        "SELECT node_id FROM publications WHERE publication_id=?", (pid,)
-                    ).fetchone()
-                    if pub and pub["node_id"]:
-                        related_nodes.add(pub["node_id"])
-                    pinned.extend(
-                        _knowledge_ref(r["knowledge_id"], r["revision"])
-                        for r in db.execute(
-                            "SELECT knowledge_id,revision FROM publication_knowledge WHERE publication_id=? ORDER BY knowledge_id",
-                            (pid,),
-                        )
-                    )
-                elif db.execute("SELECT 1 FROM nodes WHERE node_id=?", (ref,)).fetchone():
-                    related_nodes.add(ref)
-            selected = {}
-            for ref in pinned[:16]:
-                kid, rev = parse_knowledge_ref(ref)
-                row = db.execute(
-                    "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) WHERE r.knowledge_id=? AND r.revision=?",
-                    (kid, rev),
+        # Fixed inputs determine provenance. Global question recency must never
+        # crowd out an input's early negative results or later corrections.
+        related_nodes = {node_id} if node_id else set()
+        pinned = []
+        inputs = json.loads(node_row["inputs"]) if node_row else []
+        if specialist:
+            inputs += json.loads(specialist["inputs"])
+        for ref in inputs:
+            if ref.startswith("knowledge/"):
+                pinned.append(ref)
+            elif frozen_refs.parse(ref).get("publication_id"):
+                pid = frozen_refs.parse(ref)["publication_id"]
+                pub = db.execute(
+                    "SELECT node_id FROM publications WHERE publication_id=?", (pid,)
                 ).fetchone()
-                if row:
-                    selected[ref] = self._decode_knowledge(row)
-                    # Keep the fixed version and its later correction side by side.
-                    latest = self._decode_knowledge(self._latest_revision(db, kid))
-                    selected[latest["ref"]] = latest
-                    if row["node_id"]:
-                        related_nodes.add(row["node_id"])
-            related_json = _encoded(sorted(related_nodes))
-            for row in db.execute(
-                "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) "
-                "WHERE r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id) "
-                "AND e.kind!='open_question' AND (e.node_id IS NULL OR e.node_id IN (SELECT value FROM json_each(?)) OR r.status='disputed') "
-                "ORDER BY CASE WHEN r.status='disputed' THEN 0 WHEN r.revision>1 THEN 1 WHEN e.kind='lesson' THEN 2 ELSE 3 END,r.rowid DESC LIMIT 24",
-                (related_json,),
-            ):
-                value = self._decode_knowledge(row)
-                selected.setdefault(value["ref"], value)
-            knowledge = list(selected.values())
-            coordinator = session and session["role"] == "main" and node_id is None
-            if coordinator:
-                # Independent bounded selections prevent a busy agenda or a burst
-                # of disputes from hiding the other coordination responsibilities.
-                knowledge = {}
-                for label, predicate, limit in (
-                    ("disputed", "r.status='disputed'", 3),
-                    ("revised", "r.revision>1 AND r.status!='disputed'", 3),
-                    ("lessons", "e.kind='lesson' AND r.status!='disputed'", 4),
-                    ("project", "e.node_id IS NULL AND r.status!='disputed'", 3),
-                ):
-                    knowledge[label] = [
-                        self._decode_knowledge(row)
-                        for row in db.execute(
-                            "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) "
-                            "WHERE r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id) "
-                            f"AND e.kind!='open_question' AND ({predicate}) ORDER BY r.rowid DESC LIMIT ?",
-                            (limit,),
-                        )
-                    ]
-            questions = [
-                dict(r)
-                for r in db.execute(
-                    "SELECT node_id,question,question_ref FROM nodes WHERE node_id IN (SELECT value FROM json_each(?)) ORDER BY CASE WHEN node_id=? THEN 0 ELSE 1 END,rowid LIMIT 6",
-                    (related_json, node_id),
+                if pub and pub["node_id"]:
+                    related_nodes.add(pub["node_id"])
+                pinned.extend(
+                    _knowledge_ref(r["knowledge_id"], r["revision"])
+                    for r in db.execute(
+                        "SELECT knowledge_id,revision FROM publication_knowledge WHERE publication_id=? ORDER BY knowledge_id",
+                        (pid,),
+                    )
                 )
-            ]
-            if coordinator:
-                questions = [
-                    dict(row)
-                    for row in db.execute(
-                        "SELECT node_id,question,question_ref,status FROM nodes WHERE status IN ('proposed','open') ORDER BY rowid DESC LIMIT 8"
-                    )
-                ]
-            notes = []
-            if attempt:
-                notes = [
-                    dict(row)
-                    for row in db.execute(
-                        "SELECT * FROM notes WHERE attempt_id=? ORDER BY rowid DESC LIMIT 8",
-                        (attempt["attempt_id"],),
-                    )
-                ]
-            guidance = db.execute(
-                "SELECT * FROM guidance_sources WHERE active=1 ORDER BY created_at DESC LIMIT 1"
+            elif db.execute("SELECT 1 FROM nodes WHERE node_id=?", (ref,)).fetchone():
+                related_nodes.add(ref)
+        selected = {}
+        for ref in pinned[:16]:
+            kid, rev = parse_knowledge_ref(ref)
+            row = db.execute(
+                "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) WHERE r.knowledge_id=? AND r.revision=?",
+                (kid, rev),
             ).fetchone()
-            guidance_cards = None
-            if guidance:
-                sections = json.loads(guidance["section_index"])
-                task_text = " ".join(
-                    filter(
-                        None,
-                        [
-                            project["goal"],
-                            node_row["question"] if node_row else "",
-                            node_row["plan"] if node_row else "",
-                            task["context"] if task else "",
-                            specialist["prompt"] if specialist else "",
-                        ],
+            if row:
+                selected[ref] = self._decode_knowledge(row)
+                # Keep the fixed version and its later correction side by side.
+                latest = self._decode_knowledge(self._latest_revision(db, kid))
+                selected[latest["ref"]] = latest
+                if row["node_id"]:
+                    related_nodes.add(row["node_id"])
+        related_json = _encoded(sorted(related_nodes))
+        for row in db.execute(
+            "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) "
+            "WHERE r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id) "
+            "AND e.kind!='open_question' AND (e.node_id IS NULL OR e.node_id IN (SELECT value FROM json_each(?)) OR r.status='disputed') "
+            "ORDER BY CASE WHEN r.status='disputed' THEN 0 WHEN r.revision>1 THEN 1 WHEN e.kind='lesson' THEN 2 ELSE 3 END,r.rowid DESC LIMIT 24",
+            (related_json,),
+        ):
+            value = self._decode_knowledge(row)
+            selected.setdefault(value["ref"], value)
+        knowledge = list(selected.values())
+        coordinator = session and session["role"] == "main" and node_id is None
+        if coordinator:
+            # Independent bounded selections prevent a busy agenda or a burst
+            # of disputes from hiding the other coordination responsibilities.
+            knowledge = {}
+            for label, predicate, limit in (
+                ("disputed", "r.status='disputed'", 3),
+                ("revised", "r.revision>1 AND r.status!='disputed'", 3),
+                ("lessons", "e.kind='lesson' AND r.status!='disputed'", 4),
+                ("project", "e.node_id IS NULL AND r.status!='disputed'", 3),
+            ):
+                knowledge[label] = [
+                    self._decode_knowledge(row)
+                    for row in db.execute(
+                        "SELECT e.kind,e.node_id,r.* FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) "
+                        "WHERE r.revision=(SELECT MAX(r2.revision) FROM knowledge_revisions r2 WHERE r2.knowledge_id=r.knowledge_id) "
+                        f"AND e.kind!='open_question' AND ({predicate}) ORDER BY r.rowid DESC LIMIT ?",
+                        (limit,),
                     )
+                ]
+        questions = [
+            dict(r)
+            for r in db.execute(
+                "SELECT node_id,question,question_ref FROM nodes WHERE node_id IN (SELECT value FROM json_each(?)) ORDER BY CASE WHEN node_id=? THEN 0 ELSE 1 END,rowid LIMIT 6",
+                (related_json, node_id),
+            )
+        ]
+        if coordinator:
+            questions = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT node_id,question,question_ref,status FROM nodes WHERE status IN ('proposed','open') ORDER BY rowid DESC LIMIT 8"
                 )
-                task_bigrams, _, task_terms = tokenize(task_text)
-                terms = set(f"{task_bigrams} {task_terms}".split())
-                selected = []
-                for section in sections:
-                    heading_bigrams, _, heading_words = tokenize(section.get("heading", ""))
-                    heading_terms = set(f"{heading_bigrams} {heading_words}".split())
-                    if not selected or heading_terms & terms:
-                        selected.append(section)
-                    if sum(len(_encoded(item)) for item in selected) >= 4000:
-                        break
-                guidance_cards = {
-                    "guidance_id": guidance["guidance_id"],
-                    "version": guidance["version"],
-                    "content_hash": guidance["content_hash"],
-                    "sections": selected,
-                }
-            frozen_context = None
-            if session and session["role"] in {"discussion", "handoff"}:
-                frozen_context = json.loads(session["context"])
-                if len(_encoded(frozen_context)) > 6000:
-                    frozen_context = {
-                        key: frozen_context[key]
-                        for key in (
-                            "role",
-                            "goal",
-                            "node",
-                            "record_path",
-                            "publication_ids",
-                            "instruction",
-                            "source_snapshot",
-                            "source_attempt",
-                        )
-                        if key in frozen_context
-                    }
-                    if isinstance(frozen_context.get("goal"), str):
-                        frozen_context["goal"] = frozen_context["goal"][:1000]
-            def without_checks(items):
-                return [{k: v for k, v in item.items() if k not in {"checks", "field_checks"}}
-                        for item in items]
-            knowledge = ({key: without_checks(items) for key, items in knowledge.items()}
-                         if isinstance(knowledge, dict) else without_checks(knowledge))
-            blocks = [
-                ("project", {"goal": project["goal"], "control": project["control"]}),
-                ("conclusion", self.conclusion_view(db) or (
-                    {"contract_status": "not_recorded"} if db.execute(
-                        "SELECT 1 FROM workflow_project WHERE state='complete'"
-                    ).fetchone() else None
-                )),
-                ("checkpoint_recovery", checkpoint_info),
-                ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.") if profile == "opencode-auto" else {
-                    "main": "Coordinate inventory, planning, dispatch, synthesis and continuation. Propose then dispatch node work; full coding and experiments belong to node_core. Do not use research_finish. In manual mode prepare the plan; /research auto enables node execution. If the user requests plan confirmation, submit the complete plan and wait; clarification answers alone do not approve it. Record acceptance criteria in plans/checkpoints and report evidence, gaps and stopping reasons. A successor must declare its actual predecessors and fixed inputs; a handoff failure does not make it a root. Already authorized execution needs no extra confirmation.",
-                    "node_core": "Own this node's planning, coding, experiments and analysis. Delegate bounded read-only specialists, publish node findings and use research_finish to end the work segment. Put explicit evidence references, scope and known applicability limits into structured knowledge fields; do not invent missing conditions.",
-                    "specialist": "Read only the assigned question and materials; return evidence and uncertainty. Do not change research records or delegate.",
-                }.get(session["role"] if session else "", "Follow the assigned research role.")),
-                ("control_instructions", OPENCODE_MANUAL_CONTROL if profile == "opencode-manual" else OPENCODE_AUTO_CONTROL if profile == "opencode-auto" else "Use research tools to change the ledger. Never edit .research or issue SQL repairs. For stuck specialists use research_verify_specialist; for uncertain exploration creation use research_verify_task. Publication complete means a completed deliverable, not scientific success; pending reviews are not approval gates."),
-                (
-                    "identity",
-                    {
-                        "role": session["role"] if session else "legacy",
-                        "node_id": node_id,
-                        "permissions": "research-read-only"
-                        if session and session["role"] in {"discussion", "handoff", "specialist"}
-                        else "research-read-write",
-                    },
-                ),
-                (
-                    "task",
-                    json.loads(task["context"])
-                    if task
-                    else (
-                        {k: node_row[k] for k in ("node_id", "question", "plan", "question_ref")}
-                        if node_row
-                        else None
-                    ),
-                ),
-                ("specialist_task", self._decode_specialist(specialist) if specialist else None),
-                (
-                    "attempt",
-                    {k: attempt[k] for k in ("attempt_id", "node_id", "role", "mode", "state")}
-                    if attempt
-                    else None,
-                ),
-                # Queue pressure is control-plane state, not optional background
-                # memory.  Put it ahead of the potentially large knowledge blocks
-                # so the total and its bounded sample survive context pressure.
-                ("pending_review", review_todos),
-                ("affected_knowledge", affected_knowledge),
-                ("structure_hints", hints),
-                ("retracted_refs", retracted_refs),
-                ("knowledge", knowledge),
-                ("questions", questions),
-                ("frozen_context", frozen_context),
-                (
-                    "checkpoint",
-                    {
-                        **dict(checkpoint),
-                        "state": json.loads(checkpoint["state"]),
-                        "source_identity": json.loads(checkpoint["source_identity"]),
-                    }
-                    if checkpoint
-                    else None,
-                ),
-                ("method_guidance", guidance_cards),
-                ("recent_node_notes", list(reversed(notes))),
-                (
-                    "index",
-                    {
-                        "query": "Use research_query with query/kind/node_id/cursor to expand project memory."
-                    },
-                ),
             ]
-            rendered: list[str] = []
-            omitted: list[str] = []
-            used = 0
-            included_refs = []
-            max_chars = max(500, min(max_chars, 12000))
-            for name, value in blocks:
-                if (
-                    value is None
-                    or value == []
-                    or (name == "pending_review" and not value["pending_total"])
-                    or (name == "affected_knowledge" and not value["total"])
-                    or (name == "retracted_refs" and not value["total"])
-                    or (name == "structure_hints" and not value["total"])
-                ):
-                    continue
-                allowance = min(
-                    max_chars - used - 150,
-                    {
-                        "project": 1000,
-                        "identity": 400,
-                        "task": 2200,
-                        "specialist_task": 1400,
-                        "role_instructions": 1600,
-                        "control_instructions": 800,
-                        "attempt": 400,
-                        "pending_review": 2200,
-                        # Ahead of the large knowledge blocks on purpose: an
-                        # invalidated basis is what the coordinator must not
-                        # lose to context pressure.
-                        "affected_knowledge": 2400,
-                        "structure_hints": 2400,
-                        "retracted_refs": 800,
-                        "knowledge": 4000,
-                        "questions": 1600 if coordinator else 800,
-                        "frozen_context": 1600,
-                    }.get(name, 1000),
+        notes = []
+        if attempt:
+            notes = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM notes WHERE attempt_id=? ORDER BY rowid DESC LIMIT 8",
+                    (attempt["attempt_id"],),
                 )
-                if allowance < 100:
-                    omitted.append(name)
-                    continue
-                if name == "knowledge" and coordinator:
-                    groups = {}
-                    for label, share in (
-                        ("disputed", 0.23),
-                        ("revised", 0.23),
-                        ("lessons", 0.33),
-                        ("project", 0.17),
-                    ):
-                        rows = value[label]
-                        entries = []
-                        budget = int(allowance * share)
-                        for item in rows:
-                            compact = {
-                                key: item[key]
-                                for key in (
-                                    "ref",
-                                    "node_id",
-                                    "kind",
-                                    "statement",
-                                    "conditions",
-                                    "status",
-                                    "evidence_refs",
-                                    "supersedes",
-                                )
-                            }
-                            entry = bounded_value(
-                                compact, min(420, budget - len(_encoded(entries)) - 80)
-                            )
-                            if len(_encoded(entries + [entry])) > budget - 60:
-                                break
-                            entries.append(entry)
-                            included_refs.append(item["ref"])
-                            if budget - len(_encoded(entries)) < 250:
-                                break
-                        groups[label] = {
-                            "items": entries,
-                            "omitted_from_selection": len(rows) - len(entries),
-                        }
-                    value = groups
-                elif name == "knowledge":
+            ]
+        guidance = db.execute(
+            "SELECT * FROM guidance_sources WHERE active=1 ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        guidance_cards = None
+        if guidance:
+            sections = json.loads(guidance["section_index"])
+            task_text = " ".join(
+                filter(
+                    None,
+                    [
+                        project["goal"],
+                        node_row["question"] if node_row else "",
+                        node_row["plan"] if node_row else "",
+                        task["context"] if task else "",
+                        specialist["prompt"] if specialist else "",
+                    ],
+                )
+            )
+            task_bigrams, _, task_terms = tokenize(task_text)
+            terms = set(f"{task_bigrams} {task_terms}".split())
+            selected = []
+            for section in sections:
+                heading_bigrams, _, heading_words = tokenize(section.get("heading", ""))
+                heading_terms = set(f"{heading_bigrams} {heading_words}".split())
+                if not selected or heading_terms & terms:
+                    selected.append(section)
+                if sum(len(_encoded(item)) for item in selected) >= 4000:
+                    break
+            guidance_cards = {
+                "guidance_id": guidance["guidance_id"],
+                "version": guidance["version"],
+                "content_hash": guidance["content_hash"],
+                "sections": selected,
+            }
+        frozen_context = None
+        if session and session["role"] in {"discussion", "handoff"}:
+            frozen_context = json.loads(session["context"])
+            if len(_encoded(frozen_context)) > 6000:
+                frozen_context = {
+                    key: frozen_context[key]
+                    for key in (
+                        "role",
+                        "goal",
+                        "node",
+                        "record_path",
+                        "publication_ids",
+                        "instruction",
+                        "source_snapshot",
+                        "source_attempt",
+                    )
+                    if key in frozen_context
+                }
+                if isinstance(frozen_context.get("goal"), str):
+                    frozen_context["goal"] = frozen_context["goal"][:1000]
+        def without_checks(items):
+            return [{k: v for k, v in item.items() if k not in {"checks", "field_checks"}}
+                    for item in items]
+        knowledge = ({key: without_checks(items) for key, items in knowledge.items()}
+                     if isinstance(knowledge, dict) else without_checks(knowledge))
+        blocks = [
+            ("project", {"goal": project["goal"], "control": project["control"]}),
+            ("conclusion", self.conclusion_view(db) or (
+                {"contract_status": "not_recorded"} if db.execute(
+                    "SELECT 1 FROM workflow_project WHERE state='complete'"
+                ).fetchone() else None
+            )),
+            ("checkpoint_recovery", checkpoint_info),
+            ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.") if profile == "opencode-auto" else {
+                "main": "Coordinate inventory, planning, dispatch, synthesis and continuation. Propose then dispatch node work; full coding and experiments belong to node_core. Do not use research_finish. In manual mode prepare the plan; /research auto enables node execution. If the user requests plan confirmation, submit the complete plan and wait; clarification answers alone do not approve it. Record acceptance criteria in plans/checkpoints and report evidence, gaps and stopping reasons. A successor must declare its actual predecessors and fixed inputs; a handoff failure does not make it a root. Already authorized execution needs no extra confirmation.",
+                "node_core": "Own this node's planning, coding, experiments and analysis. Delegate bounded read-only specialists, publish node findings and use research_finish to end the work segment. Put explicit evidence references, scope and known applicability limits into structured knowledge fields; do not invent missing conditions.",
+                "specialist": "Read only the assigned question and materials; return evidence and uncertainty. Do not change research records or delegate.",
+            }.get(session["role"] if session else "", "Follow the assigned research role.")),
+            ("control_instructions", OPENCODE_MANUAL_CONTROL if profile == "opencode-manual" else OPENCODE_AUTO_CONTROL if profile == "opencode-auto" else "Use research tools to change the ledger. Never edit .research or issue SQL repairs. For stuck specialists use research_verify_specialist; for uncertain exploration creation use research_verify_task. Publication complete means a completed deliverable, not scientific success; pending reviews are not approval gates."),
+            (
+                "identity",
+                {
+                    "role": session["role"] if session else "legacy",
+                    "node_id": node_id,
+                    "permissions": "research-read-only"
+                    if session and session["role"] in {"discussion", "handoff", "specialist"}
+                    else "research-read-write",
+                },
+            ),
+            (
+                "task",
+                json.loads(task["context"])
+                if task
+                else (
+                    {k: node_row[k] for k in ("node_id", "question", "plan", "question_ref")}
+                    if node_row
+                    else None
+                ),
+            ),
+            ("specialist_task", self._decode_specialist(specialist) if specialist else None),
+            (
+                "attempt",
+                {k: attempt[k] for k in ("attempt_id", "node_id", "role", "mode", "state")}
+                if attempt
+                else None,
+            ),
+            # Queue pressure is control-plane state, not optional background
+            # memory.  Put it ahead of the potentially large knowledge blocks
+            # so the total and its bounded sample survive context pressure.
+            ("pending_review", review_todos),
+            ("affected_knowledge", affected_knowledge),
+            ("structure_hints", hints),
+            ("retracted_refs", retracted_refs),
+            ("knowledge", knowledge),
+            ("questions", questions),
+            ("frozen_context", frozen_context),
+            (
+                "checkpoint",
+                {
+                    **dict(checkpoint),
+                    "state": json.loads(checkpoint["state"]),
+                    "source_identity": json.loads(checkpoint["source_identity"]),
+                }
+                if checkpoint
+                else None,
+            ),
+            ("method_guidance", guidance_cards),
+            ("recent_node_notes", list(reversed(notes))),
+            (
+                "index",
+                {
+                    "query": "Use research_query with query/kind/node_id/cursor to expand project memory."
+                },
+            ),
+        ]
+        if policy == "memory-r1-v1":
+            from .context_policy import render_context
+            if decision_refs is not None and not isinstance(decision_refs, list):
+                raise ValidationError("decision_refs must be a list of nonempty references")
+            read_refs = list(dict.fromkeys((decision_refs if decision_refs is not None else []) + inputs))
+            if frozen_context:
+                for pid in frozen_context.get("publication_ids", []):
+                    ref = pid if pid.startswith("pub/") else f"pub/{pid}"
+                    if ref not in read_refs:
+                        read_refs.append(ref)
+            return render_context(self, db, blocks, node_id, max_chars,
+                                  decision_refs=read_refs,
+                                  final_ref=final_ref)
+        rendered: list[str] = []
+        omitted: list[str] = []
+        used = 0
+        included_refs = []
+        max_chars = max(500, min(max_chars, 12000))
+        for name, value in blocks:
+            if (
+                value is None
+                or value == []
+                or (name == "pending_review" and not value["pending_total"])
+                or (name == "affected_knowledge" and not value["total"])
+                or (name == "retracted_refs" and not value["total"])
+                or (name == "structure_hints" and not value["total"])
+            ):
+                continue
+            allowance = min(
+                max_chars - used - 150,
+                {
+                    "project": 1000,
+                    "identity": 400,
+                    "task": 2200,
+                    "specialist_task": 1400,
+                    "role_instructions": 1600,
+                    "control_instructions": 800,
+                    "attempt": 400,
+                    "pending_review": 2200,
+                    # Ahead of the large knowledge blocks on purpose: an
+                    # invalidated basis is what the coordinator must not
+                    # lose to context pressure.
+                    "affected_knowledge": 2400,
+                    "structure_hints": 2400,
+                    "retracted_refs": 800,
+                    "knowledge": 4000,
+                    "questions": 1600 if coordinator else 800,
+                    "frozen_context": 1600,
+                }.get(name, 1000),
+            )
+            if allowance < 100:
+                omitted.append(name)
+                continue
+            if name == "knowledge" and coordinator:
+                groups = {}
+                for label, share in (
+                    ("disputed", 0.23),
+                    ("revised", 0.23),
+                    ("lessons", 0.33),
+                    ("project", 0.17),
+                ):
+                    rows = value[label]
                     entries = []
-                    for item in value:
+                    budget = int(allowance * share)
+                    for item in rows:
                         compact = {
                             key: item[key]
                             for key in (
                                 "ref",
+                                "node_id",
                                 "kind",
                                 "statement",
-                                "scope",
                                 "conditions",
                                 "status",
                                 "evidence_refs",
-                                "dependencies",
                                 "supersedes",
                             )
                         }
                         entry = bounded_value(
-                            compact, min(1000, allowance - len(_encoded(entries)) - 100)
+                            compact, min(420, budget - len(_encoded(entries)) - 80)
                         )
-                        if len(_encoded(entries + [entry])) > allowance - 80:
+                        if len(_encoded(entries + [entry])) > budget - 60:
                             break
                         entries.append(entry)
                         included_refs.append(item["ref"])
-                        if allowance - len(_encoded(entries)) < 500:
+                        if budget - len(_encoded(entries)) < 250:
                             break
-                    value = {"items": entries, "omitted_count": len(knowledge) - len(entries)}
-                else:
-                    value = bounded_value(value, allowance)
-                text = f"## {name}\n{_encoded(value)}"
-                if used + len(text) + 2 <= max_chars:
-                    rendered.append(text)
-                    used += len(text) + 2
-                else:
-                    omitted.append(name)
-            if omitted:
-                rendered.append("## omitted_index\n" + _encoded(omitted))
-            body = "\n\n".join(rendered)
-            digest = hashlib.sha256(body.encode()).hexdigest()
-            upper = int(db.execute("SELECT COALESCE(MAX(event_id),0) FROM events").fetchone()[0])
-            dependencies = included_refs
-            if coordinator:
-                dependencies.extend(q["question_ref"] for q in questions if q["question_ref"])
-            if node_row and node_row["question_ref"]:
-                dependencies.append(node_row["question_ref"])
-            if checkpoint:
-                dependencies.append(
-                    f"checkpoint/{checkpoint['checkpoint_id']}@{checkpoint['revision']}"
-                )
-            if guidance:
-                dependencies.append(
-                    f"guidance/{guidance['guidance_id']}@{guidance['content_hash']}"
-                )
-            if task:
-                dependencies.append(f"exploration/{task['task_id']}")
-            if specialist:
-                dependencies.append(f"specialist/{specialist['task_id']}")
-            if frozen_context:
-                dependencies.append(
-                    "frozen/" + hashlib.sha256(_encoded(frozen_context).encode()).hexdigest()
-                )
-            return {
-                "text": body,
-                "context_mode": specialist["context_mode"] if specialist else None,
-                "source_digest": digest,
-                "dependencies": sorted(set(dependencies)),
-                "truncated": bool(omitted),
-                "omitted": omitted,
-                "source_sequence": upper,
-            }
+                    groups[label] = {
+                        "items": entries,
+                        "omitted_from_selection": len(rows) - len(entries),
+                    }
+                value = groups
+            elif name == "knowledge":
+                entries = []
+                for item in value:
+                    compact = {
+                        key: item[key]
+                        for key in (
+                            "ref",
+                            "kind",
+                            "statement",
+                            "scope",
+                            "conditions",
+                            "status",
+                            "evidence_refs",
+                            "dependencies",
+                            "supersedes",
+                        )
+                    }
+                    entry = bounded_value(
+                        compact, min(1000, allowance - len(_encoded(entries)) - 100)
+                    )
+                    if len(_encoded(entries + [entry])) > allowance - 80:
+                        break
+                    entries.append(entry)
+                    included_refs.append(item["ref"])
+                    if allowance - len(_encoded(entries)) < 500:
+                        break
+                value = {"items": entries, "omitted_count": len(knowledge) - len(entries)}
+            else:
+                value = bounded_value(value, allowance)
+            text = f"## {name}\n{_encoded(value)}"
+            if used + len(text) + 2 <= max_chars:
+                rendered.append(text)
+                used += len(text) + 2
+            else:
+                omitted.append(name)
+        if omitted:
+            rendered.append("## omitted_index\n" + _encoded(omitted))
+        body = "\n\n".join(rendered)
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        upper = int(db.execute("SELECT COALESCE(MAX(event_id),0) FROM events").fetchone()[0])
+        dependencies = included_refs
+        if coordinator:
+            dependencies.extend(q["question_ref"] for q in questions if q["question_ref"])
+        if node_row and node_row["question_ref"]:
+            dependencies.append(node_row["question_ref"])
+        if checkpoint:
+            dependencies.append(
+                f"checkpoint/{checkpoint['checkpoint_id']}@{checkpoint['revision']}"
+            )
+        if guidance:
+            dependencies.append(
+                f"guidance/{guidance['guidance_id']}@{guidance['content_hash']}"
+            )
+        if task:
+            dependencies.append(f"exploration/{task['task_id']}")
+        if specialist:
+            dependencies.append(f"specialist/{specialist['task_id']}")
+        if frozen_context:
+            dependencies.append(
+                "frozen/" + hashlib.sha256(_encoded(frozen_context).encode()).hexdigest()
+            )
+        return {
+            "policy_version": "memory-v2",
+            "text": body,
+            "context_mode": specialist["context_mode"] if specialist else None,
+            "source_digest": digest,
+            "dependencies": sorted(set(dependencies)),
+            "truncated": bool(omitted),
+            "omitted": omitted,
+            "source_sequence": upper,
+        }
+
 
     def record_context_request(self, fields: dict, request_id: str) -> dict:
         body = fields["body"]

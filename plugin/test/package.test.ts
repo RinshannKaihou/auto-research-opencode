@@ -81,9 +81,18 @@ test("packed backend starts, concludes and restarts without repository sources",
     expect(responses[0].value.schema_version).toBe(10)
     expect(responses[4].error.message).toContain("item_missing")
     expect(responses[6].value.workflow.run.state).toBe("complete")
-    const restarted = run([request("restart-status", "status"), request("conclusion", "conclude", { fields: contract })])
+    const restarted = run([request("restart-status", "status"), request("conclusion", "conclude", { fields: contract }),
+      request("r1-context", "memory_context", { policy: "memory-r1-v1", profile: "opencode-auto" }),
+      request("r1-preview", "project_read", { root: project, view: "context_preview" })])
     expect(restarted[0].value.workflow.conclusion).toEqual(responses[5].value)
     expect(restarted[1].value).toEqual(responses[5].value)
+    expect(restarted[2].ok).toBe(true)
+    expect(restarted[2].value.policy_version).toBe("memory-r1-v1")
+    expect(restarted[2].value.text).toContain("critical_now")
+    expect(restarted[3].ok).toBe(true)
+    expect(restarted[3].value.available).toBe(true)
+    expect(restarted[3].value.views["memory-r1-v1"].text).toBe(restarted[2].value.text)
+    expect(restarted[3].value.views["memory-v2"].source_sequence).toBe(restarted[2].value.source_sequence)
   } finally {
     rmSync(temporary, { recursive: true, force: true })
   }

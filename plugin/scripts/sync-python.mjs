@@ -11,6 +11,7 @@ for (const file of [
   '__init__.py',
   'artifacts.py',
   'conclusion_store.py',
+  'context_policy.py',
   'epistemic.py',
   'frozen_refs.py',
   'field_checks.py',

@@ -168,8 +168,12 @@ def structure_hints(
     selected = [row for row in rows if node_id is None or row["node_id"] == node_id]
     relations = [dict(row) for row in db.execute("SELECT * FROM relations ORDER BY relation_id")]
     items = (prose_hints(selected, by_entry, relations) + snapshot_hints(selected, by_entry)
-             + lineage_hints(db, relations, node_id) + publication_hints(db, bound, node_id))
-    if klass is not None:
+             + lineage_hints(db, relations, node_id))
+    if klass not in (*CLASSES[:3], "clerical"):
+        items += publication_hints(db, bound, node_id)
+    if klass == "clerical":
+        items = [item for item in items if item["class"] in CLASSES[:3]]
+    elif klass is not None:
         items = [item for item in items if item["class"] == klass]
     items.sort(key=lambda item: (CLASSES.index(item["class"]), item["target"],
                                  item["evidence"].get("mention", "")))

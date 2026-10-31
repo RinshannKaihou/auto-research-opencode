@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import stat
 from typing import Any
+from urllib.parse import quote
 
 from . import frozen_refs
 from .artifacts import _open_source
@@ -55,8 +56,10 @@ def summary(store, host_id: str, session_id: str) -> dict:
             pid = frozen_refs.parse(conclusion['final_ref'])['publication_id']
             row = db.execute("SELECT publication_id,summary,status,node_id FROM publications WHERE publication_id=?", (pid,)).fetchone()
             final = project_publication(db, dict(row)) if row else None
+        node_ids = [r[0] for r in db.execute("SELECT node_id FROM nodes ORDER BY rowid")]
     workflow = state.get("workflow", {})
     return {
+        "node_ids": node_ids,
         "schema_version": state["schema_version"],
         "project": {key: state["project"].get(key) for key in ("project_id", "goal", "control", "created_at")},
         "revision": revision,
@@ -87,20 +90,26 @@ _PAGE_TABLES = {
 }
 
 
-def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
-         limit: int = 20, node_id: str | None = None, kind: str | None = None) -> dict:
+def page(store, collection: str, *, after: int | None = None, upper_id: int | None = None,
+         limit: int = 20, node_id: str | None = None, kind: str | None = None,
+         state=None, trigger_kind=None, cursor=None) -> dict:
+    from .query_store import _resume_cursor
     if collection == "hints":
         with store._read() as db:
-            from .hints import structure_hints
-            result = structure_hints(db, limit=_page_size(limit), offset=max(0, int(after or 0)), node_id=node_id, klass=kind)
-        return {"collection": collection, "items": result["items"], "total": result["total"],
-                "cursor": {"after": result["next_offset"]} if result["next_offset"] is not None else None}
+            from .hints import structure_hints, CLASSES
+            project = store._project(db)["project_id"]
+            scope = _resume_cursor(cursor, collection, project, after=after, node_id=node_id, kind=kind)
+            result = structure_hints(db, limit=_page_size(limit), offset=max(0, int(scope["after"] or 0)),
+                                     node_id=scope["node_id"], klass=scope["kind"])
+            return {"collection": collection, "items": result["items"], "total": result["total"],
+                    "kinds": list(CLASSES[:3]),
+                    "cursor": {"project_id": project, "collection": collection, **scope,
+                               "after": result["next_offset"]} if result["next_offset"] is not None else None}
     spec = _PAGE_TABLES.get(collection)
     if spec is None:
         raise ValidationError("Unsupported workbench collection")
     table, _, fields = spec
     limit = _page_size(limit)
-    after = max(0, int(after or 0))
     if node_id is not None and collection in {"nodes", "publications", "attempts", "sessions", "tasks", "review_todos", "checkpoints", "specialists"}:
         if not isinstance(node_id, str) or len(node_id) > 128:
             raise ValidationError("Invalid node filter")
@@ -108,19 +117,33 @@ def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
         node_id = None
     columns = ",".join(fields)
     with store._read() as db:
+        project = store._project(db)["project_id"]
+        if collection == "review_todos":
+            scope = _resume_cursor(cursor, collection, project, after=after, upper_id=upper_id,
+                                   node_id=node_id, state=state, trigger_kind=trigger_kind)
+            after, upper_id, node_id, state, trigger_kind = (
+                scope[k] for k in ("after", "upper_id", "node_id", "state", "trigger_kind"))
+        after = max(0, int(after or 0))
         if upper_id is None:
             upper_id = int(db.execute(f"SELECT COALESCE(MAX(rowid),0) FROM {table}").fetchone()[0])
         else:
             upper_id = max(0, int(upper_id))
         node_clause = " AND node_id=?" if node_id else ""
-        params = [after, upper_id] + ([node_id] if node_id else [])
+        filter_args = [node_id] if node_id else []
+        if collection == "review_todos":
+            for column, value in (("state", state), ("trigger_kind", trigger_kind)):
+                if value is not None:
+                    node_clause += f" AND {column}=?"
+                    filter_args.append(value)
+        params = [after, upper_id] + filter_args
         total = int(db.execute(f"SELECT COUNT(*) FROM {table} WHERE rowid<=?{node_clause}",
-                               [upper_id] + ([node_id] if node_id else [])).fetchone()[0])
+                               [upper_id] + filter_args).fetchone()[0])
         rows = list(db.execute(
             f"SELECT rowid AS cursor,{columns} FROM {table} WHERE rowid>? AND rowid<=?{node_clause} "
             "ORDER BY rowid LIMIT ?", params + [limit + 1]
         ))
         visible = [dict(row) for row in rows[:limit]]
+        trigger_types = [r[0] for r in db.execute("SELECT DISTINCT trigger_kind FROM review_todos ORDER BY trigger_kind")] if collection == "review_todos" else []
         if collection == "sessions" and visible:
             ids = [item["session_id"] for item in visible]
             task_rows = db.execute(
@@ -145,8 +168,10 @@ def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
         for key in ("question", "summary", "note", "error", "purpose", "label", "rationale"):
             if key in item:
                 item[key] = _short(item[key], 240)
-    return {"collection": collection, "items": visible, "total": total, "upper_id": upper_id,
-            "cursor": {"after": visible[-1]["cursor"], "upper_id": upper_id}
+    return {"collection": collection, "items": visible, "total": total, "trigger_types": trigger_types, "upper_id": upper_id,
+            "cursor": {"after": visible[-1]["cursor"], "upper_id": upper_id,
+                       **({"project_id": project, "collection": collection, "node_id": node_id,
+                           "state": state, "trigger_kind": trigger_kind} if collection == "review_todos" else {})}
             if len(rows) > limit and visible else None}
 
 
@@ -237,8 +262,11 @@ def reference_entries(store, root: Path, ref: str, *, after: int = 0, limit: int
         mode = item.lstat().st_mode
         if stat.S_ISLNK(mode):
             continue
+        form = frozen_refs.parse(ref).get("form")
+        name = quote(item.name, safe="") if form in ("snapshot", "snapshot_entry") else item.name
+        child_ref = ref + ("#" if form == "snapshot" else "/") + name
         items.append({"name": item.name, "kind": "directory" if stat.S_ISDIR(mode) else "file",
-                      "ref": ref.rstrip("/") + "/" + item.name,
+                      "ref": child_ref,
                       "bytes": item.stat().st_size if stat.S_ISREG(mode) else None})
     return {"ref": ref, "resolution": resolution, "kind": "directory", "items": items,
             "cursor": {"after": start + len(visible)} if start + len(visible) < len(names) else None}

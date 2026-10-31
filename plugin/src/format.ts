@@ -118,6 +118,7 @@ export const USAGE = [
   "/research board               打开研究看板（只读）",
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
   "/research guidance [路径 [--version v]]  查看或登记科研指导文档",
+  "/research context-policy [legacy|r1]  查看或切换上下文读取策略",
   "/research takeover            接管目录里已有的项目（单向，需确认）",
   "/research detach              把本会话移出项目，保留对话和材料",
 ].join("\n")

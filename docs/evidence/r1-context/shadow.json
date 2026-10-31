@@ -1,0 +1,2928 @@
+{
+  "kind": "synthetic same-transaction shadow",
+  "real_model_experiment": false,
+  "metric": "rendered pending_review plus classified clerical items; R1 backlog plus clerical_index; characters, not tokens",
+  "summary": {
+    "paired_samples": 7,
+    "old_median": 1220,
+    "new_median": 272,
+    "median_reduction": 0.7770491803278688,
+    "old_p90": 2278.4,
+    "new_p90": 283.6,
+    "old_max": 3866,
+    "new_max": 301
+  },
+  "results": [
+    {
+      "fixture": "ordinary",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 2,
+      "critical_shown_count": 2,
+      "critical_specific_index_count": 2,
+      "critical_details_complete": true,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 2,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 1
+        },
+        "conditions": {
+          "complete": 1
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 485,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 2,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 200,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 2,
+              "findings": 1
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 4343,
+            "routine_characters": 249,
+            "visible_refs": [
+              "knowledge/K-002@1"
+            ],
+            "critical_total": 2,
+            "critical_shown": 2,
+            "critical_details_shown": 2,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1093,
+              "findings": 825,
+              "review_backlog": 166,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 2,
+              "index_shown": 2,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 1,
+              "index_shown": 1,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 484,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 3,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 218,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 3,
+              "findings": 1
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 4901,
+            "routine_characters": 285,
+            "visible_refs": [
+              "knowledge/K-002@1"
+            ],
+            "critical_total": 3,
+            "critical_shown": 3,
+            "critical_details_shown": 3,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 1479,
+              "findings": 903,
+              "review_backlog": 184,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 3,
+              "index_shown": 3,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 1,
+              "index_shown": 1,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 1862,
+        "new_routine_twice": 498
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 931,
+      "new_routine_chars": 249,
+      "findings_chars": 825,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 3, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:37.281569+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:37.281569+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.290187+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:37.290187+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.294044+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:37.294044+00:00\"}], \"pending_total\": 3, \"shown_count\": 3, \"trigger_types\": [\"attempt-finished\", \"publication\"]}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "a831ecbcfc1de52f95b7d1a28c21f67f6e3920c84dbf70db016431410757ec63",
+        "dependencies": [
+          "knowledge/K-001@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 14
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":true,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage partial\",\"targets_complete\":false,\"versions\":{\"knowledge/K-002@1\":{\"impacts\":[],\"needs_action\":false,\"residual_use_risk\":[],\"uncovered_refs\":[{\"field\":\"evidence_refs\",\"ref\":\"pub/P-001#data\",\"status\":\"reference type not covered\"}],\"version_notices\":[]}}},\"target\":\"pub/P-002\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"coverage partial\"},\"target\":\"pub/P-002\"}],\"total\":2}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@1\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":true,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@1\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"publication_pinned\",\"current_version\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]}],\"total\":1}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":3}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "2ca1867dc22841bc2d28e094dad9ec470602ff708d0a8776e24c2cb08e821363",
+        "source_sequence": 14,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@1": {
+            "reasons": [
+              "completed_node",
+              "publication_pinned",
+              "current_version"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 0
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 2,
+            "shown": 2,
+            "index_shown": 2,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 1,
+            "shown": 1,
+            "index_shown": 1,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1093,
+          "findings": 825,
+          "review_backlog": 166,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": false,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "clerical_storm",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 2,
+      "critical_shown_count": 2,
+      "critical_specific_index_count": 2,
+      "critical_details_complete": true,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 2,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 1,
+          "not_recorded": 10
+        },
+        "conditions": {
+          "complete": 1,
+          "not_recorded": 10
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 487,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 2,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 202,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 101,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 2,
+              "findings": 101
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 7918,
+            "routine_characters": 301,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-093@1",
+              "knowledge/K-094@1",
+              "knowledge/K-095@1",
+              "knowledge/K-096@1",
+              "knowledge/K-097@1",
+              "knowledge/K-098@1",
+              "knowledge/K-099@1",
+              "knowledge/K-100@1",
+              "knowledge/K-101@1",
+              "knowledge/K-102@1"
+            ],
+            "critical_total": 2,
+            "critical_shown": 2,
+            "critical_details_shown": 2,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1093,
+              "findings": 4348,
+              "review_backlog": 182,
+              "clerical_index": 119,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 2,
+              "index_shown": 2,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 101,
+              "shown": 11,
+              "index_shown": 11,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 90
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 486,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 3,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 220,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 101,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 3,
+              "findings": 101
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 8440,
+            "routine_characters": 301,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-093@1",
+              "knowledge/K-094@1",
+              "knowledge/K-095@1",
+              "knowledge/K-096@1",
+              "knowledge/K-097@1",
+              "knowledge/K-098@1",
+              "knowledge/K-099@1",
+              "knowledge/K-100@1",
+              "knowledge/K-101@1",
+              "knowledge/K-102@1"
+            ],
+            "critical_total": 3,
+            "critical_shown": 3,
+            "critical_details_shown": 3,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 1479,
+              "findings": 4426,
+              "review_backlog": 200,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 3,
+              "index_shown": 3,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 101,
+              "shown": 11,
+              "index_shown": 11,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 90
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 7732,
+        "new_routine_twice": 602
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 3866,
+      "new_routine_chars": 301,
+      "findings_chars": 4348,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 8, \"has_more\": true, \"items\": [{\"created_at\": \"2026-10-31T07:59:37.366836+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:37.366836+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.375698+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:37.375698+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.378270+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:37.378270+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.382337+00:00\", \"cursor\": 4, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-04c658190207a73c53b1\", \"trigger_kind\": \"fixture\", \"trigger_ref\": \"knowledge/K-003@1\", \"updated_at\": \"2026-10-31T07:59:37.382337+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.384742+00:00\", \"cursor\": 5, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-64f8321329e4ec148d12\", \"trigger_kind\": \"fixture\", \"trigger_ref\": \"knowledge/K-004@1\", \"updated_at\": \"2026-10-31T07:59:37.384742+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.390405+00:00\", \"cursor\": 6, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-4413d04fa8c37ed1f0f8\", \"trigger_kind\": \"fixture\", \"trigger_ref\": \"knowledge/K-005@1\", \"updated_at\": \"2026-10-31T07:59:37.390405+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.392380+00:00\", \"cursor\": 7, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-511336dc1b713bdcc9ec\", \"trigger_kind\": \"fixture\", \"trigger_ref\": \"knowledge/K-006@1\", \"updated_at\": \"2026-10-31T07:59:37.392380+00:00\"}, {\"omitted_count\": 1}], \"pending_total\": 103, \"shown_count\": 8, \"trigger_types\": [\"attempt-finished\", \"fixture\", \"publication\"]}\n\n## structure_hints\n{\"items\": [{\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-003@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-004@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-005@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-006@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-007@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-008@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-009@1\"}, {\"candidate\": true, \"class\": \"prose_mention_without_relation\", \"confidence\": \"candidate\", \"evidence\": {\"candidate_versions\": [\"knowledge/K-999@1\"], \"field\": \"statement\", \"mention\": \"K-999@1\"}, \"repair_evidence\": [], \"target\": \"knowledge/K-010@1\"}], \"next_offset\": 8, \"offset\": 0, \"sequence_bound\": 114, \"shown_count\": 8, \"total\": 100}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [{\"conditions\": {}, \"evidence_refs\": [], \"kind\": \"hypothesis\", \"node_id\": null, \"ref\": \"knowledge/K-102@1\", \"statement\": \"mentions K-999@1 (99)\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [], \"kind\": \"hypothesis\", \"node_id\": null, \"ref\": \"knowledge/K-101@1\", \"statement\": \"mentions K-999@1 (98)\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [], \"kind\": \"hypothesis\", \"node_id\": null, \"ref\": \"knowledge/K-100@1\", \"statement\": \"mentions K-999@1 (97)\", \"status\": \"proposed\", \"supersedes\": []}], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "3dcbce474982e1be4cae3ed473ed9a310fab799a35cbe079e229b7c0fe0b94f6",
+        "dependencies": [
+          "knowledge/K-001@1",
+          "knowledge/K-100@1",
+          "knowledge/K-101@1",
+          "knowledge/K-102@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 114
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":true,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage partial\",\"targets_complete\":false,\"versions\":{\"knowledge/K-002@1\":{\"impacts\":[],\"needs_action\":false,\"residual_use_risk\":[],\"uncovered_refs\":[{\"field\":\"evidence_refs\",\"ref\":\"pub/P-001#data\",\"status\":\"reference type not covered\"}],\"version_notices\":[]}}},\"target\":\"pub/P-002\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"coverage partial\"},\"target\":\"pub/P-002\"}],\"total\":2}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@1\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":false,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":false,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@1\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"publication_pinned\",\"current_version\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-102@1\",\"expand\":{\"ref\":\"knowledge/K-102@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-102@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (99)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-101@1\",\"expand\":{\"ref\":\"knowledge/K-101@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-101@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (98)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-100@1\",\"expand\":{\"ref\":\"knowledge/K-100@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-100@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (97)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-099@1\",\"expand\":{\"ref\":\"knowledge/K-099@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-099@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (96)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-098@1\",\"expand\":{\"ref\":\"knowledge/K-098@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-098@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (95)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-097@1\",\"expand\":{\"ref\":\"knowledge/K-097@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-097@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (94)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-096@1\",\"expand\":{\"ref\":\"knowledge/K-096@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-096@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (93)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-095@1\",\"expand\":{\"ref\":\"knowledge/K-095@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-095@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (92)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-094@1\",\"expand\":{\"ref\":\"knowledge/K-094@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-094@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (91)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-093@1\",\"expand\":{\"ref\":\"knowledge/K-093@1\"},\"kind\":\"hypothesis\",\"node_id\":null,\"ref\":\"knowledge/K-093@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"mentions K-999@1 (90)\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]}],\"total\":101}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"fixture\":100,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":103}\n\n## clerical_index\n{\"by_class\":{\"prose_mention_without_relation\":100},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "a9d458f5b22929e82cf1ada9bc6e5a95569ad908888bf4cb6283612f43cb9b98",
+        "source_sequence": 114,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "knowledge/K-093@1",
+          "knowledge/K-094@1",
+          "knowledge/K-095@1",
+          "knowledge/K-096@1",
+          "knowledge/K-097@1",
+          "knowledge/K-098@1",
+          "knowledge/K-099@1",
+          "knowledge/K-100@1",
+          "knowledge/K-101@1",
+          "knowledge/K-102@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@1": {
+            "reasons": [
+              "completed_node",
+              "publication_pinned",
+              "current_version"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-102@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-101@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-100@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-099@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-098@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-097@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-096@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-095@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-094@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-093@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 90
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 2,
+            "shown": 2,
+            "index_shown": 2,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 101,
+            "shown": 11,
+            "index_shown": 11,
+            "index_complete": false,
+            "details_complete": false
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1093,
+          "findings": 4348,
+          "review_backlog": 182,
+          "clerical_index": 119,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": true,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "long_conditions",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 2,
+      "critical_shown_count": 2,
+      "critical_specific_index_count": 2,
+      "critical_details_complete": true,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 2,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 2
+        },
+        "conditions": {
+          "truncated": 1,
+          "complete": 1
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 485,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 2,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 200,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 2,
+              "findings": 2
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 5039,
+            "routine_characters": 272,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2"
+            ],
+            "critical_total": 2,
+            "critical_shown": 2,
+            "critical_details_shown": 2,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1093,
+              "findings": 1498,
+              "review_backlog": 189,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 2,
+              "index_shown": 2,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 2,
+              "index_shown": 2,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {
+              "knowledge/K-002@2": [
+                "conditions"
+              ]
+            },
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 484,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 3,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 218,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 3,
+              "findings": 2
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 5597,
+            "routine_characters": 308,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2"
+            ],
+            "critical_total": 3,
+            "critical_shown": 3,
+            "critical_details_shown": 3,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 1479,
+              "findings": 1576,
+              "review_backlog": 207,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 3,
+              "index_shown": 3,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 2,
+              "shown": 2,
+              "index_shown": 2,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {
+              "knowledge/K-002@2": [
+                "conditions"
+              ]
+            },
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 2440,
+        "new_routine_twice": 544
+      },
+      "condition_truncations": {
+        "knowledge/K-002@2": [
+          "conditions"
+        ]
+      },
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 1220,
+      "new_routine_chars": 272,
+      "findings_chars": 1498,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 4, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:37.798255+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:37.798255+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.808647+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:37.808647+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.811951+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:37.811951+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.815877+00:00\", \"cursor\": 4, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-e2ae9ba261ece6bb14c2\", \"trigger_kind\": \"knowledge-revision\", \"trigger_ref\": \"knowledge/K-002@2\", \"updated_at\": \"2026-10-31T07:59:37.815877+00:00\"}], \"pending_total\": 4, \"shown_count\": 4, \"trigger_types\": [\"attempt-finished\", \"knowledge-revision\", \"publication\"]}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [{\"conditions\": {\"case\": \"条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件… [expand source]\"}, \"evidence_refs\": [\"pub/P-001#data\"], \"kind\": \"claim\", \"node_id\": \"X-001\", \"ref\": \"knowledge/K-002@2\", \"statement\": \"ORDINARY_FINDING: measured 7\", \"status\": \"proposed\", \"supersedes\": [\"knowledge/K-002@1\"]}], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "caa44cfe5f7d2940c5c889080c50acc3c35a77978384e7ffa779a8efa9cdeadc",
+        "dependencies": [
+          "knowledge/K-001@1",
+          "knowledge/K-002@2"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 15
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":true,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage partial\",\"targets_complete\":false,\"versions\":{\"knowledge/K-002@1\":{\"impacts\":[],\"needs_action\":false,\"residual_use_risk\":[],\"uncovered_refs\":[{\"field\":\"evidence_refs\",\"ref\":\"pub/P-001#data\",\"status\":\"reference type not covered\"}],\"version_notices\":[]}}},\"target\":\"pub/P-002\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"coverage partial\"},\"target\":\"pub/P-002\"}],\"total\":2}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@2\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":false,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":true,\"items\":[{\"conditions\":{\"notice\":\"未显示完整，必须展开\",\"preview\":\"{\\\"case\\\":\\\"条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条件条\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@2\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@2\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"current_version\",\"revised\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[\"conditions\"],\"version_notices\":[]},{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"publication_pinned\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"current_ref\":\"knowledge/K-002@2\",\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]}],\"total\":2}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"knowledge-revision\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":4}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "e2d658f34042367e177d98729fa68345b9f4402d974633867dfff1565efa01a2",
+        "source_sequence": 15,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "knowledge/K-002@2",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@2": {
+            "reasons": [
+              "completed_node",
+              "current_version",
+              "revised"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-002@1": {
+            "reasons": [
+              "publication_pinned"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {
+            "knowledge/K-002@2": [
+              "conditions"
+            ]
+          },
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 0
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 2,
+            "shown": 2,
+            "index_shown": 2,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 2,
+            "shown": 2,
+            "index_shown": 2,
+            "index_complete": true,
+            "details_complete": false
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1093,
+          "findings": 1498,
+          "review_backlog": 189,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": true,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "withdrawal",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ],
+        [
+          "retracted_basis",
+          "knowledge/K-003@1",
+          null
+        ],
+        [
+          "publication",
+          "pub/P-002",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 4,
+      "critical_shown_count": 4,
+      "critical_specific_index_count": 4,
+      "critical_details_complete": false,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 4,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 2,
+          "not_recorded": 1
+        },
+        "conditions": {
+          "complete": 2,
+          "not_recorded": 1
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 485,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 4,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 200,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 4,
+              "findings": 3
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 5766,
+            "routine_characters": 272,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-003@1"
+            ],
+            "critical_total": 4,
+            "critical_shown": 4,
+            "critical_details_shown": 4,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1662,
+              "findings": 1656,
+              "review_backlog": 189,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 4,
+              "index_shown": 4,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 3,
+              "index_shown": 3,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 484,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 6,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 218,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 6,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 6,
+              "findings": 3
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 6686,
+            "routine_characters": 308,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-003@1"
+            ],
+            "critical_total": 6,
+            "critical_shown": 6,
+            "critical_details_shown": 6,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 2392,
+              "findings": 1752,
+              "review_backlog": 207,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 6,
+              "shown": 6,
+              "index_shown": 6,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 3,
+              "shown": 3,
+              "index_shown": 3,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 2440,
+        "new_routine_twice": 544
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 1220,
+      "new_routine_chars": 272,
+      "findings_chars": 1656,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 4, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:37.889826+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:37.889826+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.898711+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:37.898711+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.901344+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:37.901344+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.904407+00:00\", \"cursor\": 4, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-e2ae9ba261ece6bb14c2\", \"trigger_kind\": \"knowledge-revision\", \"trigger_ref\": \"knowledge/K-002@2\", \"updated_at\": \"2026-10-31T07:59:37.904407+00:00\"}], \"pending_total\": 4, \"shown_count\": 4, \"trigger_types\": [\"attempt-finished\", \"knowledge-revision\", \"publication\"]}\n\n## affected_knowledge\n{\"items\": [{\"affected_version\": \"knowledge/K-002@1\", \"change_id\": \"CH-001\", \"edge_source\": \"root\", \"explanation\": [], \"hop\": 0, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": false, \"uncovered_refs\": [{\"field\": \"evidence_refs\", \"ref\": \"pub/P-001#data\", \"status\": \"reference type not covered\"}], \"version_notices\": []}], \"not_in_use_count\": 0, \"paths_truncated\": false, \"sequence_bound\": 16, \"shown_count\": 1, \"targets_complete\": false, \"targets_truncated\": false, \"total\": 1}\n\n## structure_hints\n{\"items\": [{\"candidate\": true, \"class\": \"complete_publication_cites_risk\", \"confidence\": \"candidate\", \"evidence\": {\"flagged\": [\"knowledge/K-002@1\"], \"status\": \"attention\"}, \"repair_evidence\": [], \"target\": \"pub/P-002\"}], \"next_offset\": null, \"offset\": 0, \"sequence_bound\": 16, \"shown_count\": 1, \"total\": 1}\n\n## retracted_refs\n{\"items\": [{\"in_use\": true, \"retracted_ref\": \"knowledge/K-002@2\", \"version\": \"knowledge/K-003@1\"}], \"not_in_use_count\": 0, \"shown_count\": 1, \"total\": 1}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [{\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@2\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-003@1\", \"statement\": \"cites withdrawn version\", \"status\": \"proposed\", \"supersedes\": []}], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [{\"conditions\": {\"case\": \"one\"}, \"evidence_refs\": [\"pub/P-001#data\"], \"kind\": \"claim\", \"node_id\": \"X-001\", \"ref\": \"knowledge/K-002@2\", \"statement\": \"ORDINARY_FINDING: measured 7\", \"status\": \"retracted\", \"supersedes\": [\"knowledge/K-002@1\"]}], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "67af9f06092ae6111b60408e8cce5fc533c1ca0cd7425eaded7d41e3e3256305",
+        "dependencies": [
+          "knowledge/K-001@1",
+          "knowledge/K-002@2",
+          "knowledge/K-003@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 16
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":false,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"IM-052e48f78039e2d763d4\"},\"kind\":\"impact\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"change_id\":\"CH-001\",\"explanation\":[],\"impact_id\":\"IM-052e48f78039e2d763d4\",\"scope_unconfirmed\":false},\"target\":\"knowledge/K-002@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"attention\",\"targets_complete\":false},\"target\":\"pub/P-002\",\"truncated_fields\":[\"versions\"]},{\"expand\":{\"ref\":\"knowledge/K-003@1\"},\"kind\":\"retracted_basis\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"retracted_ref\":\"knowledge/K-002@2\"},\"target\":\"knowledge/K-003@1\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"impact\",\"ref\":\"IM-052e48f78039e2d763d4\",\"risk\":{\"scope_unconfirmed\":false},\"target\":\"knowledge/K-002@1\"},{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"attention\"},\"target\":\"pub/P-002\"},{\"kind\":\"retracted_basis\",\"ref\":\"knowledge/K-003@1\",\"risk\":{\"retracted_ref\":\"knowledge/K-002@2\"},\"target\":\"knowledge/K-003@1\"}],\"total\":4}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@2\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":true,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@2\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@2\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"current_version\",\"revised\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"retracted\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[\"impact\"],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"publication_pinned\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"current_ref\":\"knowledge/K-002@2\",\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-003@1\",\"expand\":{\"ref\":\"knowledge/K-003@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-003@1\",\"risk\":[\"retracted_basis\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"cites withdrawn version\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]}],\"total\":3}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"knowledge-revision\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":4}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "6481a09a35cadfca2a859c849dc1183df36cd5147462bae2320c353458e577e0",
+        "source_sequence": 16,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "knowledge/K-002@2",
+          "knowledge/K-003@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@2": {
+            "reasons": [
+              "completed_node",
+              "current_version",
+              "revised"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-002@1": {
+            "reasons": [
+              "publication_pinned"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-003@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 0
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 4,
+            "shown": 4,
+            "index_shown": 4,
+            "index_complete": true,
+            "details_complete": false
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 3,
+            "shown": 3,
+            "index_shown": 3,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1662,
+          "findings": 1656,
+          "review_backlog": 189,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": true,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "field_failures",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ],
+        [
+          "field_check",
+          "knowledge/K-002@1",
+          0
+        ],
+        [
+          "field_check",
+          "knowledge/K-002@1",
+          1
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 4,
+      "critical_shown_count": 4,
+      "critical_specific_index_count": 4,
+      "critical_details_complete": true,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 4,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 1
+        },
+        "conditions": {
+          "complete": 1
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 485,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 4,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 200,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 4,
+              "findings": 1
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 5223,
+            "routine_characters": 249,
+            "visible_refs": [
+              "knowledge/K-002@1"
+            ],
+            "critical_total": 4,
+            "critical_shown": 4,
+            "critical_details_shown": 4,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1946,
+              "findings": 852,
+              "review_backlog": 166,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 4,
+              "index_shown": 4,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 1,
+              "index_shown": 1,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 484,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 5,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 218,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 5,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 5,
+              "findings": 1
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 5734,
+            "routine_characters": 285,
+            "visible_refs": [
+              "knowledge/K-002@1"
+            ],
+            "critical_total": 5,
+            "critical_shown": 5,
+            "critical_details_shown": 5,
+            "critical_details_complete": true,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 2284,
+              "findings": 931,
+              "review_backlog": 184,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 5,
+              "shown": 5,
+              "index_shown": 5,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 1,
+              "shown": 1,
+              "index_shown": 1,
+              "index_complete": true,
+              "details_complete": true
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 0
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 1862,
+        "new_routine_twice": 498
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 931,
+      "new_routine_chars": 249,
+      "findings_chars": 852,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 3, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:37.988423+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:37.988423+00:00\"}, {\"created_at\": \"2026-10-31T07:59:37.997878+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:37.997878+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.000507+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:38.000507+00:00\"}], \"pending_total\": 3, \"shown_count\": 3, \"trigger_types\": [\"attempt-finished\", \"publication\"]}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "eefc3d7bd29d93b65c7acf410621b47253a1514437b49b47cfbe858f13dabbd9",
+        "dependencies": [
+          "knowledge/K-001@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 14
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":true,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"field_check\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"check_index\":0,\"input_ref\":\"pub/P-001#data\",\"reason\":\"value_mismatch\",\"result\":\"inconsistent\"},\"target\":\"knowledge/K-002@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"field_check\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"check_index\":1,\"input_ref\":\"pub/P-001#data\",\"reason\":\"missing_value\",\"result\":\"not_checkable\"},\"target\":\"knowledge/K-002@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage partial\",\"targets_complete\":false,\"versions\":{\"knowledge/K-002@1\":{\"impacts\":[],\"needs_action\":false,\"residual_use_risk\":[],\"uncovered_refs\":[{\"field\":\"evidence_refs\",\"ref\":\"pub/P-001#data\",\"status\":\"reference type not covered\"}],\"version_notices\":[]}}},\"target\":\"pub/P-002\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"field_check\",\"ref\":\"knowledge/K-002@1\",\"risk\":{\"check_index\":0,\"result\":\"inconsistent\"},\"target\":\"knowledge/K-002@1\"},{\"kind\":\"field_check\",\"ref\":\"knowledge/K-002@1\",\"risk\":{\"check_index\":1,\"result\":\"not_checkable\"},\"target\":\"knowledge/K-002@1\"},{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"coverage partial\"},\"target\":\"pub/P-002\"}],\"total\":4}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@1\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":true,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":false,\"index_complete\":true,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@1\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[\"field_check\",\"field_check\"],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"publication_pinned\",\"current_version\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]}],\"total\":1}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":3}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "d996e1b28c1c45faaf544faec6c2f58418efc6832a8b00d5a2a874f75c792bac",
+        "source_sequence": 14,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@1": {
+            "reasons": [
+              "completed_node",
+              "publication_pinned",
+              "current_version"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 0
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 4,
+            "shown": 4,
+            "index_shown": 4,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 1,
+            "shown": 1,
+            "index_shown": 1,
+            "index_complete": true,
+            "details_complete": true
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1946,
+          "findings": 852,
+          "review_backlog": 166,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": false,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "late_impact",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ],
+        [
+          "impact",
+          "knowledge/K-014@1",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 4,
+      "critical_shown_count": 4,
+      "critical_specific_index_count": 4,
+      "critical_details_complete": false,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 4,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 2,
+          "not_recorded": 7
+        },
+        "conditions": {
+          "complete": 2,
+          "not_recorded": 7
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 486,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 4,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 133,
+              "findings": 201,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 4,
+              "findings": 14
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 8320,
+            "routine_characters": 272,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-008@1",
+              "knowledge/K-009@1",
+              "knowledge/K-010@1",
+              "knowledge/K-011@1",
+              "knowledge/K-012@1",
+              "knowledge/K-013@1",
+              "knowledge/K-014@1"
+            ],
+            "critical_total": 4,
+            "critical_shown": 4,
+            "critical_details_shown": 4,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 1790,
+              "findings": 4082,
+              "review_backlog": 189,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 4,
+              "shown": 4,
+              "index_shown": 4,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 9,
+              "index_shown": 9,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 5
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 485,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 5,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 151,
+              "findings": 219,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 5,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 5,
+              "findings": 14
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 8878,
+            "routine_characters": 308,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-008@1",
+              "knowledge/K-009@1",
+              "knowledge/K-010@1",
+              "knowledge/K-011@1",
+              "knowledge/K-012@1",
+              "knowledge/K-013@1",
+              "knowledge/K-014@1"
+            ],
+            "critical_total": 5,
+            "critical_shown": 5,
+            "critical_details_shown": 5,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 2176,
+              "findings": 4160,
+              "review_backlog": 207,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 5,
+              "shown": 5,
+              "index_shown": 5,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 9,
+              "index_shown": 9,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 0,
+              "findings": 5
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 2440,
+        "new_routine_twice": 544
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 1220,
+      "new_routine_chars": 272,
+      "findings_chars": 4082,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 4, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:38.084031+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:38.084031+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.094203+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:38.094203+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.096728+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:38.096728+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.133596+00:00\", \"cursor\": 4, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-e2ae9ba261ece6bb14c2\", \"trigger_kind\": \"knowledge-revision\", \"trigger_ref\": \"knowledge/K-002@2\", \"updated_at\": \"2026-10-31T07:59:38.133596+00:00\"}], \"pending_total\": 4, \"shown_count\": 4, \"trigger_types\": [\"attempt-finished\", \"knowledge-revision\", \"publication\"]}\n\n## affected_knowledge\n{\"items\": [{\"affected_version\": \"knowledge/K-002@1\", \"change_id\": \"CH-001\", \"edge_source\": \"root\", \"explanation\": [], \"hop\": 0, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": false, \"uncovered_refs\": [{\"field\": \"evidence_refs\", \"ref\": \"pub/P-001#data\", \"status\": \"reference type not covered\"}], \"version_notices\": []}, {\"affected_version\": \"knowledge/K-014@1\", \"change_id\": \"CH-001\", \"edge_source\": \"evidence_refs\", \"explanation\": [{\"from\": \"knowledge/K-014@1\", \"source\": \"evidence_refs\", \"to\": \"knowledge/K-002@1\"}], \"hop\": 1, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": false, \"uncovered_refs\": [], \"version_notices\": [{\"notice\": \"newer_revision_exists\", \"source\": \"knowledge/K-002@1\"}]}], \"not_in_use_count\": 0, \"paths_truncated\": false, \"sequence_bound\": 38, \"shown_count\": 2, \"targets_complete\": false, \"targets_truncated\": false, \"total\": 2}\n\n## structure_hints\n{\"items\": [{\"candidate\": true, \"class\": \"complete_publication_cites_risk\", \"confidence\": \"candidate\", \"evidence\": {\"flagged\": [\"knowledge/K-002@1\"], \"status\": \"attention\"}, \"repair_evidence\": [], \"target\": \"pub/P-002\"}], \"next_offset\": null, \"offset\": 0, \"sequence_bound\": 38, \"shown_count\": 1, \"total\": 1}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [{\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-014@1\", \"statement\": \"Follower 11\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-013@1\", \"statement\": \"Follower 10\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-012@1\", \"statement\": \"Follower 9\", \"status\": \"proposed\", \"supersedes\": []}], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [{\"conditions\": {\"case\": \"one\"}, \"evidence_refs\": [\"pub/P-001#data\"], \"kind\": \"claim\", \"node_id\": \"X-001\", \"ref\": \"knowledge/K-002@2\", \"statement\": \"Corrected result\", \"status\": \"proposed\", \"supersedes\": [\"knowledge/K-002@1\"]}], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "f2d66be933ff37da5e33f600820560af774986a3b3fa354ccb4d14a63620ad87",
+        "dependencies": [
+          "knowledge/K-001@1",
+          "knowledge/K-002@2",
+          "knowledge/K-012@1",
+          "knowledge/K-013@1",
+          "knowledge/K-014@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 38
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":false,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"IM-052e48f78039e2d763d4\"},\"kind\":\"impact\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"change_id\":\"CH-001\",\"explanation\":[],\"impact_id\":\"IM-052e48f78039e2d763d4\",\"scope_unconfirmed\":false},\"target\":\"knowledge/K-002@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"IM-5d6356a3fdc3f4ab6508\"},\"kind\":\"impact\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"change_id\":\"CH-001\",\"explanation\":[{\"from\":\"knowledge/K-014@1\",\"source\":\"evidence_refs\",\"to\":\"knowledge/K-002@1\"}],\"impact_id\":\"IM-5d6356a3fdc3f4ab6508\",\"scope_unconfirmed\":false},\"target\":\"knowledge/K-014@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-001\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"coverage unknown\",\"targets_complete\":false,\"versions\":{}},\"target\":\"pub/P-001\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"pub/P-002\"},\"kind\":\"publication\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"status\":\"attention\",\"targets_complete\":false},\"target\":\"pub/P-002\",\"truncated_fields\":[\"versions\"]}],\"risk_index\":[{\"kind\":\"impact\",\"ref\":\"IM-052e48f78039e2d763d4\",\"risk\":{\"scope_unconfirmed\":false},\"target\":\"knowledge/K-002@1\"},{\"kind\":\"impact\",\"ref\":\"IM-5d6356a3fdc3f4ab6508\",\"risk\":{\"scope_unconfirmed\":false},\"target\":\"knowledge/K-014@1\"},{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"attention\"},\"target\":\"pub/P-002\"}],\"total\":4}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@2\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":false,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":false,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@2\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@2\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"current_version\",\"revised\"],\"statement\":\"Corrected result\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[\"impact\"],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"publication_pinned\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"current_ref\":\"knowledge/K-002@2\",\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-014@1\",\"expand\":{\"ref\":\"knowledge/K-014@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-014@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 11\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-013@1\",\"expand\":{\"ref\":\"knowledge/K-013@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-013@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 10\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-012@1\",\"expand\":{\"ref\":\"knowledge/K-012@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-012@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 9\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-011@1\",\"expand\":{\"ref\":\"knowledge/K-011@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-011@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 8\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-010@1\",\"expand\":{\"ref\":\"knowledge/K-010@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-010@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-009@1\",\"expand\":{\"ref\":\"knowledge/K-009@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-009@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 6\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-008@1\",\"expand\":{\"ref\":\"knowledge/K-008@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-008@1\",\"risk\":[],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 5\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]}],\"total\":14}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"knowledge-revision\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":4}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "d4c7cbc4c753b5f0d33d476bf8254677be7d7a60da6bc9d3269cedb698dc130e",
+        "source_sequence": 38,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "knowledge/K-002@2",
+          "knowledge/K-008@1",
+          "knowledge/K-009@1",
+          "knowledge/K-010@1",
+          "knowledge/K-011@1",
+          "knowledge/K-012@1",
+          "knowledge/K-013@1",
+          "knowledge/K-014@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@2": {
+            "reasons": [
+              "completed_node",
+              "current_version",
+              "revised"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-002@1": {
+            "reasons": [
+              "publication_pinned"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-014@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-013@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-012@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-011@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-010@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-009@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-008@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 0,
+            "findings": 5
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 4,
+            "shown": 4,
+            "index_shown": 4,
+            "index_complete": true,
+            "details_complete": false
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 14,
+            "shown": 9,
+            "index_shown": 9,
+            "index_complete": false,
+            "details_complete": false
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 1790,
+          "findings": 4082,
+          "review_backlog": 189,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": true,
+        "omitted": []
+      }
+    },
+    {
+      "fixture": "unknown_scope",
+      "expected_critical": [
+        [
+          "publication",
+          "pub/P-001",
+          null
+        ],
+        [
+          "impact",
+          "knowledge/K-014@1",
+          null
+        ]
+      ],
+      "critical_index_recall": 1.0,
+      "critical_query_recall": 1.0,
+      "ordinary_visible": true,
+      "critical_source_count": 15,
+      "critical_shown_count": 2,
+      "critical_specific_index_count": 15,
+      "critical_details_complete": false,
+      "findings_unique": true,
+      "displayed_refs_resolve": true,
+      "critical_expansions_read": 15,
+      "displayed_field_status": {
+        "scope": {
+          "complete": 2,
+          "not_recorded": 7
+        },
+        "conditions": {
+          "complete": 2,
+          "not_recorded": 7
+        }
+      },
+      "role_budgets": [
+        {
+          "role": "main",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 487,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 15,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 134,
+              "findings": 201,
+              "project": 43,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 15,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 15,
+              "findings": 14
+            }
+          }
+        },
+        {
+          "role": "main",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 9109,
+            "routine_characters": 272,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-008@1",
+              "knowledge/K-009@1",
+              "knowledge/K-010@1",
+              "knowledge/K-011@1",
+              "knowledge/K-012@1",
+              "knowledge/K-013@1",
+              "knowledge/K-014@1"
+            ],
+            "critical_total": 15,
+            "critical_shown": 15,
+            "critical_details_shown": 2,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 78,
+              "critical_now": 2531,
+              "findings": 4130,
+              "review_backlog": 189,
+              "clerical_index": 83,
+              "role_instructions": 1242,
+              "control_instructions": 579,
+              "project": 43,
+              "questions": 101,
+              "checkpoint_recovery": 90,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 15,
+              "shown": 2,
+              "index_shown": 15,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 9,
+              "index_shown": 9,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 13,
+              "findings": 5
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 500,
+          "within_budget": true,
+          "metrics": {
+            "characters": 486,
+            "routine_characters": 0,
+            "visible_refs": [],
+            "critical_total": 16,
+            "critical_shown": 0,
+            "critical_details_shown": 0,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 152,
+              "findings": 219,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 16,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 0,
+              "index_shown": 0,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 0,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 16,
+              "findings": 14
+            }
+          }
+        },
+        {
+          "role": "node_core",
+          "max_chars": 12000,
+          "within_budget": true,
+          "metrics": {
+            "characters": 9283,
+            "routine_characters": 308,
+            "visible_refs": [
+              "knowledge/K-002@1",
+              "knowledge/K-002@2",
+              "knowledge/K-008@1",
+              "knowledge/K-009@1",
+              "knowledge/K-010@1",
+              "knowledge/K-011@1",
+              "knowledge/K-012@1",
+              "knowledge/K-013@1",
+              "knowledge/K-014@1"
+            ],
+            "critical_total": 16,
+            "critical_shown": 16,
+            "critical_details_shown": 2,
+            "critical_details_complete": false,
+            "block_chars": {
+              "identity": 86,
+              "critical_now": 2533,
+              "findings": 4208,
+              "review_backlog": 207,
+              "clerical_index": 101,
+              "role_instructions": 1214,
+              "control_instructions": 579,
+              "task": 89,
+              "project": 43,
+              "questions": 85,
+              "checkpoint_recovery": 93,
+              "recent_node_notes": 23
+            }
+          },
+          "coverage": {
+            "critical_now": {
+              "source_complete": true,
+              "total": 16,
+              "shown": 2,
+              "index_shown": 16,
+              "index_complete": true,
+              "details_complete": false
+            },
+            "findings": {
+              "source_complete": true,
+              "total": 14,
+              "shown": 9,
+              "index_shown": 9,
+              "index_complete": false,
+              "details_complete": false
+            },
+            "completed_findings": {
+              "total": 1,
+              "shown": 1,
+              "source_complete": true,
+              "expand": {
+                "collection": "completed_findings"
+              }
+            }
+          },
+          "truncation": {
+            "fields": {},
+            "scope_params_omitted": false,
+            "project_goal": false,
+            "unshown": {
+              "critical_now": 14,
+              "findings": 5
+            }
+          }
+        }
+      ],
+      "unchanged_repeat": {
+        "same_text": {
+          "memory-v2": true,
+          "memory-r1-v1": true
+        },
+        "old_routine_twice": 2440,
+        "new_routine_twice": 544
+      },
+      "condition_truncations": {},
+      "read_only": true,
+      "completed_node_count": 1,
+      "old_routine_chars": 1220,
+      "new_routine_chars": 272,
+      "findings_chars": 4130,
+      "old": {
+        "policy_version": "memory-v2",
+        "text": "## project\n{\"control\": \"auto\", \"goal\": \"Goal\"}\n\n## checkpoint_recovery\n{\"excluded\": [], \"excluded_count\": 0, \"head_revision\": 0, \"node_id\": null}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## identity\n{\"node_id\": null, \"permissions\": \"research-read-write\", \"role\": \"main\"}\n\n## pending_review\n{\"claim_owner\": null, \"cursor\": 4, \"has_more\": false, \"items\": [{\"created_at\": \"2026-10-31T07:59:38.245249+00:00\", \"cursor\": 1, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-5bb9614323e064fdde65\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-001\", \"updated_at\": \"2026-10-31T07:59:38.245249+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.254789+00:00\", \"cursor\": 2, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-73352cc4bdf7dd53eb5a\", \"trigger_kind\": \"publication\", \"trigger_ref\": \"pub/P-002\", \"updated_at\": \"2026-10-31T07:59:38.254789+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.257398+00:00\", \"cursor\": 3, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-90cec943a4b19d672d8b\", \"trigger_kind\": \"attempt-finished\", \"trigger_ref\": \"A-001\", \"updated_at\": \"2026-10-31T07:59:38.257398+00:00\"}, {\"created_at\": \"2026-10-31T07:59:38.285453+00:00\", \"cursor\": 4, \"node_id\": \"X-001\", \"state\": \"pending\", \"todo_id\": \"RV-e2ae9ba261ece6bb14c2\", \"trigger_kind\": \"knowledge-revision\", \"trigger_ref\": \"knowledge/K-002@2\", \"updated_at\": \"2026-10-31T07:59:38.285453+00:00\"}], \"pending_total\": 4, \"shown_count\": 4, \"trigger_types\": [\"attempt-finished\", \"knowledge-revision\", \"publication\"]}\n\n## affected_knowledge\n{\"items\": [{\"affected_version\": \"knowledge/K-002@1\", \"change_id\": \"CH-001\", \"edge_source\": \"root\", \"explanation\": [], \"hop\": 0, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": true, \"uncovered_refs\": [{\"field\": \"evidence_refs\", \"ref\": \"pub/P-001#data\", \"status\": \"reference type not covered\"}], \"version_notices\": []}, {\"affected_version\": \"knowledge/K-013@1\", \"change_id\": \"CH-001\", \"edge_source\": \"evidence_refs\", \"explanation\": [{\"from\": \"knowledge/K-013@1\", \"source\": \"evidence_refs\", \"to\": \"knowledge/K-002@1\"}], \"hop\": 1, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": true, \"uncovered_refs\": [], \"version_notices\": [{\"notice\": \"newer_revision_exists\", \"source\": \"knowledge/K-002@1\"}]}, {\"affected_version\": \"knowledge/K-012@1\", \"change_id\": \"CH-001\", \"edge_source\": \"evidence_refs\", \"explanation\": [{\"from\": \"knowledge/K-012@1\", \"source\": \"evidence_refs\", \"to\": \"knowledge/K-002@1\"}], \"hop\": 1, \"in_use\": true, \"residual_use_risk\": [{\"change_id\": \"CH-001\", \"reason\": \"in_change_scope\"}], \"review_state\": \"pending\", \"scope_unconfirmed\": true, \"uncovered_refs\": [], \"version_notices\": [{\"notice\": \"newer_revision_exists\", \"source\": \"knowledge/K-002@1\"}]}, {\"omitted_count\": 5}], \"not_in_use_count\": 0, \"paths_truncated\": false, \"sequence_bound\": 27, \"shown_count\": 8, \"targets_complete\": false, \"targets_truncated\": true, \"total\": 13}\n\n## structure_hints\n{\"items\": [{\"candidate\": true, \"class\": \"complete_publication_cites_risk\", \"confidence\": \"candidate\", \"evidence\": {\"flagged\": [\"knowledge/K-002@1\"], \"status\": \"attention\"}, \"repair_evidence\": [], \"target\": \"pub/P-002\"}], \"next_offset\": null, \"offset\": 0, \"sequence_bound\": 27, \"shown_count\": 1, \"total\": 1}\n\n## knowledge\n{\"disputed\": {\"items\": [], \"omitted_from_selection\": 0}, \"lessons\": {\"items\": [], \"omitted_from_selection\": 0}, \"project\": {\"items\": [{\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-014@1\", \"statement\": \"Follower 11\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-013@1\", \"statement\": \"Follower 10\", \"status\": \"proposed\", \"supersedes\": []}, {\"conditions\": {}, \"evidence_refs\": [\"knowledge/K-002@1\"], \"kind\": \"claim\", \"node_id\": null, \"ref\": \"knowledge/K-012@1\", \"statement\": \"Follower 9\", \"status\": \"proposed\", \"supersedes\": []}], \"omitted_from_selection\": 0}, \"revised\": {\"items\": [{\"conditions\": {\"case\": \"one\"}, \"evidence_refs\": [\"pub/P-001#data\"], \"kind\": \"claim\", \"node_id\": \"X-001\", \"ref\": \"knowledge/K-002@2\", \"statement\": \"Corrected result\", \"status\": \"proposed\", \"supersedes\": [\"knowledge/K-002@1\"]}], \"omitted_from_selection\": 0}}\n\n## questions\n[{\"node_id\": \"X-001\", \"question\": \"Q1\", \"question_ref\": \"knowledge/K-001@1\", \"status\": \"open\"}]\n\n## index\n{\"query\": \"Use research_query with query/kind/node_id/cursor to expand project memory.\"}",
+        "context_mode": null,
+        "source_digest": "5ed12d3d55a739b225a3752e7a3573d8c2d86369c625386f00e4e805f1bc3260",
+        "dependencies": [
+          "knowledge/K-001@1",
+          "knowledge/K-002@2",
+          "knowledge/K-012@1",
+          "knowledge/K-013@1",
+          "knowledge/K-014@1"
+        ],
+        "truncated": false,
+        "omitted": [],
+        "source_sequence": 27
+      },
+      "new": {
+        "text": "## identity\n{\"node_id\":null,\"permissions\":\"research-read-write\",\"role\":\"main\"}\n\n## critical_now\n{\"details_complete\":false,\"expand\":{\"collection\":\"critical_now\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":true,\"items\":[{\"expand\":{\"ref\":\"IM-052e48f78039e2d763d4\"},\"kind\":\"impact\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"change_id\":\"CH-001\",\"explanation\":[],\"impact_id\":\"IM-052e48f78039e2d763d4\",\"scope_unconfirmed\":true},\"target\":\"knowledge/K-002@1\",\"truncated_fields\":[]},{\"expand\":{\"ref\":\"IM-8044e3176cd263e5ba7e\"},\"kind\":\"impact\",\"relevance\":\"unknown\",\"relevance_reason\":[\"decision_scope_not_declared_for_target\"],\"risk\":{\"change_id\":\"CH-001\",\"explanation\":[{\"from\":\"knowledge/K-003@1\",\"source\":\"evidence_refs\",\"to\":\"knowledge/K-002@1\"}],\"impact_id\":\"IM-8044e3176cd263e5ba7e\",\"scope_unconfirmed\":true},\"target\":\"knowledge/K-003@1\",\"truncated_fields\":[]}],\"risk_index\":[{\"kind\":\"impact\",\"ref\":\"IM-052e48f78039e2d763d4\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-002@1\"},{\"kind\":\"impact\",\"ref\":\"IM-8044e3176cd263e5ba7e\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-003@1\"},{\"kind\":\"impact\",\"ref\":\"IM-cf052a57f46bab3b3663\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-004@1\"},{\"kind\":\"impact\",\"ref\":\"IM-538b29120aa841522bc9\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-005@1\"},{\"kind\":\"impact\",\"ref\":\"IM-4fb624eadbca4f40bd84\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-006@1\"},{\"kind\":\"impact\",\"ref\":\"IM-c6153301aac8ad739119\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-007@1\"},{\"kind\":\"impact\",\"ref\":\"IM-c0594bbfc826fcb38989\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-008@1\"},{\"kind\":\"impact\",\"ref\":\"IM-57613a0227e6deb41c28\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-009@1\"},{\"kind\":\"impact\",\"ref\":\"IM-4c421fc86cfcee6dc676\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-010@1\"},{\"kind\":\"impact\",\"ref\":\"IM-e0805026b7f2b1b6e0fc\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-011@1\"},{\"kind\":\"impact\",\"ref\":\"IM-398d1fc16126bc84e3ba\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-012@1\"},{\"kind\":\"impact\",\"ref\":\"IM-0ae82e9f2db3d4e751d1\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-013@1\"},{\"kind\":\"impact\",\"ref\":\"IM-5d6356a3fdc3f4ab6508\",\"risk\":{\"scope_unconfirmed\":true},\"target\":\"knowledge/K-014@1\"},{\"kind\":\"publication\",\"ref\":\"pub/P-001\",\"risk\":{\"status\":\"coverage unknown\"},\"target\":\"pub/P-001\"},{\"kind\":\"publication\",\"ref\":\"pub/P-002\",\"risk\":{\"status\":\"attention\"},\"target\":\"pub/P-002\"}],\"total\":15}\n\n## findings\n{\"completed_nodes\":{\"expand\":{\"collection\":\"completed_findings\"},\"has_more\":false,\"items\":[{\"expand\":{\"collection\":\"findings\",\"node_id\":\"X-001\"},\"finding_count\":1,\"node_id\":\"X-001\",\"selected_refs\":[\"knowledge/K-002@2\"],\"status\":\"registered\"}],\"shown\":1,\"total\":1},\"details_complete\":false,\"expand\":{\"collection\":\"findings\",\"decision_refs\":[]},\"expand_required\":true,\"index_complete\":false,\"items\":[{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@2\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@2\",\"risk\":[],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"completed_node\",\"current_version\",\"revised\"],\"statement\":\"Corrected result\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[]},{\"conditions\":{\"case\":\"one\"},\"current_ref\":\"knowledge/K-002@2\",\"expand\":{\"ref\":\"knowledge/K-002@1\"},\"kind\":\"claim\",\"node_id\":\"X-001\",\"ref\":\"knowledge/K-002@1\",\"risk\":[\"impact\"],\"scope\":{\"fixture\":\"synthetic\"},\"scope_origins\":[],\"selection_reasons\":[\"publication_pinned\"],\"statement\":\"ORDINARY_FINDING: measured 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"current_ref\":\"knowledge/K-002@2\",\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-014@1\",\"expand\":{\"ref\":\"knowledge/K-014@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-014@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 11\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-013@1\",\"expand\":{\"ref\":\"knowledge/K-013@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-013@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 10\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-012@1\",\"expand\":{\"ref\":\"knowledge/K-012@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-012@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 9\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-011@1\",\"expand\":{\"ref\":\"knowledge/K-011@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-011@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 8\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-010@1\",\"expand\":{\"ref\":\"knowledge/K-010@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-010@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 7\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-009@1\",\"expand\":{\"ref\":\"knowledge/K-009@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-009@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 6\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]},{\"conditions\":{\"status\":\"未记录\"},\"current_ref\":\"knowledge/K-008@1\",\"expand\":{\"ref\":\"knowledge/K-008@1\"},\"kind\":\"claim\",\"node_id\":null,\"ref\":\"knowledge/K-008@1\",\"risk\":[\"impact\"],\"scope\":{\"status\":\"未记录\"},\"scope_origins\":[],\"selection_reasons\":[\"background\"],\"statement\":\"Follower 5\",\"status\":\"proposed\",\"truncated_fields\":[],\"version_notices\":[{\"notice\":\"newer_revision_exists\",\"source\":\"knowledge/K-002@1\"}]}],\"total\":14}\n\n## review_backlog\n{\"by_trigger_kind\":{\"attempt-finished\":1,\"knowledge-revision\":1,\"publication\":2},\"categories_omitted\":0,\"expand\":{\"collection\":\"review_todos\",\"state\":\"pending\"},\"total\":4}\n\n## clerical_index\n{\"by_class\":{},\"expand\":{\"collection\":\"hints\",\"kind\":\"clerical\"}}\n\n## role_instructions\n\"You coordinate this research project autonomously; the research engine keeps you working turn after turn. Each turn read the project state and act. Propose bounded nodes with research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing else is useful. Full experiments belong to node executors, not to you. When node results arrive, synthesize them: record project-level knowledge with evidence, revise or retract earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is answered, or further work cannot change the conclusion, publish a final report with research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with 【Research 自动推进】 come from the research engine; other user messages are guidance from the human lead: follow them and keep going.\"\n\n## control_instructions\n\"Use research tools to change the ledger. Never edit .research or issue SQL repairs. Record acceptance criteria in plans and checkpoints. A complete publication is a finished deliverable, not scientific success; report evidence, gaps and stopping reasons. When publishing you may add display metadata (short title, overview, grouped plain-text points in the research goal language) and set primary_item_id only for an actual attached file; missing display never blocks publication. Do not ask the user for confirmation between steps; decide and continue.\"\n\n## project\n{\"control\":\"auto\",\"goal\":\"Goal\"}\n\n## questions\n[{\"node_id\":\"X-001\",\"question\":\"Q1\",\"question_ref\":\"knowledge/K-001@1\",\"status\":\"open\"}]\n\n## checkpoint_recovery\n{\"excluded\":[],\"excluded_count\":0,\"head_revision\":0,\"node_id\":null}\n\n## recent_node_notes\n[]",
+        "policy_version": "memory-r1-v1",
+        "context_mode": null,
+        "source_digest": "affe2589db00cc4e42bce96323104cdf468b2ebf618b6ae0ad7c2066f2caa900",
+        "source_sequence": 27,
+        "dependencies": [
+          "knowledge/K-002@1",
+          "knowledge/K-002@2",
+          "knowledge/K-003@1",
+          "knowledge/K-004@1",
+          "knowledge/K-005@1",
+          "knowledge/K-006@1",
+          "knowledge/K-007@1",
+          "knowledge/K-008@1",
+          "knowledge/K-009@1",
+          "knowledge/K-010@1",
+          "knowledge/K-011@1",
+          "knowledge/K-012@1",
+          "knowledge/K-013@1",
+          "knowledge/K-014@1",
+          "pub/P-001",
+          "pub/P-002"
+        ],
+        "selection": {
+          "knowledge/K-002@2": {
+            "reasons": [
+              "completed_node",
+              "current_version",
+              "revised"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-002@1": {
+            "reasons": [
+              "publication_pinned"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-014@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-013@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-012@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-011@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-010@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-009@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          },
+          "knowledge/K-008@1": {
+            "reasons": [
+              "background"
+            ],
+            "scope_origins": []
+          }
+        },
+        "truncation": {
+          "fields": {},
+          "scope_params_omitted": false,
+          "project_goal": false,
+          "unshown": {
+            "critical_now": 13,
+            "findings": 5
+          }
+        },
+        "coverage": {
+          "critical_now": {
+            "source_complete": true,
+            "total": 15,
+            "shown": 2,
+            "index_shown": 15,
+            "index_complete": true,
+            "details_complete": false
+          },
+          "findings": {
+            "source_complete": true,
+            "total": 14,
+            "shown": 9,
+            "index_shown": 9,
+            "index_complete": false,
+            "details_complete": false
+          },
+          "completed_findings": {
+            "total": 1,
+            "shown": 1,
+            "source_complete": true,
+            "expand": {
+              "collection": "completed_findings"
+            }
+          }
+        },
+        "block_chars": {
+          "identity": 78,
+          "critical_now": 2531,
+          "findings": 4130,
+          "review_backlog": 189,
+          "clerical_index": 83,
+          "role_instructions": 1242,
+          "control_instructions": 579,
+          "project": 43,
+          "questions": 101,
+          "checkpoint_recovery": 90,
+          "recent_node_notes": 23
+        },
+        "truncated": true,
+        "omitted": []
+      }
+    }
+  ]
+}

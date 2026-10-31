@@ -385,6 +385,23 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             raise NotFoundError("No active research work segment")
         return row
 
+    def set_context_policy(self, policy, request_id):
+        from .context_policy import POLICIES
+        if policy not in POLICIES:
+            raise ValidationError(f"Unknown context policy: {policy}")
+
+        def work(db):
+            config = self._project(db)["config"]
+            value = {"policy_version": policy}
+            if config.get("context_policy", "memory-v2") == policy:
+                return value
+            config["context_policy"] = policy
+            db.execute("UPDATE project SET config=?", (_json(config),))
+            self._event(db, "context.policy_changed", value)
+            return value
+
+        return self._mutate("set_context_policy", {"policy": policy}, request_id, work)
+
     def initialize(self, goal: str, request_id: str) -> dict:
         payload = {"goal": _text(goal, "goal")}
 

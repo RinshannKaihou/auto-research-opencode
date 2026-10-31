@@ -399,7 +399,7 @@ def _support_used(db: sqlite3.Connection, version: str) -> list[tuple[str, int, 
         (row[0], row[1], row[2])
         for row in db.execute(
             "SELECT used_ref,from_dependencies,from_evidence"
-            " FROM knowledge_support_edges WHERE user_ref=?",
+            " FROM knowledge_support_edges WHERE user_ref=? ORDER BY used_ref",
             (version,),
         )
     ]
@@ -878,7 +878,8 @@ def publication_reference_risk(
 
 
 def publication_check(
-    db: sqlite3.Connection, publication_id: str, bound: int | None = None
+    db: sqlite3.Connection, publication_id: str, bound: int | None = None,
+    *, declared_refs: list[str] | None = None,
 ) -> dict:
     """R25/R26. Check a publication's declared references in one read view.
 
@@ -895,6 +896,8 @@ def publication_check(
             (publication_id,),
         )
     ]
+    if declared_refs is not None:
+        pinned = sorted(set(declared_refs))
     if not pinned:
         # No declared reference is not a pass. It is an unknown.
         return {

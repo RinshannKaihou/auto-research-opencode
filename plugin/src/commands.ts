@@ -33,6 +33,9 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
     case "init":
       if (!tail) return { kind: "error", message: "用法：/research init <研究目标>" }
       return { kind: "rpc", action, args: { goal: tail } }
+    case "context-policy":
+      if (tail && tail !== "legacy" && tail !== "r1") return { kind: "error", message: "用法：/research context-policy legacy|r1" }
+      return { kind: "rpc", action, args: { policy: tail || null } }
     case "guidance": {
       if (!tail) return { kind: "rpc", action, args: {} }
       const match = tail.match(/^(.*?)(?:\s+--version\s+(\S+))?$/)

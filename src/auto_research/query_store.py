@@ -7,6 +7,7 @@ single traversal boundary; it does not claim a snapshot shared with later RPCs.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sqlite3
 from typing import Any
@@ -48,7 +49,26 @@ def _bounded_text(value: str, expand_ref: str, maximum: int = 8192) -> dict | st
     return {"preview": preview, "truncated": True, "expand_ref": expand_ref}
 
 
+def _resume_cursor(cursor, collection, project_id, **fields):
+    """Bind a continuation to its collection, project and original filters."""
+    if cursor is None:
+        return fields
+    if not isinstance(cursor, dict) or not {"project_id", "collection", *fields}.issubset(cursor):
+        raise ValidationError("Invalid collection cursor")
+    if cursor["project_id"] != project_id or cursor["collection"] != collection:
+        raise ValidationError("read_view_changed: cursor belongs to another project or collection")
+    for name, value in fields.items():
+        if value is not None and value != cursor[name]:
+            raise ValidationError("read_view_changed: cursor filters changed; refresh the collection")
+    return {name: cursor[name] for name in fields}
+
+
 class QueryStore:
+    def context_page(self, collection, **fields):
+        from .context_policy import page
+        with self._read() as db:
+            return page(self, db, collection, **fields)
+
     @staticmethod
     def _decode_page_row(
         db: sqlite3.Connection, collection: str, row: sqlite3.Row, *, full: bool = False
@@ -193,51 +213,62 @@ class QueryStore:
         value["cursor"] = cursor
         return value
 
-    def hints_query(self, *, limit: int = 8, offset: int = 0, node_id=None, klass=None) -> dict:
+    def hints_query(self, *, limit: int = 8, offset=None, node_id=None, klass=None, cursor=None) -> dict:
         from .hints import structure_hints
         with self._read() as db:
+            project = self._project(db)["project_id"]
+            scope = _resume_cursor(cursor, "hints", project, offset=offset, node_id=node_id, kind=klass)
             page = structure_hints(db, limit=max(1, min(int(limit), 200)),
-                                   offset=offset, node_id=node_id, klass=klass)
-        return {"collection": "hints", **page,
-                "cursor": {"offset": page["next_offset"]} if page["next_offset"] is not None else None}
+                                   offset=scope["offset"] or 0, node_id=scope["node_id"], klass=scope["kind"])
+            return {"collection": "hints", **page,
+                    "cursor": {"project_id": project, "collection": "hints", **scope,
+                               "offset": page["next_offset"]} if page["next_offset"] is not None else None}
 
     def history_page(
         self,
         collection: str,
         *,
-        after: int = 0,
+        after: int | None = None,
         upper_id: int | None = None,
         limit: int = 50,
         project_id: str | None = None,
         order: str | None = None,
         offset: int = 0,
+        node_id=None, state=None, trigger_kind=None, kind=None, cursor=None,
     ) -> dict:
         if collection == "hints":
-            return self.hints_query(limit=limit, offset=offset)
+            return self.hints_query(limit=limit, offset=offset or None, node_id=node_id, klass=kind, cursor=cursor)
         if collection not in COLLECTIONS:
             raise ValidationError(f"Unsupported history collection: {collection}")
         table, key = COLLECTIONS[collection]
-        after = max(0, int(after or 0))
         limit = max(1, min(int(limit or 50), 200))
         with self._read() as db:
             actual_project = self._project(db)["project_id"]
             if project_id is not None and project_id != actual_project:
                 raise ValidationError("Cursor belongs to another research project")
-            if order is not None and order != "rowid-asc":
+            scope = _resume_cursor(cursor, collection, actual_project,
+                                   after=after, upper_id=upper_id, order=order,
+                                   node_id=node_id, state=state, trigger_kind=trigger_kind)
+            if scope["order"] is not None and scope["order"] != "rowid-asc":
                 raise ValidationError("Cursor order does not match this collection")
+            after = max(0, int(scope["after"] or 0))
+            upper_id = scope["upper_id"]
+            node_id, state, trigger_kind = (scope[k] for k in ("node_id", "state", "trigger_kind"))
             if upper_id is None:
                 upper_id = int(
                     db.execute(f"SELECT COALESCE(MAX({key}),0) FROM {table}").fetchone()[0]
                 )
             else:
                 upper_id = max(0, int(upper_id))
-            rows = list(
-                db.execute(
-                    f"SELECT {key} AS _cursor,* FROM {table} "
-                    f"WHERE {key}>? AND {key}<=? ORDER BY {key} LIMIT ?",
-                    (after, upper_id, limit + 1),
-                )
-            )
+            clause, filters = "", []
+            if collection == "review_todos":
+                for column, value in (("node_id", node_id), ("state", state), ("trigger_kind", trigger_kind)):
+                    if value is not None:
+                        clause += f" AND {column}=?"
+                        filters.append(value)
+            rows = list(db.execute(
+                f"SELECT {key} AS _cursor,* FROM {table} WHERE {key}>? AND {key}<=?{clause} ORDER BY {key} LIMIT ?",
+                (after, upper_id, *filters, limit + 1)))
             visible = rows[:limit]
             items = [self._decode_page_row(db, collection, row) for row in visible]
             next_after = int(visible[-1]["_cursor"]) if len(rows) > limit and visible else None
@@ -250,11 +281,15 @@ class QueryStore:
                     "after": next_after,
                     "upper_id": upper_id,
                     "order": "rowid-asc",
+                    "node_id": node_id, "state": state, "trigger_kind": trigger_kind,
                 }
                 if next_after is not None
                 else None,
                 "upper_id": upper_id,
                 "has_more": len(rows) > limit,
+                **({"total": db.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {key}<=?{clause}", (upper_id, *filters)
+                ).fetchone()[0]} if collection == "review_todos" else {}),
             }
 
     def usage_page(self, *, after: int = 0, upper_id: int | None = None, limit: int = 50) -> dict:
@@ -370,7 +405,17 @@ class QueryStore:
                     (kid, revision),
                 ).fetchone()
                 if row:
-                    return {"kind": "knowledge", "value": self._decode_knowledge(row, db)}
+                    from . import epistemic
+                    current = self._latest_revision(db, kid)
+                    current_ref = f"knowledge/{kid}@{current['revision']}"
+                    published_refs = [f"knowledge/{kid}@{r[0]}" for r in db.execute(
+                        "SELECT DISTINCT revision FROM publication_knowledge WHERE knowledge_id=? ORDER BY revision", (kid,))]
+                    notices = epistemic.version_notices(db, ref)
+                    if current_ref != ref:
+                        notices.append({"notice": "newer_revision_exists", "source": ref, "current_ref": current_ref})
+                    return {"kind": "knowledge", "value": self._decode_knowledge(row, db),
+                            "version_context": {"current_ref": current_ref, "published_refs": published_refs,
+                                                "version_notices": notices}}
             node = db.execute(
                 "SELECT rowid AS _cursor,* FROM nodes WHERE node_id=?", (ref,)
             ).fetchone()
@@ -405,6 +450,7 @@ class QueryStore:
                 ("specialist-task", "specialists", "task_id"),
                 ("checkpoint", "checkpoints", "checkpoint_id"),
                 ("review-todo", "review_todos", "todo_id"),
+                ("impact", "impacts", "impact_id"),
             ):
                 table, _ = COLLECTIONS[collection]
                 row = db.execute(
@@ -423,12 +469,15 @@ class QueryStore:
                 return {"kind": "legacy-ref", "value": value}
         raise NotFoundError(f"Unknown research reference: {ref}")
 
-    def reference_chunk(self, ref: str, *, offset: int = 0, limit: int = 8192) -> dict:
+    def reference_chunk(self, ref: str, *, offset: int = 0, limit: int = 8192, expected_digest=None) -> dict:
         """Expand one fixed reference without allowing an unbounded IPC response."""
         offset = max(0, int(offset or 0))
         limit = max(1, min(int(limit or 8192), 32768))
         selected = self.reference_query(ref, full=True)
         encoded = json.dumps(selected, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        if expected_digest is not None and digest != expected_digest:
+            raise ValidationError("read_view_changed: reference changed while reading; refresh the record")
         chunk = base64.b64encode(encoded[offset : offset + limit]).decode("ascii")
         next_offset = offset + limit if offset + limit < len(encoded) else None
         return {
@@ -438,6 +487,7 @@ class QueryStore:
             "chunk": chunk,
             "next_offset": next_offset,
             "total_bytes": len(encoded),
+            "content_sha256": digest,
         }
 
     def control_state(self, host_id: str | None = None, session_id: str | None = None) -> dict:

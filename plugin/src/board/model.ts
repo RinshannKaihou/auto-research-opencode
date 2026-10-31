@@ -5,14 +5,16 @@
  */
 import { OUTCOMES, REVIEWS, conclusionLines, pauseReason, roleName, runState } from "../format"
 
-export type Tab = "overview" | "process" | "knowledge" | "materials" | "runtime"
+export type Tab = "overview" | "process" | "knowledge" | "materials" | "runtime" | "review"
 
-export const TABS: readonly { id: Tab; key: string; title: string }[] = [
-  { id: "overview", key: "1", title: "概览" },
-  { id: "process", key: "2", title: "研究过程" },
-  { id: "knowledge", key: "3", title: "成果与知识" },
-  { id: "materials", key: "4", title: "材料" },
-  { id: "runtime", key: "5", title: "运行" },
+export const TABS: readonly { id: Tab; key: string; title: string; views: readonly { id: Tab; title: string }[] }[] = [
+  { id: "overview", key: "1", title: "概览", views: [{ id: "overview", title: "概览" }] },
+  { id: "process", key: "2", title: "研究", views: [
+    { id: "process", title: "研究过程" }, { id: "runtime", title: "运行会话" },
+  ] },
+  { id: "knowledge", key: "3", title: "成果", views: [
+    { id: "knowledge", title: "研究发现" }, { id: "materials", title: "发布材料" }, { id: "review", title: "依据检查" },
+  ] },
 ]
 
 export interface Row {

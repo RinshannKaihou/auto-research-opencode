@@ -117,7 +117,7 @@ export default Plugin.define({
             {
               id: "auto-research.command",
               title: "Research",
-              description: "研究项目：init / status / work / board / guidance / takeover / detach",
+              description: "研究项目：auto / init / status / board / context-policy / guidance / takeover / detach",
               group: "Research",
               slash: { name: "research", arguments: true },
               palette: true,

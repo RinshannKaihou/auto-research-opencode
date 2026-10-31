@@ -70,8 +70,10 @@ interface Membership {
 
 export class Research {
   private members = new Map<string, Membership>()
+  private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
+  private memoryGeneration = 0
   private loading: Promise<void> | null = null
-  private memoryCache = new Map<string, string>()
+  private memoryCache = new Map<string, { text: string; policy_version: string; source_sequence: number }>()
 
   /**
    * OpenCode loads one plugin instance per directory and every instance sees
@@ -267,6 +269,24 @@ export class Research {
     }
   }
 
+  async contextPolicy(sessionID: string, policy?: string | null): Promise<CommandResult> {
+    await this.ready()
+    const root = this.requireAssociated(sessionID)
+    this.requireScope(root)
+    if (policy && policy !== "legacy" && policy !== "r1") throw new Error("用法：/research context-policy legacy|r1")
+    const state = await this.call("context_policy", sessionID,
+      policy ? { policy: policy === "legacy" ? "memory-v2" : "memory-r1-v1" } : {})
+    if (policy) {
+      this.memoryGeneration++
+      for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
+      this.changed(root)
+    }
+    const labels: Record<string, string> = { "memory-v2": "Legacy (memory-v2)", "memory-r1-v1": "R1 (memory-r1-v1)" }
+    const last = state.last_recorded
+    const recorded = last ? `${labels[last.policy_version] ?? last.policy_version} · ${last.created_at}` : "暂无保存记录"
+    return { message: `当前上下文策略：${labels[state.policy_version]}\n最近一次记录：${recorded}\n后续模型请求生效；不会重算旧回答或重开已结束的项目。`, state: { ...state, observations: { ...this.memoryObservations } } }
+  }
+
   async guidance(sessionID: string, directory: string, path?: string, version?: string): Promise<CommandResult> {
     await this.ready()
     this.requireAssociated(sessionID)
@@ -283,7 +303,8 @@ export class Research {
   async board(directory: string, view: string, fields: Record<string, unknown> = {}): Promise<any> {
     const root = findProjectRoot(directory)
     if (!root) return { project: null, project_root: null }
-    return this.storage.request("project_read", { ...fields, root, view })
+    const result = await this.storage.request("project_read", { ...fields, root, view })
+    return view === "context_preview" ? { ...result, observations: this.inScope(root) ? { ...this.memoryObservations } : null } : result
   }
 
   /** One ledger tool call; the operation ID makes a retried call replay its first result. */
@@ -356,6 +377,8 @@ export class Research {
   async memory(sessionID: string): Promise<string | null> {
     if (!this.isAssociated(sessionID)) return null
     let timer: ReturnType<typeof setTimeout> | undefined
+    const generation = this.memoryGeneration
+    this.memoryObservations.requested++
     try {
       const view = await Promise.race([
         this.call("memory_context", sessionID, { max_chars: 12000, profile: "opencode-auto" }),
@@ -363,18 +386,21 @@ export class Research {
           timer = setTimeout(() => reject(new Error("research memory timeout")), MEMORY_TIMEOUT_MS)
         }),
       ])
+      if (generation !== this.memoryGeneration) throw new Error("Research context policy changed during read")
       const text = `Research context:\n${view.text}`
-      this.memoryCache.set(sessionID, text)
+      this.memoryObservations.generated++
+      this.memoryCache.set(sessionID, { text, policy_version: view.policy_version, source_sequence: view.source_sequence })
       void this.call("context_record", sessionID, {
         fields: {
           body: view.text,
           source_sequence: view.source_sequence,
           purpose: "primary",
-          policy_version: "memory-v2",
+          policy_version: view.policy_version,
           dependencies: view.dependencies ?? [],
-          selection: { source_digest: view.source_digest, omitted: view.omitted ?? [] },
+          selection: { source_digest: view.source_digest, context_mode: view.context_mode, omitted: view.omitted ?? [],
+            selected: view.selection, coverage: view.coverage, block_chars: view.block_chars, truncation: view.truncation },
         },
-      }).catch(() => {})
+      }).then(() => { this.memoryObservations.recorded++ }, () => { this.memoryObservations.recordFailed++ })
       return text
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -383,7 +409,8 @@ export class Research {
         return null
       }
       const cached = this.memoryCache.get(sessionID)
-      if (cached) return `${cached}\n\n[Research memory is stale: storage did not answer in time.]`
+      if (cached) this.memoryObservations.cached++
+      if (cached) return `${cached.text}\n\n[Research memory is stale: storage did not answer in time.]`
       return "Research context is unavailable for this session right now. Continue carefully; use research tools only when needed."
     } finally {
       clearTimeout(timer)
