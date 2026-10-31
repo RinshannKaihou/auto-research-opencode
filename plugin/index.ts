@@ -18,11 +18,14 @@ import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialist
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { parameters, validateArgs } from "./src/schema"
 import { USAGE } from "./src/format"
+import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
 
 const STARTUP_WAIT_MS = 1500
 
-function within<T>(promise: Promise<T>, ms: number): Promise<T | void> {
-  return Promise.race([promise, new Promise<void>((resolve) => setTimeout(resolve, ms))])
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | void> {
+  let timer:ReturnType<typeof setTimeout> | undefined
+  try{return await Promise.race([promise,new Promise<void>(resolve=>{timer=setTimeout(resolve,ms)})])}
+  finally{clearTimeout(timer)}
 }
 
 /** RPC handlers report failures as values; thrown errors lose their text on the way to the TUI. */
@@ -45,6 +48,7 @@ export default Plugin.define({
       specialistTimeoutMs?: number
     }
     const observations = new Observations()
+    const workspaceProbe = new WorkspaceProbe()
     const storage = new StorageClient({ python: options.python, registryPath: options.registryPath,
       observeRequest: (operation_id,method,fields) => observations.transportObserver(operation_id,method,fields),
     })
@@ -61,6 +65,22 @@ export default Plugin.define({
       },
     )
     const host: SessionHost = {
+      source: async sessionID => {
+        if (research.roleOf(sessionID)!=='node_core') return undefined
+        try {
+          const deadline=performance.now()+SOURCE_LIMITS.timeoutMs
+          const owner=await within(research.call('runtime_source_owner',sessionID),SOURCE_LIMITS.timeoutMs)
+          if (!owner?.cwd) return undefined
+          const sample=await workspaceProbe.sample(owner.cwd,deadline-performance.now())
+          if(sample.reason) observations.append(research.rootOf(sessionID)!,{
+            phase:'coverage_gap',source:'workspace_probe',reason:sample.reason,
+          })
+          return { ...sample, algorithm:SOURCE_ALGORITHM, owner } satisfies SourceSnapshot
+        } catch {
+          observations.append(research.rootOf(sessionID)!,{phase:'coverage_gap',source:'workspace_probe',reason:'owner_unavailable'})
+          return undefined
+        }
+      },
       create: async (title, directory, model, permissions) =>
         (
           await ctx.session.create({
@@ -76,7 +96,8 @@ export default Plugin.define({
       synthetic: async (sessionID, text, label, resume) => {
         let reservation:any
         if (resume && research.isAssociated(sessionID)) {
-          reservation = await research.call('runtime_reserve', sessionID)
+          const source_snapshot=await host.source?.(sessionID)
+          reservation = await research.call('runtime_reserve', sessionID,{source_snapshot})
           if (!reservation.allowed) {
             if (reservation.reason==='wall_clock') await enforceDeadline(sessionID)
             research.notifyChanged(research.rootOf(sessionID)!)
@@ -257,9 +278,10 @@ export default Plugin.define({
       refreshingBudgets.add(root)
       try{
         const main=research.sessionsIn(root).find(sid=>research.roleOf(sid)==='main')
-        clearTimeout(budgetTimers.get(root));budgetTimers.delete(root)
-        if(!main || !listening)return
+        if(!main || !listening){clearTimeout(budgetTimers.get(root));budgetTimers.delete(root);return}
         const deadline=await research.call('runtime_deadline',main)
+        if(!listening)return
+        clearTimeout(budgetTimers.get(root));budgetTimers.delete(root)
         if(listening && deadline.state==='running' && deadline.deadline_at){
           const delay=Math.max(0,Date.parse(deadline.deadline_at)-Date.now())
           budgetTimers.set(root,setTimeout(()=>{
@@ -396,6 +418,7 @@ export default Plugin.define({
       listening = false
       for(const timer of budgetTimers.values())clearTimeout(timer)
       storage.close()
+      workspaceProbe.close()
     }
   },
 })

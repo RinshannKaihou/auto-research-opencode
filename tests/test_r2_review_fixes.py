@@ -126,14 +126,19 @@ def test_node_source_work_counts_as_progress_but_notes_and_noops_do_not(tmp_path
     host.call('workflow',action='run',fields={'state':'running'})
     _,sid,_=node(host)
     host.call('workflow',action='run',fields={'state':'running'})
+    owner=host.call('runtime_source_owner',session=sid)
+    digest='0'*64
     for turn in range(4):
-        host.call('runtime_reserve',session=sid)
+        snapshot={'owner':owner,'algorithm':'source-worker-v1','digest':digest}
+        host.call('runtime_reserve',session=sid,source_snapshot=snapshot)
         (host.root/'experiment.py').write_text(f'assert {turn} >= 0\n')
-        result=host.call('runtime_turn_finished',session=sid,turn=str(turn))
+        digest=f'{turn+1:064x}'
+        result=host.call('runtime_turn_finished',session=sid,turn=str(turn),source_snapshot={**snapshot,'digest':digest})
         assert result['source_workspace_changed'] and result['idle_turns']==0
-    host.call('runtime_reserve',session=sid)
+    snapshot={'owner':owner,'algorithm':'source-worker-v1','digest':digest}
+    host.call('runtime_reserve',session=sid,source_snapshot=snapshot)
     (host.root/'lab-notes.md').write_text('bookkeeping only')
-    result=host.call('runtime_turn_finished',session=sid,turn='no-code-change')
+    result=host.call('runtime_turn_finished',session=sid,turn='no-code-change',source_snapshot=snapshot)
     assert not result['meaningful'] and result['idle_turns']==1
     assert host.call('runtime_turn_finished',session=sid,turn='no-code-change')['duplicate']
 

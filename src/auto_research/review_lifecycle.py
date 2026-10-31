@@ -184,7 +184,7 @@ def unresolved_challenges(db):
             FROM review_lifecycle_events d WHERE d.action='challenge_disposed'
             AND json_extract(d.scope_snapshot,'$.review_event')=e.event_id
             ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved'
-        ORDER BY e.event_id'''))
+        ORDER BY (o.generation=(SELECT generation FROM workflow_project WHERE id=1)) DESC,e.event_id DESC'''))
 
 
 def summary(db, node_id=None):

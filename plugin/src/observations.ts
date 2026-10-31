@@ -25,8 +25,8 @@ export class Observations {
     if (!call) return undefined
     return {
       attempt: attempt => this.append(call.root, {phase:'transport',operation_id,method,attempt,invocation_id:call.invocation_id,
-        wire_fields:Object.keys(fields).length+3,
-        host_fields:['host_id','session_id','plugin_instance_id','model_call','checkpoint_base','contract_version'].filter(key=>key in fields).length}),
+        wire_fields:Object.values(fields).filter(value=>value!==undefined).length+3,
+        host_fields:['host_id','session_id','plugin_instance_id','model_call','checkpoint_base','contract_version','source_snapshot'].filter(key=>fields[key]!==undefined).length}),
       response: value => {
         if(value.invocation_context) this.append(call.root,{phase:'binding',invocation_id:call.invocation_id,context:value.invocation_context})
         this.append(call.root, {phase:'dispatch_result',operation_id,method,invocation_id:call.invocation_id,

@@ -12,6 +12,7 @@
 import type { CommandResult, Research } from "./research"
 import { findProjectRoot, GUIDANCE_LIMIT, guidanceNote } from "./research"
 import { randomUUID } from "node:crypto"
+import type { SourceSnapshot } from './workspace-probe'
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -28,6 +29,7 @@ export interface PermissionRule {
 }
 
 export interface SessionHost {
+  source?(sessionID:string):Promise<SourceSnapshot | undefined>
   create(title: string, directory: string, model?: ModelRef, permissions?: PermissionRule[]): Promise<string>
   switchModel(sessionID: string, model: ModelRef): Promise<void>
   /** Adds a message the model reads as user text; `label` is what the TUI shows. */
@@ -175,7 +177,8 @@ export class Engine {
       return
     }
     this.retried.delete(sessionID)
-    const progress = await this.call('runtime_turn_finished', sessionID, { turn }, `turn:${sessionID}:${turn}`)
+    const source_snapshot=row.role==='node_core' ? await this.host.source?.(sessionID) : undefined
+    const progress = await this.call('runtime_turn_finished', sessionID, { turn, source_snapshot }, `turn:${sessionID}:${turn}`)
     const idle = progress.idle_turns
     this.idle.set(sessionID, idle)
     const finish = this.finishing.get(sessionID)

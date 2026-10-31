@@ -37,3 +37,17 @@ test("observation I/O failure cannot change a successful domain result", async (
     expect(log.coverage(root).complete).toBe(false)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test('transport metrics count source snapshots and omit undefined wire fields',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'r2-wire-'))
+  try{
+    const log=new Observations()
+    await log.invoke(root,{invocation_id:'i',operation_id:'o',session_id:'s',tool:'dispatch',contract:'r2-v1',input_fields:1,input_chars:2},async()=>{
+      log.transportObserver('o','runtime_reserve',{host_id:'opencode',session_id:'s',source_snapshot:{digest:null},checkpoint_base:undefined})!.attempt(1)
+    })
+    const rows=readFileSync(join(root,'.research','observations',`${log.instanceID}.jsonl`),'utf8').trim().split('\n').map(line=>JSON.parse(line))
+    const transport=rows.find(row=>row.phase==='transport')
+    expect(transport.host_fields).toBe(3)
+    expect(transport.wire_fields).toBe(6)
+  }finally{rmSync(root,{recursive:true,force:true})}
+})

@@ -2,15 +2,13 @@
 import json
 import math
 import hashlib
-import os
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from .errors import ValidationError, BudgetError, ConflictError
 
 LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost'}
-SOURCE_SUFFIXES={'.py','.pyi','.ipynb','.c','.cc','.cpp','.h','.hpp','.cu','.cuh','.rs','.go','.ts','.tsx','.js','.jsx','.sh','.r','.jl','.yaml','.yml','.toml'}
+SOURCE_ALGORITHM = 'source-worker-v1'
 
 
 def source_owner(db,host,session):
@@ -22,22 +20,19 @@ def source_owner(db,host,session):
     return dict(row) if row else None
 
 
-def source_workspace(cwd):
-    if not cwd or not Path(cwd).is_dir():
+def source_digest(db, host, session, snapshot):
+    if snapshot is None:
         return None
-    base=Path(cwd); files=[]
-    try:
-        for directory,dirs,names in os.walk(base):
-            dirs[:]=sorted(name for name in dirs if name not in {'node_modules','__pycache__','workspaces','venv'} and not name.startswith('.'))
-            for name in sorted(names):
-                path=Path(directory)/name
-                if path.suffix.lower() not in SOURCE_SUFFIXES or path.is_symlink():
-                    continue
-                with path.open('rb') as stream:
-                    files.append((str(path.relative_to(base)),hashlib.file_digest(stream,'sha256').hexdigest()))
-    except OSError:
-        return None
-    return hashlib.sha256(json.dumps(files).encode()).hexdigest()
+    if not isinstance(snapshot,dict) or not isinstance(snapshot.get('owner'),dict):
+        raise ValidationError('Invalid host source snapshot')
+    digest=snapshot.get('digest')
+    if digest is not None and (not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest)):
+        raise ValidationError('Invalid host source digest')
+    return digest if snapshot.get('algorithm')==SOURCE_ALGORITHM and source_owner(db,host,session)==snapshot['owner'] else None
+
+
+def source_identity(snapshot):
+    return hashlib.sha256(json.dumps(snapshot['owner'],sort_keys=True).encode()).hexdigest()
 
 
 def timestamp():
@@ -113,6 +108,9 @@ class RuntimeStore:
 
     def _invocation_context(self, db, host, session):
         association = self._association(db,host,session)
+        return self._association_context(db,host,session,association)
+
+    def _association_context(self, db, host, session, association):
         attempt = db.execute('SELECT attempt_id,node_id FROM attempts WHERE association_id=? AND ended_at IS NULL',(association['association_id'],)).fetchone()
         if not attempt:
             attempt = db.execute('SELECT attempt_id,node_id FROM specialist_bindings WHERE session_id=?',(session,)).fetchone()
@@ -195,16 +193,17 @@ class RuntimeStore:
         with self._read() as db:
             return view(self,db,host,session)
 
+    def runtime_source_owner(self, host, session):
+        with self._read() as db:
+            return source_owner(db,host,session)
+
     def runtime_deadline(self):
         with self._read() as db:
             row=db.execute('''SELECT p.state,b.deadline_at FROM workflow_project p
                 LEFT JOIN runtime_budgets b ON b.generation=p.generation WHERE p.id=1''').fetchone()
             return dict(row) if row else {'state':None,'deadline_at':None}
 
-    def runtime_reserve(self, host, session, operation):
-        with self._read() as db:
-            source=source_owner(db,host,session)
-        digest=source_workspace(source['cwd']) if source else None
+    def runtime_reserve(self, host, session, operation, source_snapshot=None):
         def work(db):
             run = db.execute('SELECT generation,state FROM workflow_project WHERE id=1').fetchone()
             # Specialists are mediated one-shot requests, including manual node work.
@@ -221,7 +220,9 @@ class RuntimeStore:
             db.execute('INSERT INTO runtime_budget_reservations VALUES(?,?,?,?,?,?,?,?)',
                        (rid,run['generation'],'turn',session,state['scope_owner'],operation,'reserved',timestamp()))
             if state['scope_owner'].startswith('node:'):
-                self._event(db,'runtime.workspace_baseline',{'host_id':host,'session_id':session,'digest':digest if source_owner(db,host,session)==source else None})
+                digest=source_digest(db,host,session,source_snapshot)
+                self._event(db,'runtime.workspace_baseline',{'host_id':host,'session_id':session,'algorithm':SOURCE_ALGORITHM,
+                    'digest':digest,'source_identity':source_identity(source_snapshot) if digest is not None else None})
             return {'allowed':True,'reservation_id':rid,**state}
         return self._mutate('runtime.reserve',dict(host=host,session=session),operation,work)
 
@@ -240,10 +241,7 @@ class RuntimeStore:
             return {'stopped':True,**state}
         return self._mutate('runtime.budget_stop',dict(host=host,session=session),operation,work)
 
-    def runtime_turn_finished(self, host, session, turn, operation):
-        with self._read() as db:
-            source=source_owner(db,host,session)
-        digest=source_workspace(source['cwd']) if source else None
+    def runtime_turn_finished(self, host, session, turn, operation, source_snapshot=None):
         def work(db):
             from .review_lifecycle import generation
             gen = generation(db)
@@ -256,11 +254,13 @@ class RuntimeStore:
             mine = owner(db,host,session)
             meaningful = False
             baseline = None
+            baseline_identity = None
             for row in db.execute('SELECT kind,data FROM events WHERE event_id>? AND event_id<=?',(lower,upper)):
                 data = json.loads(row['data'])
                 kind = row['kind']
                 if kind=='runtime.workspace_baseline' and data['host_id']==host and data['session_id']==session:
-                    baseline=data['digest']
+                    baseline=data['digest'] if data.get('algorithm')==SOURCE_ALGORITHM else None
+                    baseline_identity=data.get('source_identity')
                 elif kind == 'knowledge.recorded' and (data.get('node_id') == (mine[5:] if mine.startswith('node:') else None)):
                     ref = data['ref']
                     k = db.execute('SELECT statement,scope,conditions,evidence_refs,dependencies FROM knowledge_revisions WHERE knowledge_id=? AND revision=?',
@@ -305,8 +305,8 @@ class RuntimeStore:
                         (data['change_id'],data['affected_version'],current['source_sequence'])).fetchone()
                     meaningful |= target_owner == (mine[5:] if mine.startswith('node:') else None) and (
                         prior is None or tuple(current)[:3] != tuple(prior))
-            workspace=digest if source_owner(db,host,session)==source else None
-            source_changed=baseline!=workspace if baseline is not None and workspace is not None else None
+            workspace=source_digest(db,host,session,source_snapshot)
+            source_changed=baseline!=workspace if baseline is not None and workspace is not None and baseline_identity==source_identity(source_snapshot) else None
             meaningful |= source_changed is True
             idle = 0 if meaningful else (previous['idle_turns'] if previous else 0)+1
             db.execute('INSERT INTO runtime_progress VALUES(?,?,?,?,?,?) ON CONFLICT(generation,host_id,session_id) DO UPDATE SET last_event_sequence=excluded.last_event_sequence,idle_turns=excluded.idle_turns,last_finished_turn=excluded.last_finished_turn',

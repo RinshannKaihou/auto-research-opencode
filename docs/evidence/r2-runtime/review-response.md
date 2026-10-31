@@ -2,6 +2,8 @@
 
 2026-11-01。核对顺序：Opus 本地第一份 → GLM 本地 second → Grok PR 评论。以下处理基于源码和临时项目／假宿主复现；没有修改真实研究项目或重启共享服务。
 
+这是首轮处理记录；源码探测等后续调整以[第二轮收尾记录](review-round2.md)为准。
+
 | 意见 | 处理 |
 |---|---|
 | Opus 1／GLM 2／Grok B1：challenge 离开范围消失 | 完整／部分 challenge 独立于任务 state、owner 活跃期和 generation 保留，Legacy 与 R1 均显示。只对精确 review_event 追加有证据的显式处置；后来的 supports／inconclusive、waive、scope exit、普通 revision 均不自动清除 |

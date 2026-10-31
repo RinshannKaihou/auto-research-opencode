@@ -10,6 +10,7 @@ from .errors import ValidationError, NotFoundError
 
 POLICIES = ("memory-v2", "memory-r1-v1")
 COLLECTIONS = ("critical_now", "findings", "completed_findings")
+CHECKPOINT_CONTEXT_CHARS = 4000
 
 
 def encoded(value):
@@ -392,6 +393,8 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     # Keep a complete recovery snapshot ahead of optional finding prose.
     for key in ('checkpoint_recovery','checkpoint'):
         if block_map[key] is not None:
+            if key=='checkpoint' and len(encoded(block_map[key]))>CHECKPOINT_CONTEXT_CHARS:
+                continue
             views[key]=block_map[key]
             if len(body())>max_chars:
                 del views[key]

@@ -295,6 +295,73 @@ test('wall deadline interrupts an active native session without waiting for a mo
   expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
 })
 
+test('a failed deadline refresh keeps the existing stop timer armed',async()=>{
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'preserve deadline'})
+  const original=StorageClient.prototype.request
+  let fail=false,reads=0
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(function(this:StorageClient,method:string,fields?:any,id?:string):any{
+    if(method==='runtime_deadline'){
+      reads++
+      if(fail)return Promise.reject(new Error('transient deadline read failure'))
+    }
+    return original.call(this,method,fields,id)
+  })
+  try{
+    await host.command('budget','ses_main',{limit:'seconds',value:'1',reason:'bounded fixture'})
+    await until(()=>reads>0,'initial deadline query')
+    await Bun.sleep(20)
+    fail=true
+    await host.command('budget','ses_main',{limit:'turns',value:'5',reason:'trigger failed refresh'})
+    await until(async()=> (await host.summary()).run.state==='paused','original deadline still stops')
+    expect(host.interrupted).toContain('ses_main')
+  }finally{spy.mockRestore()}
+})
+
+test('slow workspace metadata leaves backend queries responsive and remains optional for kickoff',async()=>{
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'bounded source probe'})
+  const node=await host.call('research_propose','ses_main',{question:'Q',why_now:'now',plan:'measure',root_reason:'first'})
+  const original=StorageClient.prototype.request
+  let entered=false,release!:(value:any)=>void
+  const pending=new Promise(resolve=>{release=resolve})
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(function(this:StorageClient,method:string,fields?:any,id?:string):any{
+    if(method==='runtime_source_owner'){entered=true;return pending}
+    return original.call(this,method,fields,id)
+  })
+  try{
+    const kickoff=host.call('research_dispatch','ses_main',{node_id:node.node_id})
+    await until(()=>entered,'source metadata request')
+    const page=await host.call('research_query','ses_main',{collection:'nodes'})
+    expect(page.items.some((value:any)=>value.node_id===node.node_id)).toBe(true)
+    await kickoff
+    expect(host.created.length).toBeGreaterThan(0)
+  }finally{release(undefined);spy.mockRestore()}
+})
+
+test('real node source edits prevent idle pauses while the turn budget still stops continuation',async()=>{
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'source activity and independent budget'})
+  await host.command('budget','ses_main',{limit:'turns',value:'5',reason:'bounded node fixture'})
+  const node=await host.call('research_propose','ses_main',{question:'Q',why_now:'now',plan:'measure',root_reason:'first'})
+  await host.call('research_dispatch','ses_main',{node_id:node.node_id})
+  const session='ses_node_1'
+  const workspace=/工作目录：(.+?)。/.exec(host.said(session).at(-1).text)![1]!
+  const resumed=()=>host.said(session).filter(row=>row.resume).length
+  for(let turn=0;turn<4;turn++){
+    const before=resumed()
+    writeFileSync(join(workspace,'experiment.py'),`print(${turn})\n`)
+    host.turn.end(session)
+    await until(()=>resumed()>before,'source edit continues node')
+  }
+  expect((await host.rpc().session({sessionID:session})).pauseReason).toBeNull()
+  expect(resumed()).toBe(5)
+  writeFileSync(join(workspace,'experiment.py'),'print(100)\n')
+  host.turn.end(session)
+  await until(async()=>(await host.rpc().session({sessionID:session})).pauseReason==='budget','budget stops despite source activity')
+  expect(resumed()).toBe(5)
+})
+
 test('slow native telemetry cannot block event binding or introduce an invocation metadata dependency',async()=>{
   const host=await load()
   await host.command('auto','ses_main',{goal:'telemetry isolation'})

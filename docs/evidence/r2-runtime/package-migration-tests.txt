@@ -1,10 +1,5 @@
-bun test v1.3.10 (30e609e0)
+Excerpt from the full Bun suite in plugin-tests.txt:
 
 test/package.test.ts:
-(pass) release versions agree across Python and plugin metadata [0.49ms]
-(pass) packed backend starts, concludes and restarts without repository sources [520.55ms]
-
- 2 pass
- 0 fail
- 32 expect() calls
-Ran 2 tests across 1 file. [637.00ms]
+(pass) release versions agree across Python and plugin metadata [0.92ms]
+(pass) packed backend starts, concludes and restarts without repository sources [500.27ms]

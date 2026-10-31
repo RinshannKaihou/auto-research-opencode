@@ -1,0 +1,65 @@
+{
+  "limits": {
+    "entries": 10000,
+    "files": 2000,
+    "bytes": 16777216,
+    "timeoutMs": 500
+  },
+  "incremental": {
+    "first": {
+      "digest": "67e195e58dfb53b9cea3ea0cee52018cb36ee3228d2e067ea5ac8fbbe93f3352",
+      "entries": 5,
+      "files": 1,
+      "filesHashed": 1,
+      "bytesRead": 9
+    },
+    "cached": {
+      "digest": "67e195e58dfb53b9cea3ea0cee52018cb36ee3228d2e067ea5ac8fbbe93f3352",
+      "entries": 5,
+      "files": 1,
+      "filesHashed": 0,
+      "bytesRead": 0
+    },
+    "changed": {
+      "digest": "8b5f62f64cac3d3f4fe219fa11865a98d4f950bba39e3fc78d01a39345583738",
+      "entries": 5,
+      "files": 1,
+      "filesHashed": 1,
+      "bytesRead": 11
+    },
+    "touchRetainsDigest": true
+  },
+  "entries": {
+    "digest": null,
+    "entries": 2,
+    "files": 1,
+    "filesHashed": 1,
+    "bytesRead": 9,
+    "reason": "entry_limit"
+  },
+  "files": {
+    "digest": null,
+    "entries": 2,
+    "files": 2,
+    "filesHashed": 1,
+    "bytesRead": 9,
+    "reason": "file_limit"
+  },
+  "bytes": {
+    "digest": null,
+    "entries": 1,
+    "files": 1,
+    "filesHashed": 0,
+    "bytesRead": 0,
+    "reason": "byte_limit"
+  },
+  "blockedWorker": {
+    "digest": null,
+    "reason": "time_limit",
+    "entries": 0,
+    "files": 0,
+    "filesHashed": 0,
+    "bytesRead": 0,
+    "hostTimersResponsive": true
+  }
+}

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 
@@ -51,6 +51,17 @@ test("packed backend starts, concludes and restarts without repository sources",
     const project = join(temporary, "project")
     mkdirSync(project)
     writeFileSync(join(project, "report.md"), "# Result\nThe research question remains unresolved.\n")
+    writeFileSync(join(project,'experiment.py'),'print(1)\n')
+    const workerProbe=spawnSync(process.execPath,['-e',`
+import {WorkspaceProbe} from ${JSON.stringify(pathToFileURL(join(release,'package/src/workspace-probe.ts')).href)};
+const probe=new WorkspaceProbe();
+try {const result=await probe.sample(${JSON.stringify(project)});console.log(JSON.stringify(result));}
+finally {probe.close();}
+`],{cwd:release,encoding:'utf8',timeout:10_000})
+    expect({status:workerProbe.status,error:workerProbe.stderr}).toMatchObject({status:0})
+    const sourceResult=JSON.parse(workerProbe.stdout)
+    expect(sourceResult.digest).toBeString()
+    expect(sourceResult.files).toBe(1)
     const registry = join(temporary, "registry.sqlite3")
     const request = (id: string, method: string, fields: Record<string, unknown> = {}) => ({
       transport_id: id, operation_id: id, host_id: "opencode", session_id: "main", method, ...fields,

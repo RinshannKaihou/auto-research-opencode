@@ -19,13 +19,15 @@
 
 主要代码：Python 的 `schema11.py`、`checkpoint_receipts.py`、`revision_presets.py`、`review_lifecycle.py`、`adoption.py`、`runtime_budget.py`；插件的 `checkpoint-delivery.ts`、`observations.ts`、`native-observations.ts` 及既有工具／引擎／看板接入。
 
+第二轮复审收尾见[review-round2.md](review-round2.md)。工作区探测现由 `workspace-probe.ts`／`workspace-probe-worker.ts` 在宿主中有界执行，Python 不再读取源码；[探测证据](workspace-probe.json)验证环境排除、缓存复用、资源上限和超时下宿主计时器仍响应。关联缺失重放、失败刷新保留 deadline、checkpoint 4k 上限和挑战排序均有回归。
+
 首轮三份 review 的处理和保留设计见[审阅处理记录](review-response.md)，包含按事件处置 challenge、控制与观测解耦、基线等待期限、开发推进及回归矩阵。
 
 ## 内部验证
 
-- Python 全量 **571 passed**，见 [Python 结果](python-tests.txt)。包含 checkpoint 并发／归属／缓存／幂等、preset／来源、迁移回滚／只读、精确审阅／scope、typed relation／采用与预算／idle 用例。
-- Bun 全量 **83 passed**，TypeScript `tsc --noEmit` 通过，见 [插件结果](plugin-tests.txt)。包含 Legacy／R1 的完整 goal→节点→综合→结项宿主流程、实际 SDK 事件形状、自动基线、重启预算与 wall-clock 主动中断。
-- 独立 tarball 测试在 Bun 全量中通过：解压到临时目录、脱离仓库 src，验证 schema 11／R2 capabilities、结项及进程重启；打包 prepack 同步 Python 白名单。随后扩展并单独通过[包内迁移测试](package-migration-tests.txt)：schema 10 只读不升级、首次可写迁移至 11、创建备份、旧 checkpoint 原响应重放。
+- Python 全量 **581 passed**，见 [Python 结果](python-tests.txt)。包含 checkpoint 并发／归属／缓存／幂等、preset／来源、迁移回滚／只读、精确审阅／scope、typed relation／采用与预算／idle 用例。
+- Bun 全量 **92 passed**，TypeScript `tsc --noEmit` 通过，见 [插件结果](plugin-tests.txt)。包含 Legacy／R1 的完整 goal→节点→综合→结项宿主流程、实际 SDK 事件形状、自动基线、重启预算与 wall-clock 主动中断。
+- 独立 tarball 测试在 Bun 全量中通过：解压到临时目录、脱离仓库 src，验证 schema 11／R2 capabilities、结项及进程重启；打包 prepack 同步 Python 白名单。最新 tarball 还验证了包内 worker 独立启动，[包内迁移测试摘录](package-migration-tests.txt)来自本轮全量：schema 10 只读不升级、首次可写迁移至 11、创建备份、旧 checkpoint 原响应重放。
 - `git diff --check` 通过。源码与生成的插件 Python 副本已同步。
 
 [旧项目兼容报告](local-project-compatibility.json)验证 **8 个真实旧项目的稳定 DB／WAL 副本**：schema 10→11，全部历史表逻辑行不变、原 DB／WAL 摘要不变，迁移没有创建义务或把旧 completed 洗成新完成。原冻结对象仅供读取，未修改真实项目。schema 9 迁移另有自动化测试。

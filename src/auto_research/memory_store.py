@@ -1431,6 +1431,7 @@ class MemoryStore:
     def _context_view(self, db, host_id, session_id, max_chars, profile,
                       policy, decision_refs, final_ref):
         from .review_lifecycle import summary as review_summary
+        from .context_policy import CHECKPOINT_CONTEXT_CHARS
         project = self._project(db)
         association = db.execute(
             "SELECT * FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL",
@@ -1868,7 +1869,7 @@ class MemoryStore:
                     "knowledge": 4000,
                     "questions": 1600 if coordinator else 800,
                     "frozen_context": 1600,
-                    "checkpoint": max_chars,
+                    "checkpoint": CHECKPOINT_CONTEXT_CHARS,
                     "review_challenges": 1600,
                 }.get(name, 1000),
             )

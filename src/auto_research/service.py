@@ -828,7 +828,9 @@ class NativeService:
                     "SELECT * FROM workflow_sessions WHERE session_id=?", (session_id,)
                 ).fetchone()
                 role = dict(row) if row else None
-                invocation = store._invocation_context(db,host_id,session_id)
+                association=db.execute('SELECT * FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL',(host_id,session_id)).fetchone()
+                if association:
+                    invocation = store._association_context(db,host_id,session_id,association)
             with store._connection() as db:
                 specialist_row = db.execute("SELECT t.* FROM specialist_tasks t JOIN specialist_bindings b USING(task_id) WHERE b.session_id=?", (session_id,)).fetchone()
             if specialist_row and specialist_row["context_mode"] == "blind" and method in {"query", "status", "history_page", "guidance_status", "workbench_summary", "workbench_page", "knowledge_page", "presentation_get", "reference_content", "reference_entries"}:
@@ -1152,14 +1154,16 @@ class NativeService:
                 value = store.runtime_budget_set(host_id,session_id,request['limits'],request['reason'],self._operation(request))
             elif method == 'runtime_budget_status':
                 value = store.runtime_budget_status(host_id,session_id)
+            elif method == 'runtime_source_owner':
+                value = store.runtime_source_owner(host_id,session_id)
             elif method == 'runtime_deadline':
                 value = store.runtime_deadline()
             elif method == 'runtime_reserve':
-                value = store.runtime_reserve(host_id,session_id,self._operation(request))
+                value = store.runtime_reserve(host_id,session_id,self._operation(request),request.get('source_snapshot'))
             elif method == 'runtime_budget_stop':
                 value = store.runtime_budget_stop(host_id,session_id,self._operation(request))
             elif method == 'runtime_turn_finished':
-                value = store.runtime_turn_finished(host_id,session_id,request['turn'],self._operation(request))
+                value = store.runtime_turn_finished(host_id,session_id,request['turn'],self._operation(request),request.get('source_snapshot'))
             elif method == 'runtime_execution_end':
                 value = store.runtime_execution_end(host_id,session_id,request['turn'],request['outcome'],self._operation(request))
                 value = {**value,'claimed':not store.last_replayed}

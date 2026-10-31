@@ -4,6 +4,8 @@
 
 2026-11-01 首轮审阅修订：challenge 按事件保留并显式处置，scope 声明与 checkpoint 解耦，观测归属并入业务响应，基线登记共用上下文等待期限；节点源码／配置真实变化可计作开发推进。具体处理与 push back 见[审阅处理记录](./evidence/r2-runtime/review-response.md)。
 
+同日第二轮收尾：源码探测改为宿主有界 worker，后端不扫描；关联元数据可缺失，deadline 刷新失败保留原定时器；完整 checkpoint 上限 4,000 字符，Legacy 优先展示当前代最新挑战。资源预算、缓存语义和新增验证见[第二轮处理记录](./evidence/r2-runtime/review-round2.md)。
+
 代码基线：`main` / `0c7b6d5d4d0dba21910c90f407bbb6d5b7fe17fe`，v0.1.1，schema 10；R1 已随 PR #7 合并。依据为用户提供的本地资料 `Remediation implementation plan auto-research-opencode.md` 第 4、7、9 节，技术原则服从 `Remediation roadmap auto-research-opencode.md`；这些规划原稿不随本次 PR 提交。旧计划中的 `0476d81` 是历史调研基线，不作为本次实现基线。
 
 ## 1. 本次交付

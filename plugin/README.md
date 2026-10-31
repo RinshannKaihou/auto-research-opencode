@@ -168,7 +168,7 @@ checkpoint 的 base 绑定 host、session、association、attempt、owner、gene
 
 完整和部分报告中的 challenge 均独立保留，节点结束、停止／结项、范围退出或新 generation 不会清除。处理某个 challenge 使用 `research_dispose`，提供风险条目返回的 `review_event`、精确 `affected_version`、`disposition_kind`、reason 和 evidence_refs；不要同时提供 change_id。`unresolved` 保留风险，其余处置必须有证据，`revised` 还须提供不同的 replacement_ref。该记录只表明显式处理了这一挑战，不证明科学覆盖通过；历史报告与处置仍可查询。普通知识影响仍按 change_id／affected_version 处置。
 
-同一快照在一个插件实例内复用回执，query 回执按工具调用稳定去重。上下文与回执登记共享 2 秒等待期限，迟到回执只在后续完整交付同一快照时可用，不会回填旧请求。预算内优先保留完整 checkpoint，放不下则整个省略并要求显式读，不为截断 state 签发 base。
+同一快照在一个插件实例内复用回执，query 回执按工具调用稳定去重。上下文与回执登记共享 2 秒等待期限，迟到回执只在后续完整交付同一快照时可用，不会回填旧请求。Legacy／R1 的完整 checkpoint 块均最多 4,000 字符；超过上限或剩余上下文预算时整个省略，要求显式读，不为截断 state 签发 base，也不让长 state 挤占科研依据。
 
 typed relate 的知识关系追加新 revision，须明确 revision 的变更／范围字段；`grounded_in` 是支撑，`motivated_by` 不传播失效。节点关系以 source 为后继，target 为前驱节点或其发布材料；depends_on 明确指定采用材料，不允许循环或修改已派发节点。提案输入、原材料 pin 和历史知识版本不被改写。引用可派生采用，同 attempt／ref／relation／用途的显式 consume 去重，不同用途仍保留。
 
@@ -186,9 +186,11 @@ typed relate 的知识关系追加新 revision，须明确 revision 的变更／
 
 停止／结项之后 `/research auto` 创建新 generation，开始新的轮次／时限统计；项目累计 nodes 不清零。预算暂停状态不能用 auto 绕过，仍须显式改额后 resume。cost 接受正小数，例如 `/research budget cost 0.25 本次上限`。
 
-节点在受管轮次前后若源码／实验配置的实际内容改变，可计作开发推进；仅调用 shell、touch、note、checkpoint 或改 Markdown 文书不计。检测限于节点 cwd 下的代码及 yaml／toml 配置文件，排除隐藏目录、node_modules、venv、workspaces、缓存和符号链接；只保存内容摘要，不保存文件名或源码。读取失败保持未知，文件摘要在 SQLite 写事务之外计算。这是开发活动信号，不是实验成功或研究质量评分。
+节点在受管轮次前后若源码／实验配置的实际内容改变，可计作开发推进；仅调用 shell、touch、note、checkpoint 或改 Markdown 文书不计。检测由宿主 worker 执行，Python 后端不遍历／读取工作区，RPC 重放不触发扫描。只检测节点 cwd 下代码及 yaml／toml，排除隐藏目录、inputs、node_modules、venv、workspaces、缓存、site-packages／dist-packages、符号链接，以及带 pyvenv.cfg／conda-meta 的环境目录。
 
-deadline 按运行状态和预算变更设置定时器，不持续轮询闲置项目或扫描用量。控制事件不等待遥测落库；原生开始事件的用量登记按事件顺序入队，业务响应附带本次归属，不再单独请求 invocation_context。非写请求的 replayed 为 unknown，不继承上次写入状态。
+探测归属读取与 worker 共享 500ms 等待预算，每次最多遍历 10,000 个目录项、2,000 个源文件、新读取 16MiB。大小／修改时间／ctime／inode 未变的文件复用上次摘要；touch 后重算但内容摘要不变。一个插件实例最多运行一个探测，忙碌、超限、读取失败或工作段变化都保持 unknown，不使用部分摘要刷新 idle。缓存只保留最近一个工作区，后端按 owner／attempt／generation 和算法标识校验前后摘要，仅保存摘要和归属指纹。这是开发活动信号，不是文件完整性认证、实验成功或研究质量评分；科研调用预算另行约束。
+
+deadline 按运行状态和预算变更设置定时器，不持续轮询闲置项目或扫描用量；刷新读取失败保留旧定时器，得到新状态后才替换或清除。控制事件不等待遥测落库；原生开始事件的用量登记按事件顺序入队，业务响应在有活跃关联时附带归属，无关联不阻断合法重放。非写请求的 replayed 为 unknown，不继承上次写入状态。Legacy 优先展示当前 generation 的最新挑战，旧代未处置挑战仍在完整索引中。
 
 tokens／cost 是宿主已观测实际用量的停止阈值，覆盖可能不完整；并发请求、未知调用和外部进程不受全局费用／CPU／GPU 硬上限约束。研究 → 运行会话展示已用／限额／未配置和覆盖边界。
 
