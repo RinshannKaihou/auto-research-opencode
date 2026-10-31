@@ -89,7 +89,7 @@ finally {probe.close();}
       request("status", "status"),
     ])
     expect(responses.map((response) => response.ok)).toEqual([true, true, true, true, false, true, true])
-    expect(responses[0].value.schema_version).toBe(11)
+    expect(responses[0].value.schema_version).toBe(12)
     expect(responses[0].value.memory_write_contract).toBe('r2-v1')
     expect(responses[0].value.checkpoint_base).toBe('receipt-cas-v1')
     expect(responses[4].error.message).toContain("item_missing")
@@ -123,7 +123,7 @@ with sqlite3.connect(sys.argv[1]) as db:
       request('new-capabilities','project_read',{root:project,view:'capabilities'}),
       request('checkpoint','memory_write',{model_call:true,action:'checkpoint',fields:{state:{phase:'synthesis'},expected_revision:0}})])
     expect(migrated.every(row=>row.ok)).toBe(true)
-    expect(migrated[1].value.schema_version).toBe(11)
+    expect(migrated[1].value.schema_version).toBe(12)
     expect(migrated[2].value).toEqual(responses[2].value)
     expect(readFileSync(join(project,'.research/schema-10-backup.sqlite3')).length).toBeGreaterThan(0)
   } finally {

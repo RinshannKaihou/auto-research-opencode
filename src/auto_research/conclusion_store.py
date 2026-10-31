@@ -80,12 +80,15 @@ class ConclusionStore:
         else:
             raise ValidationError(f'{ref}: review reference must identify frozen material')
 
-    def conclude(self, host_id, session_id, fields, request_id):
+    def conclude(self, host_id, session_id, fields, request_id, *, enforce_control=False):
         # Preserve the caller payload for idempotent retries; validate inside work.
         payload = {'host_id': host_id, 'session_id': session_id, 'fields': fields}
 
         def work(db):
             association = self._association(db, host_id, session_id)
+            if enforce_control:
+                from .runtime_budget import require_new_work
+                require_new_work(db, host_id, session_id, manual=True, waiting=True, role='main')
             run = db.execute('SELECT * FROM workflow_project WHERE id=1').fetchone()
             role = db.execute('SELECT * FROM workflow_sessions WHERE session_id=? AND host_id=? AND detached=0',
                               (session_id, host_id)).fetchone()

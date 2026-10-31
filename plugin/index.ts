@@ -6,19 +6,22 @@
  * the plugin: the context hook only removes this plugin's tools.
  */
 import { Plugin } from "@opencode/plugin"
+import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { Observations } from "./src/observations"
 import { NativeObservations } from './src/native-observations'
 import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
-import { Research, guidanceNote, type CommandResult } from "./src/research"
+import { Research, findProjectRoot, guidanceNote, type CommandResult } from "./src/research"
 import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
 import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
+import { COORDINATOR_NATIVE_READS, controlInstructions } from "./src/coordinator-boundary"
 import { parameters, validateArgs } from "./src/schema"
 import { USAGE } from "./src/format"
 import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
+import { attachController } from './src/controller-lifecycle'
 
 const STARTUP_WAIT_MS = 1500
 
@@ -52,6 +55,42 @@ export default Plugin.define({
     const storage = new StorageClient({ python: options.python, registryPath: options.registryPath,
       observeRequest: (operation_id,method,fields) => observations.transportObserver(operation_id,method,fields),
     })
+    const lifecycle = attachController(ctx.location.directory, storage.registryPath, ctx.location.workspaceID)
+    // Subscribe before asynchronous setup so relevant events are not dropped
+    // while membership and controller ownership are being loaded.
+    let listening = true
+    let eventGap = false
+    let eventHandler: ((event: any) => Promise<void>) | undefined
+    const earlyEvents: any[] = []
+    let eventChain: Promise<void> = Promise.resolve()
+    let queuedEvents = 0
+    const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed', 'session.inbox.delivered',
+      'session.execution.interrupted', 'session.step.started', 'session.step.ended', 'session.step.failed',
+      'session.usage.recorded', 'session.usage.updated'])
+    const queueEvent = (event: any) => {
+      if (!relevantEvents.has(event?.type)) return
+      if (!eventHandler) {
+        if (earlyEvents.length >= 256) eventGap = true
+        else earlyEvents.push(event)
+        return
+      }
+      if (queuedEvents >= 256) { eventGap = true; return }
+      queuedEvents++
+      eventChain = eventChain.then(() => eventHandler!(event)).catch(() => { if (listening && lifecycle.current()) eventGap = true })
+        .finally(() => { queuedEvents-- })
+    }
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe()) {
+          if (!listening) break
+          queueEvent(event)
+        }
+        if (listening) eventGap = true
+      } catch { if (listening) eventGap = true }
+    })()
+    const requireCurrent = () => {
+      if (!lifecycle.current()) throw new Error("Research controller attachment has been replaced")
+    }
     let emitChanged: (root: string) => void = () => {}
     const research = new Research(
       storage,
@@ -64,8 +103,23 @@ export default Plugin.define({
         for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
       },
     )
+    research.setExecutionResolver(sessionID => lifecycle.state.turns.get(sessionID))
+    let ensureController: (root: string, main: string) => Promise<void> = async () => { throw new Error('Controller not initialized') }
+    let bootstrap: () => Promise<void> = async () => { throw new Error('Controller not initialized') }
+    const verifyController = async (sessionID: string) => {
+      requireCurrent()
+      if (eventGap) throw new Error('研究事件流不完整，需先核对执行状态')
+      const root = research.rootOf(sessionID)
+      if (!root) return
+      const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+      if (!main || !research.inScope(root)) throw new Error('Research controller scope is unavailable')
+      await ensureController(root, main)
+      await research.call('controller_check', sessionID)
+      requireCurrent()
+    }
     const host: SessionHost = {
       source: async sessionID => {
+        requireCurrent()
         if (research.roleOf(sessionID)!=='node_core') return undefined
         try {
           const deadline=performance.now()+SOURCE_LIMITS.timeoutMs
@@ -81,30 +135,45 @@ export default Plugin.define({
           return undefined
         }
       },
-      create: async (title, directory, model, permissions) =>
-        (
-          await ctx.session.create({
+      create: async (title, directory, model, permissions, sessionID) => {
+        requireCurrent()
+        const main = research.sessionsIn(directory).find(sid => research.roleOf(sid) === 'main')
+        if (!main) throw new Error('Research controller owner is unavailable')
+        await verifyController(main)
+        return (await ctx.session.create({
             title,
-            location: { directory },
+            ...(sessionID ? { id: sessionID } : {}),
+            location: { directory: ctx.location.directory },
             ...(model ? { model } : {}),
             ...(permissions ? { permissions } : {}),
-          })
-        ).id,
+          })).id
+      },
       switchModel: async (sessionID, model) => {
+        requireCurrent()
+        await verifyController(sessionID)
         await ctx.session.switchModel({ sessionID, model })
       },
-      synthetic: async (sessionID, text, label, resume) => {
+      synthetic: async (sessionID, text, label, resume, messageID, wakeIntentID, launchIntentID, specialistLaunchID) => {
+        requireCurrent()
+        await verifyController(sessionID)
+        const outboundID = messageID ?? (resume ? `msg_research_${randomUUID().replaceAll('-', '')}` : undefined)
         let reservation:any
         if (resume && research.isAssociated(sessionID)) {
           const source_snapshot=await host.source?.(sessionID)
-          reservation = await research.call('runtime_reserve', sessionID,{source_snapshot})
+          reservation = await research.call('runtime_reserve', sessionID,{source_snapshot, message_id: outboundID, ...(wakeIntentID ? { wake_intent_id: wakeIntentID } : {}),
+            ...(launchIntentID ? { launch_intent_id: launchIntentID } : {}),
+            ...(specialistLaunchID ? { specialist_launch_id: specialistLaunchID } : {})})
           if (!reservation.allowed) {
             if (reservation.reason==='wall_clock') await enforceDeadline(sessionID)
             research.notifyChanged(research.rootOf(sessionID)!)
             throw Object.assign(new Error(`自主调度预算已到限：${reservation.reason}；先用 /research budget 显式调整额度，再恢复。`), { code: 'runtime_budget_exhausted' })
           }
         }
-        await ctx.session.synthetic({ sessionID, text, description: label, resume })
+        requireCurrent()
+        await verifyController(sessionID)
+        const sent = await ctx.session.synthetic({ sessionID, text, description: label, resume, ...(outboundID ? { id: outboundID } : {}) })
+        if (outboundID && sent.id !== outboundID) throw new Error("Host did not confirm the requested research message ID")
+        requireCurrent()
         if (reservation?.allowed) await research.call('runtime_submitted',sessionID,
           {reservation_id:reservation.reservation_id},`submitted:${reservation.reservation_id}`).catch(error => {
             observations.append(research.rootOf(sessionID)!,{phase:'coverage_gap',source:'budget_submission',
@@ -112,28 +181,85 @@ export default Plugin.define({
           })
       },
       interrupt: async (sessionID) => {
+        requireCurrent()
+        await verifyController(sessionID)
         await ctx.session.interrupt({ sessionID })
       },
       wait: async (sessionID) => {
+        requireCurrent()
+        await verifyController(sessionID)
         await ctx.session.wait({ sessionID })
       },
-      messages: async (sessionID) => (await ctx.session.context({ sessionID })) as any[],
+      messages: async (sessionID) => {
+        requireCurrent()
+        await verifyController(sessionID)
+        return (await ctx.session.context({ sessionID })) as any[]
+      },
     }
     const nativeObservations = new NativeObservations(research,observations)
-    await ctx.session.hook('model.request',request => nativeObservations.modelRequest(request))
+    await ctx.session.hook('model.request',request => { if (lifecycle.current()) nativeObservations.modelRequest(request) })
     await ctx.session.hook('retry',request => {
       const root = research.rootOf(request.sessionID)
       if (root && research.inScope(root)) observations.append(root,{phase:'provider_retry',session_id:request.sessionID,
         attempt:request.attempt,model:request.model,will_retry:request.decision.retry})
     })
     const externalStarts = new Map<string,number>()
-    await ctx.tool.hook('execute.before',request => {
+    let specialists!: Specialists
+    const beforeTool = async (request: any) => {
+      if (!lifecycle.current()) {
+        if (lifecycle.successorReady()) return lifecycle.forwardBefore(request)
+        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query') {
+          throw new ToolError({ message: '研究控制器正在交接；请先等待身份核对。',
+            metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
+        }
+        return
+      }
+      try {
+        const ready = await within(research.confirmMembership(request.sessionID).then(() => true), STARTUP_WAIT_MS)
+        if (!ready) throw new Error("Research membership is not ready")
+      } catch {
+        if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardBefore(request)
+        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool)) {
+          throw new ToolError({ message: "研究会话身份尚未核实；请先核对状态，不能执行此工具。",
+            metadata: { code: "research_control_unavailable", retryable: false, allow_fallback: false } })
+        }
+        return
+      }
+      if (!lifecycle.current()) {
+        if (lifecycle.successorReady()) return lifecycle.forwardBefore(request)
+        throw new ToolError({ message: '研究控制器正在交接；请先等待身份核对。',
+          metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
+      }
       const root = research.rootOf(request.sessionID)
-      if (!root || request.tool.startsWith('research_')) return
+      if (!root) return
+      try {
+        await bootstrap()
+        const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+        if (!main) throw new Error('Research controller owner is unavailable')
+        await ensureController(root, main)
+      } catch {
+        if (!COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query') {
+          throw new ToolError({ message: '研究控制器尚未完成核对；只能读取现有材料。',
+            metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
+        }
+      }
+      const role = research.roleOf(request.sessionID)
+      if (!keepsTool(request.tool, true, role, specialists?.toolsOf(request.sessionID) ?? [])) {
+        throw new ToolError({ message: "当前研究角色不能执行此工具；节点工作必须交给节点执行会话。",
+          metadata: { code: "research_role_violation", retryable: false, allow_fallback: false } })
+      }
+      if (role === 'node_core') await eventChain
+      if (role === 'node_core' && !COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query' &&
+          !await engine.nodeTurnAllowed(request.sessionID)) {
+        throw new ToolError({ message: '当前节点执行轮没有暂停期间的收尾授权；请先核对状态。',
+          metadata: { code: 'research_control_paused', retryable: false, allow_fallback: false } })
+      }
+      if (TOOLS.some(tool => tool.name === request.tool)) return
       externalStarts.set(`${request.sessionID}:${request.id}`,performance.now())
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
         status:'started',execution_ref:`session:${request.sessionID}`,resource_usage:'unknown'})
-    })
+    }
+    await ctx.tool.hook('execute.before',beforeTool)
     await ctx.tool.hook('execute.after',request => {
       const key = `${request.sessionID}:${request.id}`
       const started = externalStarts.get(key)
@@ -144,24 +270,96 @@ export default Plugin.define({
         status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
     })
     const count = (value: unknown, fallback: number) => Math.max(1, Math.floor(Number(value ?? fallback)) || fallback)
-    const engine = new Engine(research, host, count(options.concurrency, 1))
-    const specialists = new Specialists(
+    const engine = new Engine(research, host, count(options.concurrency, 1), lifecycle.state, lifecycle.current,
+      (root, main) => ensureController(root, main), (root) => specialists.interruptUnverified(root))
+    specialists = new Specialists(
       research,
       host,
       (root) => engine.modelFor(root),
       count(options.specialistFanout, 2),
       count(options.specialistTimeoutMs, 600_000),
+      lifecycle.state,
+      lifecycle.current,
     )
-    void engine.coldRecover()
-    void specialists.recover()
+    const controllers = new Map<string, Promise<void>>()
+    ensureController = (root, main) => {
+      let existing = controllers.get(root)
+      if (!existing) {
+        existing = (async () => {
+          requireCurrent()
+          const owner = await research.call<any>('controller_attach', main,
+            { epoch: lifecycle.epoch, binding: lifecycle.binding, pid: lifecycle.pid })
+          requireCurrent()
+          research.setController(root, { epoch: owner.epoch, binding: owner.binding, fence: owner.fence })
+          if (owner.phase === 'recovery_required') throw new Error('研究控制器身份不明，需先核对原有执行；不能自动恢复。')
+          if (owner.phase === 'reconciling') {
+            if (owner.mode === 'cold') {
+              await engine.coldRecover()
+              await specialists.recover()
+            } else {
+              await engine.recoverWarm()
+              await specialists.recoverWarm()
+            }
+            await research.call('controller_ready', main)
+          }
+        })()
+        controllers.set(root, existing)
+        void existing.catch(() => { if (controllers.get(root) === existing) controllers.delete(root) })
+      }
+      return existing
+    }
+    let boot: Promise<void> | null = null
+    bootstrap = () => {
+      if (eventGap) return Promise.reject(new Error('研究事件流不完整，需先核对执行状态'))
+      boot ??= (async () => {
+        await research.ready()
+        requireCurrent()
+        for (const root of research.roots().filter(item => research.inScope(item))) {
+          const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+          if (main) await ensureController(root, main)
+        }
+      })().catch(error => { boot = null; throw error })
+      return boot
+    }
+    void bootstrap().catch(error => {
+      if (listening && lifecycle.current()) process.stderr.write(`Research controller initialization: ${error instanceof Error ? error.message : String(error)}\n`)
+    })
 
     async function runTool(tool: ToolDefinition, call: any, args: Record<string, any>): Promise<unknown> {
+      if (!lifecycle.current()) {
+        if (lifecycle.successorReady()) return lifecycle.forwardTool(tool, call, args)
+        throw new Error('研究控制器正在交接；请先等待身份核对。')
+      }
+      const currentTool = TOOLS.find(candidate => candidate.name === tool.name)
+      if (!currentTool) throw new Error('当前控制器不认识这个研究工具。')
+      tool = currentTool
+      args = validateArgs(args, currentTool.parameters)
+      await bootstrap()
+      // A started event may already be buffered while setup is completing.
+      // Consume it before a node asks to finish that execution.
+      await eventChain
+      if (eventGap) throw new Error('研究事件流不完整，需先核对执行状态')
+      requireCurrent()
       const sessionID = call.sessionID as string
+      await research.confirmMembership(sessionID)
       if (!research.isAssociated(sessionID)) {
         throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
       }
+      const root = research.rootOf(sessionID)!
+      const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+      if (!main) throw new Error('Research controller owner is unavailable')
+      await ensureController(root, main)
       const role = research.roleOf(sessionID)
       if (!tool.roles.includes(role as any)) throw new Error(`${tool.name} 不属于本会话的角色（${role ?? "未登记"}）`)
+      if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
+        const current = await research.call<any>("status", sessionID)
+        const run = current.workflow?.run?.state
+        const pause = current.workflow?.session?.pause_reason
+        if ((run !== "running" && run !== "manual") || (pause && pause !== "wait")) {
+          throw Object.assign(new Error("研究已暂停；请由用户显式恢复后再开始新工作，不能自行代替节点执行。"),
+            { code: "research_control_paused", details: { run_state: run, pause_reason: pause, retryable: false, recovery: "explicit_resume", allow_fallback: false } })
+        }
+      }
       const operationID = `${sessionID}:${call.messageID}:${call.id}:${tool.name}`
       switch (tool.engine) {
         case "dispatch":
@@ -169,7 +367,7 @@ export default Plugin.define({
         case "wait":
           return engine.wait(sessionID, (args.task_ids ?? []).map(String))
         case "finish":
-          return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) })
+          return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
         case "conclude":
           return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID)
         case "delegate":
@@ -220,16 +418,53 @@ export default Plugin.define({
       }
     })
 
-    await ctx.session.hook("context", async (request) => {
+    const injectContext = async (request: any) => {
+      if (!lifecycle.current()) {
+        if (lifecycle.successorReady()) return lifecycle.forwardContext(request)
+        if (findProjectRoot(research.scope) === research.scope) {
+          for (const name of Object.keys(request.tools)) if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+          request.system.push({ type: 'text', text: 'Research controller handoff is not ready; read existing information only.' })
+        }
+        return
+      }
       try {
-        await within(research.ready(), STARTUP_WAIT_MS)
+        const ready = await within(research.confirmMembership(request.sessionID).then(() => true), STARTUP_WAIT_MS)
+        if (!ready) throw new Error("Research membership is not ready")
         const associated = research.isAssociated(request.sessionID)
         const role = research.roleOf(request.sessionID)
+        if (!lifecycle.current()) {
+          if (lifecycle.successorReady()) return lifecycle.forwardContext(request)
+          throw new Error('Research controller handoff is not ready')
+        }
         const granted = specialists.toolsOf(request.sessionID)
         for (const name of Object.keys(request.tools)) {
           if (!keepsTool(name, associated, role, granted)) delete request.tools[name]
         }
         if (!associated) return
+        await within(bootstrap().then(() => true), STARTUP_WAIT_MS).then(ready => {
+          if (!ready) throw new Error('Research controller is not ready')
+        })
+        const root = research.rootOf(request.sessionID)!
+        const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+        if (!main) throw new Error('Research controller owner is unavailable')
+        await ensureController(root, main)
+        if (role === "main") {
+          const state = await research.call<any>("status", request.sessionID)
+          const run = state.workflow?.run?.state
+          const pause = state.workflow?.session?.pause_reason
+          if (controlInstructions(run, pause)) {
+            for (const name of ["research_propose", "research_dispatch", "research_conclude"]) delete request.tools[name]
+          }
+        }
+        if (role === 'node_core') {
+          await eventChain
+          if (!await engine.nodeTurnAllowed(request.sessionID)) {
+            for (const name of Object.keys(request.tools)) {
+              if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            }
+            request.system.push({ type: 'text', text: 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
+          }
+        }
         if (role === "specialist" && specialists.isBlind(request.sessionID)) {
           // OpenCode's prompt names the working directory and carries AGENTS.md; a blind reviewer gets neither.
           request.system.splice(0, request.system.length, { type: "text", text: BLIND_SYSTEM })
@@ -241,14 +476,23 @@ export default Plugin.define({
           if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages,deadline-performance.now())
         }
       } catch {
-        // Research state must never break a model request.
+        // Unknown control is not permission to use an old research context or execute tools.
+        if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
+        if (research.isAssociated(request.sessionID) || findProjectRoot(research.scope) === research.scope) {
+          for (const name of Object.keys(request.tools)) {
+            if (!COORDINATOR_NATIVE_READS.has(name) && name !== "research_query") delete request.tools[name]
+          }
+          request.system.push({ type: "text", text: "Research control is unavailable. Read existing information only; do not start research or assume it is running." })
+        }
       }
-    })
+    }
+    await ctx.session.hook("context", injectContext)
 
     // A message the user types into a research session is guidance: record it
     // and let it reach the model; the loop keeps going afterwards.
     await ctx.session.hook("prompt", async (input) => {
       try {
+        if (!lifecycle.current()) return
         if (!research.isAssociated(input.sessionID)) return
         const text = String((input.prompt as any)?.text ?? "").trim()
         if (!text || text.startsWith("/")) return
@@ -258,15 +502,14 @@ export default Plugin.define({
       }
     })
 
-    let listening = true
     async function enforceDeadline(sessionID:string): Promise<void> {
       const stopped = await research.call('runtime_budget_stop', sessionID)
       if (stopped.stopped) {
         const root = research.rootOf(sessionID)!
         for (const sid of research.sessionsIn(root)) engine.expectInterrupt(sid)
-        await Promise.all(research.sessionsIn(root).map(sessionID => ctx.session.interrupt({sessionID})))
+        await Promise.all(research.sessionsIn(root).map(sessionID => host.interrupt(sessionID).catch(() => {})))
         const main = research.sessionsIn(root).find(sid=>research.roleOf(sid)==='main')
-        if (main) await ctx.session.synthetic({sessionID:main,text:'【Research】自主调度已到时限，排队任务已取消，正在停止会话。需显式提额后恢复。',description:'自主调度时限已到',resume:false})
+        if (main) await host.synthetic(main, '【Research】自主调度已到时限，排队任务已取消，正在停止会话。需显式提额后恢复。', '自主调度时限已到', false)
         research.notifyChanged(root)
       }
     }
@@ -298,23 +541,32 @@ export default Plugin.define({
         if(dirtyBudgets.delete(root) && listening)void refreshBudget(root)
       }
     }
-    void (async () => {
-      try {
-        for await (const event of ctx.event.subscribe()) {
-          if (!listening) break
-          const { type, data } = event as { type: string; data?: { sessionID?: string } }
-          const sessionID = data?.sessionID
-          if (!sessionID || !research.isAssociated(sessionID)) continue
-          if (type === "session.execution.started") engine.started(sessionID)
-          else if (type === "session.execution.succeeded") void engine.ended(sessionID, "succeeded",event.id)
-          else if (type === "session.execution.failed") void engine.ended(sessionID, "failed",event.id)
-          else if (type === "session.execution.interrupted") void engine.ended(sessionID, "interrupted",event.id)
-          nativeObservations.event(event)
-        }
-      } catch {
-        // The stream ends when the plugin unloads.
+    eventHandler = async event => {
+      if (!listening || !lifecycle.current()) return
+      const { type, data } = event as { type: string; data?: { sessionID?: string } }
+      const sessionID = data?.sessionID
+      if (sessionID && !research.isAssociated(sessionID)) await research.confirmMembership(sessionID)
+      if (!sessionID || !research.isAssociated(sessionID)) return
+      await bootstrap()
+      if (!lifecycle.current()) return
+      const root = research.rootOf(sessionID)!
+      const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+      if (main && research.inScope(root)) await ensureController(root, main)
+      const sequence = typeof event.durable?.seq === 'number' ? event.durable.seq : undefined
+      if (type === "session.execution.started") await engine.started(sessionID, event.id, sequence)
+      else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
+      else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
+        const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
+        void engine.ended(sessionID, outcome, event.id, sequence).catch(error => {
+          if (listening && lifecycle.current()) {
+            eventGap = true
+            process.stderr.write(`Research terminal event failed: ${error instanceof Error ? error.message : String(error)}\n`)
+          }
+        })
       }
-    })()
+      nativeObservations.event(event)
+    }
+    for (const event of earlyEvents.splice(0)) queueEvent(event)
 
     async function sessionDirectory(sessionID: string): Promise<string> {
       const session = await ctx.session.get({ sessionID })
@@ -359,10 +611,42 @@ export default Plugin.define({
           return engine.pause(sessionID, directory)
         case "resume":
           return engine.resume(sessionID, directory, modelArg(args.model))
+        case "recover":
+          return (async () => {
+            const sid = needsSession(sessionID, action)
+            const root = research.requireAssociated(sid)
+            if (research.roleOf(sid) !== 'main') throw new Error('只能由项目主会话执行恢复操作。')
+            if (args.kind === 'controller') {
+              try { await ensureController(root, sid) } catch { /* adoption validates the persisted binding */ }
+              await research.call('controller_adopt', sid, { reason: String(args.reason ?? '') })
+              controllers.set(root, Promise.resolve())
+              boot = null
+              research.notifyChanged(root)
+              return { message: '控制器已接管；项目保持暂停，未知执行仍需逐项核对。' +
+                (eventGap ? ' 当前事件流仍不完整，请先重新启动宿主。' : '核对后可显式 /research resume。') }
+            }
+            await bootstrap()
+            if (args.kind === 'task') return engine.recoverTask(sid, String(args.task_id ?? ''), String(args.reason ?? ''))
+            if (args.kind === 'specialist') {
+              await research.call('recovery_confirm_specialist', sid, { task_id: String(args.task_id ?? ''), reason: String(args.reason ?? '') })
+              research.notifyChanged(root)
+              return { message: `已记录专家 ${args.task_id} 的人工退出核对，已有报告保留。` }
+            }
+            if (args.kind === 'delivery') return engine.recoverDelivery(sid, String(args.notification_id ?? ''),
+              String(args.delivery_kind ?? ''), String(args.disposition ?? ''), String(args.reason ?? ''))
+            throw new Error('未知恢复对象。')
+          })()
+        case "retry":
+          return engine.retryTask(needsSession(sessionID, action), String(args.task_id ?? ''), String(args.reason ?? ''))
         case "stop":
           return engine.stop(sessionID, directory)
         case "init":
-          return research.init(needsSession(sessionID, action), directory, String(args.goal ?? ""))
+          return (async () => {
+            const sid = needsSession(sessionID, action)
+            const result = await research.init(sid, directory, String(args.goal ?? ""))
+            await ensureController(research.requireAssociated(sid), sid)
+            return result
+          })()
         case "takeover":
           return research.takeover(needsSession(sessionID, action), directory)
         case "detach":
@@ -376,45 +660,57 @@ export default Plugin.define({
       }
     }
 
-    const registration = await ctx.rpc.register(ResearchRpc, {
-      command: (input: any) =>
-        reported(async () => {
+    const commandHandler = (input: any) => reported(async () => {
           const action = String(input.action ?? "help")
           if (action === "help") return { message: USAGE }
-          if (['auto','resume','init','takeover','budget'].includes(action)) await research.ensureContract()
+          if (!['status', 'recover'].includes(action)) await bootstrap()
+          if (['auto','resume','init','takeover','budget','recover','retry'].includes(action)) await research.ensureContract()
           await within(research.ready(), STARTUP_WAIT_MS)
           const sessionID = input.sessionID ? String(input.sessionID) : null
+          if (sessionID && action !== 'takeover') await research.confirmMembership(sessionID)
           const directory = sessionID ? await sessionDirectory(sessionID) : String(input.directory ?? ctx.location.directory)
           const result = await runCommand(action, sessionID, directory, (input.args ?? {}) as Record<string, any>)
           const target = result.sessionID ?? sessionID
           if (result.note && target) {
             // resume:false records the line without starting a model turn.
-            void ctx.session.synthetic({ sessionID: target, text: result.note, description: result.note, resume: false }).catch(() => {})
+            void host.synthetic(target, result.note, result.note, false).catch(() => {})
           }
           return result
-        }),
-      session: (input: any) =>
-        reported(async () => {
-          await within(research.ready(), STARTUP_WAIT_MS)
+        })
+    const sessionHandler = (input: any) => reported(async () => {
           const sessionID = String(input.sessionID)
+          await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS)
           const state = await research.sessionState(sessionID)
           const root = research.rootOf(sessionID)
           return { ...state, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
-        }),
-      board: (input: any) =>
-        reported(async () => {
+        })
+    const boardHandler = (input: any) => reported(async () => {
           const directory =
             input.directory ?? (input.sessionID ? await sessionDirectory(String(input.sessionID)) : ctx.location.directory)
           return research.board(directory, String(input.view), input.fields ?? {})
-        }),
+        })
+    const routeRpc = (kind: 'command' | 'session' | 'board', input: any) => {
+      if (lifecycle.current()) return { command: commandHandler, session: sessionHandler, board: boardHandler }[kind](input)
+      if (lifecycle.successorReady()) return lifecycle.forwardRpc(kind, input)
+      return Promise.resolve({ error: '研究控制器正在交接；请稍后再试。' })
+    }
+    const registration = await ctx.rpc.register(ResearchRpc, {
+      command: (input: any) => routeRpc('command', input),
+      session: (input: any) => routeRpc('session', input),
+      board: (input: any) => routeRpc('board', input),
     })
     emitChanged = (root) => {
+      if (!lifecycle.current()) return
       void registration.events.emit("changed", { root }).catch(() => {})
       void refreshBudget(root).catch(error=>observations.append(root,{phase:'coverage_gap',source:'deadline_monitor',error_code:error.code ?? 'storage_unavailable'}))
     }
-    void research.ready().then(()=>Promise.all(research.roots().map(root=>refreshBudget(root))))
+    lifecycle.setHandlers({ before: beforeTool, context: injectContext, tool: runTool,
+      command: commandHandler, session: sessionHandler, board: boardHandler })
+    void research.ready().then(()=>Promise.all(research.roots().map(root=>refreshBudget(root)))).catch(() => {})
+    void bootstrap().then(() => lifecycle.markReady()).catch(() => {})
 
     return () => {
+      lifecycle.detach()
       listening = false
       for(const timer of budgetTimers.values())clearTimeout(timer)
       storage.close()

@@ -371,7 +371,7 @@ def migrate_native_copy(source: Path, destination: Path) -> dict:
                         ),
                     )
             db.execute(
-                "INSERT OR IGNORE INTO workflow_project VALUES (1,NULL,'cold',0,?)", (now(),)
+                "INSERT OR IGNORE INTO workflow_project(id,main_session_id,state,generation,updated_at) VALUES (1,NULL,'cold',0,?)", (now(),)
             )
             db.execute("UPDATE workflow_project SET state='cold' WHERE state<>'complete'")
         state = store.query()

@@ -1740,20 +1740,39 @@ class MemoryStore:
                     for item in items]
         knowledge = ({key: without_checks(items) for key, items in knowledge.items()}
                      if isinstance(knowledge, dict) else without_checks(knowledge))
+        run = db.execute("SELECT state FROM workflow_project WHERE id=1").fetchone()
+        run_state = run["state"] if run else None
+        pause_reason = session["pause_reason"] if session else None
+        session_paused = bool(pause_reason and pause_reason != "wait")
+        paused = run_state not in {"running", "manual"} or session_paused
+        role_override = None
+        control_override = None
+        if profile == "opencode-auto" and paused:
+            if session and session["role"] == "node_core":
+                role_override = ("Research execution is paused. Only finish the currently authorized node turn; "
+                                 "publish and checkpoint its existing work, then call research_finish. "
+                                 "Do not start new work or delegate another specialist.")
+            else:
+                role_override = ("Research execution is paused. Read and synthesize existing results, "
+                                 "but do not propose or dispatch new work or perform node experiments yourself. "
+                                 "Only an explicit /research resume can resume autonomous research.")
+            control_override = (f"Run state: {run_state}; session pause reason: {pause_reason or 'none'}. "
+                                "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
         blocks = [
-            ("project", {"goal": project["goal"], "control": project["control"]}),
+            ("project", {"goal": project["goal"], "control": project["control"], "run_state": run_state,
+                         "pause_reason": pause_reason}),
             ("conclusion", self.conclusion_view(db) or (
                 {"contract_status": "not_recorded"} if db.execute(
                     "SELECT 1 FROM workflow_project WHERE state='complete'"
                 ).fetchone() else None
             )),
             ("checkpoint_recovery", checkpoint_info),
-            ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.") if profile == "opencode-auto" else {
+            ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else (role_override or OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.")) if profile == "opencode-auto" else {
                 "main": "Coordinate inventory, planning, dispatch, synthesis and continuation. Propose then dispatch node work; full coding and experiments belong to node_core. Do not use research_finish. In manual mode prepare the plan; /research auto enables node execution. If the user requests plan confirmation, submit the complete plan and wait; clarification answers alone do not approve it. Record acceptance criteria in plans/checkpoints and report evidence, gaps and stopping reasons. A successor must declare its actual predecessors and fixed inputs; a handoff failure does not make it a root. Already authorized execution needs no extra confirmation.",
                 "node_core": "Own this node's planning, coding, experiments and analysis. Delegate bounded read-only specialists, publish node findings and use research_finish to end the work segment. Put explicit evidence references, scope and known applicability limits into structured knowledge fields; do not invent missing conditions.",
                 "specialist": "Read only the assigned question and materials; return evidence and uncertainty. Do not change research records or delegate.",
             }.get(session["role"] if session else "", "Follow the assigned research role.")),
-            ("control_instructions", OPENCODE_MANUAL_CONTROL if profile == "opencode-manual" else OPENCODE_AUTO_CONTROL if profile == "opencode-auto" else "Use research tools to change the ledger. Never edit .research or issue SQL repairs. For stuck specialists use research_verify_specialist; for uncertain exploration creation use research_verify_task. Publication complete means a completed deliverable, not scientific success; pending reviews are not approval gates."),
+            ("control_instructions", OPENCODE_MANUAL_CONTROL if profile == "opencode-manual" else (control_override or OPENCODE_AUTO_CONTROL) if profile == "opencode-auto" else "Use research tools to change the ledger. Never edit .research or issue SQL repairs. For stuck specialists use research_verify_specialist; for uncertain exploration creation use research_verify_task. Publication complete means a completed deliverable, not scientific success; pending reviews are not approval gates."),
             (
                 "identity",
                 {
@@ -2096,7 +2115,7 @@ class MemoryStore:
             target.chmod(0o644)
         temporary.replace(target)
 
-    def specialist_create(self, fields: dict, request_id: str) -> dict:
+    def specialist_create(self, fields: dict, request_id: str, *, control_actor=None) -> dict:
         payload = {
             "parent_session_id": _require_text(
                 fields.get("parent_session_id"), "parent_session_id"
@@ -2110,8 +2129,22 @@ class MemoryStore:
             "fanout_limit": int(fields.get("fanout_limit", 2)),
             "context_mode": fields.get("context_mode", "research"),
         }
+        launch = fields.get('launch')
+        if launch is not None:
+            if not isinstance(launch, dict) or not isinstance(launch.get('tools'), list):
+                raise ValidationError('Invalid specialist launch metadata')
+            tools = launch['tools']
+            allowed = {'research_read_input'} if payload['context_mode'] == 'blind' else {'read', 'glob', 'grep', 'research_query', 'research_read_input'}
+            if not tools or not all(isinstance(item, str) and item in allowed for item in tools) or len(tools) != len(set(tools)):
+                raise ValidationError('Invalid specialist effective tool scope')
+            if not isinstance(launch.get('deadline_at'), int) or not isinstance(launch.get('session_id'), str) or not launch['session_id'].startswith('ses_') or not isinstance(launch.get('message_id'), str) or not launch['message_id'].startswith('msg_'):
+                raise ValidationError('Invalid specialist launch identity or deadline')
+            payload['effective_tools'] = tools
 
         def work(db: sqlite3.Connection) -> dict:
+            if control_actor:
+                from .runtime_budget import require_new_work
+                require_new_work(db, *control_actor, manual=True)
             if payload["context_mode"] not in {"research", "blind"}:
                 raise ValidationError("context_mode must be research or blind")
             if payload["purpose"] not in {"review", "domain"}:
@@ -2167,9 +2200,19 @@ class MemoryStore:
                     payload["context_mode"],
                 ),
             )
-            return self._decode_specialist(
+            value = self._decode_specialist(
                 db.execute("SELECT * FROM specialist_tasks WHERE task_id=?", (task_id,)).fetchone()
             )
+            if launch is not None:
+                generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+                details = {'task_id': task_id, 'parent': payload['parent_session_id'], 'context_mode': payload['context_mode'],
+                           'generation': generation, 'tools': payload['effective_tools'], 'deadline_at': launch['deadline_at'],
+                           'session_id': launch['session_id'], 'message_id': launch['message_id']}
+                intent_id = 'specialist-launch:' + task_id
+                db.execute('INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)',
+                           (intent_id, 'specialist_launch', payload['parent_session_id'], 'prepared', _encoded(details), at))
+                value['launch'] = {'intent_id': intent_id, 'state': 'prepared', **details}
+            return value
 
         return self._mutate("specialist.create", payload, request_id, work)
 
@@ -2196,6 +2239,12 @@ class MemoryStore:
             ).fetchone()
             if not task or task["parent_session_id"] != payload["parent_session_id"]:
                 raise ConflictError("Specialist lineage does not match the durable intent")
+            if task['state'] != 'starting':
+                raise ConflictError('Specialist is no longer awaiting a child binding')
+            launch = db.execute("SELECT state,details FROM workflow_intents WHERE intent_id=? AND kind='specialist_launch'",
+                                ('specialist-launch:' + payload['task_id'],)).fetchone()
+            if launch and (launch['state'] != 'created' or json.loads(launch['details']).get('session_id') != payload['session_id']):
+                raise ConflictError('Specialist child does not match its created launch')
             existing = db.execute(
                 "SELECT * FROM specialist_bindings WHERE session_id=?", (payload["session_id"],)
             ).fetchone()
@@ -2259,6 +2308,8 @@ class MemoryStore:
                 and task["parent_session_id"] != payload["parent_session_id"]
             ):
                 raise ConflictError("Only the recorded parent can settle this specialist task")
+            if task['state'] not in {'starting', 'running', 'unverified'}:
+                raise ConflictError('Specialist task is already settled')
             at = _now()
             db.execute(
                 "UPDATE specialist_tasks SET state=?,result=?,error=?,exit_verified=?,updated_at=? WHERE task_id=?",

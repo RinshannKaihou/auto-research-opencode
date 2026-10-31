@@ -72,6 +72,8 @@ interface Membership {
 export class Research {
   readonly checkpoints = new CheckpointDelivery()
   private members = new Map<string, Membership>()
+  private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
+  private executionFor: (sessionID: string) => string | undefined = () => undefined
   private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
   private memoryGeneration = 0
   private loading: Promise<void> | null = null
@@ -110,14 +112,38 @@ export class Research {
 
   /** Loads this host's sessions and their roles once; with no registry there is nothing to load. */
   ready(): Promise<void> {
-    this.loading ??= this.registryExists() ? this.refresh().catch(() => {}) : Promise.resolve()
+    if (!this.registryExists()) return Promise.resolve()
+    this.loading ??= this.refresh().catch(error => {
+      this.loading = null
+      throw error
+    })
     return this.loading
+  }
+
+  /** Resolve this session afresh; another plugin attachment may have registered it. */
+  async confirmMembership(sessionID: string): Promise<void> {
+    await this.ready()
+    if (!this.registryExists()) {
+      if (this.members.has(sessionID) || findProjectRoot(this.scope) === this.scope) {
+        throw new Error('Research membership registry is unavailable')
+      }
+      return
+    }
+    const value = await this.storage.request<any>('session_membership', { host_id: HOST_ID, session_id: sessionID })
+    if (!value.associated || !this.inScope(value.root)) {
+      if (this.members.has(sessionID)) this.forget(sessionID)
+      return
+    }
+    const row = value.session
+    this.members.set(sessionID, { root: value.root, role: row?.detached ? undefined : row?.role, node: row?.node_id ?? undefined })
+    const main = value.main
+    if (main) this.members.set(main.session_id, { root: value.root, role: main.role, node: main.node_id ?? undefined })
   }
 
   ensureContract(): Promise<void> {
     this.contract ??= this.storage.request('capabilities').then(value => {
-      if (value.memory_write_contract!=='r2-v1') throw Object.assign(
-        new Error('Research backend contract mismatch: install the complete R2 package (including bundled Python).'),
+      if (value.memory_write_contract!=='r2-v1' || value.runtime_control_contract !== 'controller-launch-v1') throw Object.assign(
+        new Error('Research backend contract mismatch: install the matching plugin and bundled Python package.'),
         {code:'research_contract_mismatch'})
     }).catch(error=>{this.contract=null;throw error})
     return this.contract
@@ -129,7 +155,7 @@ export class Research {
     })
     const scoped = rows.filter((item) => this.inScope(item.root))
     for (const root of new Set(scoped.map((row) => row.root))) {
-      const sessions = await this.sessionRows(root).catch(() => new Map<string, any>())
+      const sessions = await this.sessionRows(root)
       for (const row of scoped.filter((item) => item.root === root)) {
         const session = sessions.get(row.session_id)
         this.members.set(row.session_id, { root, role: session?.role, node: session?.node_id ?? undefined })
@@ -195,10 +221,22 @@ export class Research {
     this.changed(root)
   }
 
+  setController(root: string, owner: { epoch: string; binding: string; fence: number }): void {
+    this.controllers.set(canonical(root), owner)
+  }
+
+  setExecutionResolver(resolve: (sessionID: string) => string | undefined): void {
+    this.executionFor = resolve
+  }
+
   call<T = any>(method: string, sessionID: string, fields: Record<string, unknown> = {}, operationId?: string) {
+    const root = this.rootOf(sessionID) ?? (typeof fields.root === 'string' ? fields.root : undefined)
+    const owner = root ? this.controllers.get(canonical(root)) : undefined
+    const execution = this.executionFor(sessionID)
     return this.storage.request<T>(
       method,
-      { host_id: HOST_ID, session_id: sessionID, ...fields, plugin_instance_id: this.instanceID },
+      { host_id: HOST_ID, session_id: sessionID, ...(execution ? { execution_token: execution } : {}), ...fields,
+        ...(owner ? { control_owner: owner } : {}), plugin_instance_id: this.instanceID },
       (operationId ?? `${sessionID}:${method}:${randomUUID()}`).slice(0, 256),
     )
   }
@@ -439,8 +477,12 @@ export class Research {
       }
       const cached = this.memoryCache.get(sessionID)
       if (cached) this.memoryObservations.cached++
-      if (cached) return `${cached.text}\n\n[Research memory is stale: storage did not answer in time.]`
-      return "Research context is unavailable for this session right now. Continue carefully; use research tools only when needed."
+      if (cached) {
+        // Cached scientific context is useful, but its old control instructions cannot authorize work.
+        const facts = cached.text.replace(/^## (?:role_instructions|control_instructions)\n[^\n]*(?:\n|$)/gm, "")
+        return `${facts}\n\n[Research memory is stale. Execution control is unavailable; do not start research or assume it is running.]`
+      }
+      return "Research context and execution control are unavailable. Do not start research or assume it is running."
     } finally {
       clearTimeout(timer)
     }
