@@ -62,7 +62,7 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
         parsed = frozen_refs.parse(ref)
         if frozen_refs.is_frozen(ref):
             resolution = frozen_refs.resolve(db, store.root, ref)
-            if resolution['outcome'] == 'not_found':
+            if resolution['outcome'] == 'not_found' and resolution['reason']!='object_missing':
                 raise NotFoundError(resolution['message'])
             if resolution['outcome'] in ('unsupported', 'ambiguous'):
                 raise ValidationError(resolution['message'])
@@ -217,14 +217,16 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
             risk('publication', ref, {'status': status, 'versions': check['result']['versions'],
                                      'targets_complete': check['targets_complete']}, {'ref': ref})
     if db.execute('PRAGMA user_version').fetchone()[0]>=11:
-        for review in db.execute('''SELECT o.target_ref,o.obligation_id,e.event_id,e.evidence_refs
-            FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id)
-            WHERE o.generation=(SELECT generation FROM workflow_project WHERE id=1)
-            AND o.state!='out_of_scope' AND e.action='completed'
-            AND json_extract(e.scope_snapshot,'$.result')='challenges' ORDER BY e.event_id'''):
+        from .review_lifecycle import unresolved_challenges
+        for review in unresolved_challenges(db):
             risk('review_challenge',review['target_ref'],{'review_event':review['event_id'],
                 'obligation_id':review['obligation_id'],'review_ref':json.loads(review['evidence_refs'])[0],
                 'status':'unresolved'}, {'ref':review['target_ref']})
+    for ref in scope:
+        if frozen_refs.is_frozen(ref):
+            resolution=frozen_refs.resolve(db,store.root,ref)
+            if resolution['outcome']!='resolved':
+                risk('material_unavailable',ref,{'status':'unavailable','reason':resolution['reason']},{'ref':ref})
     for row in selected.values():
         row['current_ref'] = latest[row['knowledge_id']]['ref']
         row['version_notices'] = epistemic.version_notices(db, row['ref'], bound)
@@ -322,23 +324,24 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     views['findings']['completed_nodes'] = {
         'total': len(completed), 'items': completed[:8], 'shown': min(8, len(completed)),
         'has_more': len(completed) > 8, 'expand': {'collection': 'completed_findings'}}
-    counts = dict(db.execute("SELECT trigger_kind,COUNT(*) FROM review_todos WHERE state='pending' "
-                             "AND (? IS NULL OR node_id=?) GROUP BY trigger_kind", (node_id, node_id)))
     clerical = Counter(v['class'] for v in hints.structure_hints(
         db, limit=None, node_id=node_id, klass='clerical')['items'])
-    views['review_backlog'] = {'total': sum(counts.values()), 'by_trigger_kind': {},
-                               'categories_omitted': len(counts),
-                               'expand': {'collection': 'review_todos', 'state': 'pending',
-                                          **({'node_id': node_id} if node_id else {})}}
-    for kind, count in sorted(counts.items()):
-        views['review_backlog']['by_trigger_kind'][kind] = count
-        if len('## review_backlog\n' + encoded(views['review_backlog'])) > 600:
-            del views['review_backlog']['by_trigger_kind'][kind]
-            break
-        views['review_backlog']['categories_omitted'] -= 1
     if db.execute('PRAGMA user_version').fetchone()[0]>=11:
         from .review_lifecycle import summary
         views['review_backlog'] = summary(db,node_id)
+    else:
+        counts = dict(db.execute("SELECT trigger_kind,COUNT(*) FROM review_todos WHERE state='pending' "
+                                 "AND (? IS NULL OR node_id=?) GROUP BY trigger_kind", (node_id, node_id)))
+        views['review_backlog'] = {'total': sum(counts.values()), 'by_trigger_kind': {},
+                                   'categories_omitted': len(counts),
+                                   'expand': {'collection': 'review_todos', 'state': 'pending',
+                                              **({'node_id': node_id} if node_id else {})}}
+        for kind, count in sorted(counts.items()):
+            views['review_backlog']['by_trigger_kind'][kind] = count
+            if len('## review_backlog\n' + encoded(views['review_backlog'])) > 600:
+                del views['review_backlog']['by_trigger_kind'][kind]
+                break
+            views['review_backlog']['categories_omitted'] -= 1
     views['clerical_index'] = {'by_class': dict(clerical),
                                'expand': {'collection': 'hints', 'kind': 'clerical',
                                           **({'node_id': node_id} if node_id else {})}}
@@ -386,6 +389,12 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
                 entries.pop()
                 break
         risk_budget = max(0, risk_budget - len(encoded(views['critical_now']['risk_index'])))
+    # Keep a complete recovery snapshot ahead of optional finding prose.
+    for key in ('checkpoint_recovery','checkpoint'):
+        if block_map[key] is not None:
+            views[key]=block_map[key]
+            if len(body())>max_chars:
+                del views[key]
     findings = model['findings']
     groups = [
         [v for v in findings if 'explicit_input' in v['selection_reasons']],
@@ -423,7 +432,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         views[name]['details_complete'] = len(views[name]['items']) == len(model[name]) and not any(
             value['truncated_fields'] for value in views[name]['items'])
         views[name]['expand_required'] = not views[name]['details_complete']
-    for key in ('questions', 'checkpoint_recovery', 'checkpoint', 'conclusion', 'frozen_context', 'specialist_task', 'method_guidance', 'recent_node_notes'):
+    for key in ('questions', 'conclusion', 'frozen_context', 'specialist_task', 'method_guidance', 'recent_node_notes'):
         if block_map[key] is not None:
             views[key] = block_map[key]
             if len(body()) > max_chars:

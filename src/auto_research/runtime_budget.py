@@ -1,12 +1,43 @@
 """Durable limits for mediated autonomous dispatch; external work stays unmetered."""
 import json
 import math
+import hashlib
+import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from .errors import ValidationError, BudgetError, ConflictError
 
 LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost'}
+SOURCE_SUFFIXES={'.py','.pyi','.ipynb','.c','.cc','.cpp','.h','.hpp','.cu','.cuh','.rs','.go','.ts','.tsx','.js','.jsx','.sh','.r','.jl','.yaml','.yml','.toml'}
+
+
+def source_owner(db,host,session):
+    row=db.execute("""SELECT w.cwd,w.node_id,t.attempt_id,p.generation FROM workflow_sessions w
+        JOIN workflow_project p ON p.id=1
+        LEFT JOIN associations a ON a.host_id=w.host_id AND a.session_id=w.session_id AND a.ended_at IS NULL
+        LEFT JOIN attempts t ON t.association_id=a.association_id AND t.ended_at IS NULL
+        WHERE w.host_id=? AND w.session_id=? AND w.detached=0 AND w.role='node_core'""",(host,session)).fetchone()
+    return dict(row) if row else None
+
+
+def source_workspace(cwd):
+    if not cwd or not Path(cwd).is_dir():
+        return None
+    base=Path(cwd); files=[]
+    try:
+        for directory,dirs,names in os.walk(base):
+            dirs[:]=sorted(name for name in dirs if name not in {'node_modules','__pycache__','workspaces','venv'} and not name.startswith('.'))
+            for name in sorted(names):
+                path=Path(directory)/name
+                if path.suffix.lower() not in SOURCE_SUFFIXES or path.is_symlink():
+                    continue
+                with path.open('rb') as stream:
+                    files.append((str(path.relative_to(base)),hashlib.file_digest(stream,'sha256').hexdigest()))
+    except OSError:
+        return None
+    return hashlib.sha256(json.dumps(files).encode()).hexdigest()
 
 
 def timestamp():
@@ -138,8 +169,9 @@ class RuntimeStore:
     def runtime_budget_set(self, host, session, limits, reason, operation):
         if not isinstance(limits, dict) or set(limits)-LIMITS or not isinstance(reason,str) or not reason.strip():
             raise ValidationError('Explicit runtime limits and reason required')
-        if any(value is not None and (type(value) is not int or value<=0) for value in limits.values()):
-            raise ValidationError('Runtime limits must be positive integers or null (disabled)')
+        if any(value is not None and (type(value) not in ({int,float} if key=='max_cost' else {int})
+                or not math.isfinite(value) or value<=0) for key,value in limits.items()):
+            raise ValidationError('Runtime limits must be positive integers (cost may be fractional) or null (disabled)')
         payload = dict(host=host,session=session,limits=limits,reason=reason)
         def work(db):
             config = self._project(db)['config']
@@ -163,7 +195,16 @@ class RuntimeStore:
         with self._read() as db:
             return view(self,db,host,session)
 
+    def runtime_deadline(self):
+        with self._read() as db:
+            row=db.execute('''SELECT p.state,b.deadline_at FROM workflow_project p
+                LEFT JOIN runtime_budgets b ON b.generation=p.generation WHERE p.id=1''').fetchone()
+            return dict(row) if row else {'state':None,'deadline_at':None}
+
     def runtime_reserve(self, host, session, operation):
+        with self._read() as db:
+            source=source_owner(db,host,session)
+        digest=source_workspace(source['cwd']) if source else None
         def work(db):
             run = db.execute('SELECT generation,state FROM workflow_project WHERE id=1').fetchone()
             # Specialists are mediated one-shot requests, including manual node work.
@@ -179,6 +220,8 @@ class RuntimeStore:
                 (run['generation'],host,session,upper))
             db.execute('INSERT INTO runtime_budget_reservations VALUES(?,?,?,?,?,?,?,?)',
                        (rid,run['generation'],'turn',session,state['scope_owner'],operation,'reserved',timestamp()))
+            if state['scope_owner'].startswith('node:'):
+                self._event(db,'runtime.workspace_baseline',{'host_id':host,'session_id':session,'digest':digest if source_owner(db,host,session)==source else None})
             return {'allowed':True,'reservation_id':rid,**state}
         return self._mutate('runtime.reserve',dict(host=host,session=session),operation,work)
 
@@ -198,6 +241,9 @@ class RuntimeStore:
         return self._mutate('runtime.budget_stop',dict(host=host,session=session),operation,work)
 
     def runtime_turn_finished(self, host, session, turn, operation):
+        with self._read() as db:
+            source=source_owner(db,host,session)
+        digest=source_workspace(source['cwd']) if source else None
         def work(db):
             from .review_lifecycle import generation
             gen = generation(db)
@@ -209,10 +255,13 @@ class RuntimeStore:
             associated = db.execute('SELECT association_id FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL',(host,session)).fetchone()
             mine = owner(db,host,session)
             meaningful = False
+            baseline = None
             for row in db.execute('SELECT kind,data FROM events WHERE event_id>? AND event_id<=?',(lower,upper)):
                 data = json.loads(row['data'])
                 kind = row['kind']
-                if kind == 'knowledge.recorded' and (data.get('node_id') == (mine[5:] if mine.startswith('node:') else None)):
+                if kind=='runtime.workspace_baseline' and data['host_id']==host and data['session_id']==session:
+                    baseline=data['digest']
+                elif kind == 'knowledge.recorded' and (data.get('node_id') == (mine[5:] if mine.startswith('node:') else None)):
                     ref = data['ref']
                     k = db.execute('SELECT statement,scope,conditions,evidence_refs,dependencies FROM knowledge_revisions WHERE knowledge_id=? AND revision=?',
                                    (ref.split('/')[1].split('@')[0],int(ref.split('@')[1]))).fetchone()
@@ -244,6 +293,9 @@ class RuntimeStore:
                     meaningful |= data['actor'].get('host_id')==host and data['actor'].get('session_id')==session and bool(data['added'])
                 elif kind == 'review.completed':
                     meaningful |= data.get('node_id') == (mine[5:] if mine.startswith('node:') else None)
+                elif kind=='review.challenge_disposed' and data['actor']=={'host_id':host,'session_id':session} and data['kind']!='unresolved':
+                    duplicates=db.execute('SELECT COUNT(*) FROM events WHERE kind=? AND data=?',(kind,row['data'])).fetchone()[0]
+                    meaningful |= duplicates==1
                 elif kind == 'knowledge.disposed':
                     kid = data['affected_version'].split('/')[1].split('@')[0]
                     target_owner = db.execute('SELECT node_id FROM knowledge_entries WHERE knowledge_id=?',(kid,)).fetchone()[0]
@@ -253,10 +305,13 @@ class RuntimeStore:
                         (data['change_id'],data['affected_version'],current['source_sequence'])).fetchone()
                     meaningful |= target_owner == (mine[5:] if mine.startswith('node:') else None) and (
                         prior is None or tuple(current)[:3] != tuple(prior))
+            workspace=digest if source_owner(db,host,session)==source else None
+            source_changed=baseline!=workspace if baseline is not None and workspace is not None else None
+            meaningful |= source_changed is True
             idle = 0 if meaningful else (previous['idle_turns'] if previous else 0)+1
             db.execute('INSERT INTO runtime_progress VALUES(?,?,?,?,?,?) ON CONFLICT(generation,host_id,session_id) DO UPDATE SET last_event_sequence=excluded.last_event_sequence,idle_turns=excluded.idle_turns,last_finished_turn=excluded.last_finished_turn',
                        (gen,host,session,upper,idle,turn))
-            return {'idle_turns':idle,'meaningful':bool(meaningful)}
+            return {'idle_turns':idle,'meaningful':bool(meaningful),'source_workspace_changed':source_changed}
         return self._mutate('runtime.turn_finished',dict(host=host,session=session,turn=turn),operation,work)
 
     def runtime_execution_end(self, host, session, turn, outcome, operation):

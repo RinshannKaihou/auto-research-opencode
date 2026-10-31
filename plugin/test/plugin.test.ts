@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -293,6 +293,30 @@ test('wall deadline interrupts an active native session without waiting for a mo
   expect(host.interrupted).toContain('ses_main')
   expect((await host.rpc().session({sessionID:'ses_main'})).pauseReason).toBe('budget')
   expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
+})
+
+test('slow native telemetry cannot block event binding or introduce an invocation metadata dependency',async()=>{
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'telemetry isolation'})
+  const original=StorageClient.prototype.request
+  let release!:(value:any)=>void
+  const pending=new Promise(resolve=>{release=resolve})
+  let metadataCalls=0
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(function(this:StorageClient,method:string,fields?:any,id?:string):any{
+    if(method==='runtime_native_event')return pending
+    if(method==='invocation_context'){metadataCalls++;return Promise.reject(new Error('metadata unavailable'))}
+    return original.call(this,method,fields,id)
+  })
+  try{
+    host.events.push({id:'slow-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'slow-assistant',model:{id:'actual',providerID:'mock'}}})
+    await host.hooks.get('context')!(modelRequest('ses_main'))
+    const result=await host.tools.get('research_checkpoint').execute({state:{next:'work'}},
+      {sessionID:'ses_main',messageID:'slow-assistant',id:'write',agent:'build'})
+    expect(JSON.parse(result.content).revision).toBe(1)
+    expect(metadataCalls).toBe(0)
+    const scope=await host.call('research_review_scope','ses_main',{refs:[],reason:'no current adoption'})
+    expect(scope.refs).toEqual([])
+  }finally{release({});spy.mockRestore()}
 })
 
 describe("sessions outside a project", () => {
@@ -889,6 +913,9 @@ describe("command parsing", () => {
     expect(parseResearchCommand("pause")).toEqual({ kind: "rpc", action: "pause", args: {} })
     expect((parseResearchCommand("stop") as any).confirm).toContain("停止自主研究")
     expect(parseResearchCommand("board")).toEqual({ kind: "board" })
+    expect(parseResearchCommand('budget cost 0.25 small experiment')).toMatchObject({kind:'rpc',args:{limit:'cost',value:'0.25'}})
+    expect(parseResearchCommand('budget turns 0.25 invalid')).toMatchObject({kind:'error'})
+    expect(parseResearchCommand('budget cost 0 invalid')).toMatchObject({kind:'error'})
     expect(parseResearchCommand("work X-001")).toMatchObject({ kind: "error" })
   })
 })

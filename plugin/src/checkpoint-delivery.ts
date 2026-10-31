@@ -21,6 +21,14 @@ export class CheckpointDelivery {
     if (message) this.messages.delete(`${session}:${message}`)
   }
 
+  forget(session:string): void {
+    this.clear(session)
+    this.active.delete(session)
+    for(const key of this.messages.keys()) if(key.startsWith(session+':')) this.messages.delete(key)
+    for(const key of this.calls.keys()) if(key.startsWith(session+':')) this.calls.delete(key)
+    for(const [key,value] of this.outputs) if(value.session===session)this.outputs.delete(key)
+  }
+
   result(session:string,id:string,name:string,value:any): void {
     const base = value.next_base ?? value.base
     const snapshot = value.next_snapshot ?? value.snapshot
@@ -31,8 +39,10 @@ export class CheckpointDelivery {
 
   request(session:string, messages:any[], owner:Record<string,any> | undefined, context?:CheckpointSeen): void {
     let chosen = context
+    const visible=new Set<string>()
     for (const message of messages) for (const part of message.content ?? []) {
       if (part.type !== 'tool-result') continue
+      visible.add(`${session}:${part.id}`)
       const output = this.outputs.get(`${session}:${part.id}`)
       if (!output || output.name !== part.name) continue
       const result = part.result
@@ -45,6 +55,7 @@ export class CheckpointDelivery {
       if (owner && ['host_id','session_id','association_id','attempt_id','node_id','generation'].some(key => owner[key] !== snapshot[key])) continue
       if (!chosen || snapshot.head_revision >= chosen.snapshot.head_revision) chosen = output.seen
     }
+    for(const [key,value] of this.outputs) if(value.session===session && !visible.has(key))this.outputs.delete(key)
     this.clear(session)
     if (chosen) {
       this.delivered.set(session,chosen)

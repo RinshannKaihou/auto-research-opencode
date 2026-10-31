@@ -1,6 +1,6 @@
 # R2 实施与验证记录
 
-日期：2026-10-31。代码基线 `0c7b6d5`（已合并 R1）。状态：**S0–S7 开发完成、内部验证通过，统一用户验收包齐备；尚未发布。** [开发计划](<../../R2 development plan auto-research-opencode.md>)保留设计和验收矩阵。
+日期：2026-11-01。代码基线 `0c7b6d5`（已合并 R1）。状态：**S0–S7 开发完成、内部验证通过，统一用户验收包齐备；尚未发布。** [开发计划](<../../R2 development plan auto-research-opencode.md>)保留设计和验收矩阵。
 
 本轮没有替换共享插件、重启共享 OpenCode、修改真实研究项目或调用真实模型。Legacy／R1 读取策略均保留，R2 是写入与运行契约，没有 context-policy r2 或新增主导航。
 
@@ -19,10 +19,12 @@
 
 主要代码：Python 的 `schema11.py`、`checkpoint_receipts.py`、`revision_presets.py`、`review_lifecycle.py`、`adoption.py`、`runtime_budget.py`；插件的 `checkpoint-delivery.ts`、`observations.ts`、`native-observations.ts` 及既有工具／引擎／看板接入。
 
+首轮三份 review 的处理和保留设计见[审阅处理记录](review-response.md)，包含按事件处置 challenge、控制与观测解耦、基线等待期限、开发推进及回归矩阵。
+
 ## 内部验证
 
-- Python 全量 **545 passed**，见 [Python 结果](python-tests.txt)。包含 checkpoint 并发／归属／缓存／幂等、preset／来源、迁移回滚／只读、精确审阅／scope、typed relation／采用与预算／idle 用例。
-- Bun 全量 **79 passed**，TypeScript `tsc --noEmit` 通过，见 [插件结果](plugin-tests.txt)。包含 Legacy／R1 的完整 goal→节点→综合→结项宿主流程、实际 SDK 事件形状、自动基线、重启预算与 wall-clock 主动中断。
+- Python 全量 **571 passed**，见 [Python 结果](python-tests.txt)。包含 checkpoint 并发／归属／缓存／幂等、preset／来源、迁移回滚／只读、精确审阅／scope、typed relation／采用与预算／idle 用例。
+- Bun 全量 **83 passed**，TypeScript `tsc --noEmit` 通过，见 [插件结果](plugin-tests.txt)。包含 Legacy／R1 的完整 goal→节点→综合→结项宿主流程、实际 SDK 事件形状、自动基线、重启预算与 wall-clock 主动中断。
 - 独立 tarball 测试在 Bun 全量中通过：解压到临时目录、脱离仓库 src，验证 schema 11／R2 capabilities、结项及进程重启；打包 prepack 同步 Python 白名单。随后扩展并单独通过[包内迁移测试](package-migration-tests.txt)：schema 10 只读不升级、首次可写迁移至 11、创建备份、旧 checkpoint 原响应重放。
 - `git diff --check` 通过。源码与生成的插件 Python 副本已同步。
 

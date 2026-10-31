@@ -342,7 +342,9 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
                 result = work(db)
                 if operation in {'propose','consume','focus','finish','close_node','publish','relate',
                         'knowledge.record','knowledge.revise','knowledge.dispose','knowledge.narrow_scope',
-                        'memory.checkpoint','workflow','review.scope','review.promote','review.link','review.exception','relate.typed','project.conclude'}:
+                        'memory.checkpoint','review.scope','relate.typed','project.conclude'} or (
+                        operation == 'workflow' and (payload['action'] in {'run','register'} or
+                        payload['action']=='session' and 'detached' in payload['fields'])):
                     from .review_lifecycle import reconcile
                     reconcile(self, db, request_id)
                 db.execute(

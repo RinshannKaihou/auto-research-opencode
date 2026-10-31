@@ -86,9 +86,12 @@ export function reviewCard(item: any, source?: any): ReviewCard {
       field_check: risk.result === "inconsistent" ? "声明字段与冻结材料不一致" : "声明字段无法检查",
       publication: risk.status === "attention" ? "报告引用的依据需要关注" : risk.status === "coverage partial" ? "报告的部分依据未覆盖检查" : "报告的检查覆盖未知",
       review_challenge:'审阅提出挑战（未处置）',
+      material_unavailable:'采用的冻结材料不可读取',
     }
     card.title = titles[item.kind]
-    if (item.kind==='review_challenge') {
+    if (item.kind==='material_unavailable') {
+      card.summary='材料仍属于已声明的采用范围，但冻结对象不可读取。恢复材料前无法完成相关核查；该缺口不会阻止暂停研究。'
+    } else if (item.kind==='review_challenge') {
       card.summary='审阅任务已完成，但报告中的挑战仍需科学判断；完成任务不表示风险解决。'
       link(risk.review_ref,'打开挑战报告',true)
     } else if (item.kind === "publication") {

@@ -119,7 +119,7 @@ export const USAGE = [
   "/research resume              恢复自主研究",
   "/research stop                停止自主研究，取消节点任务（需确认）",
   "/research status              查看项目和本会话状态",
-  "/research budget [turns|nodes|seconds|tokens|cost <正整数|off> <原因>]  查看或显式修改自主调度预算",
+  "/research budget [turns|nodes|seconds|tokens|cost <正数|off> <原因>]  查看或改额；仅 cost 允许小数",
   "/research board               打开研究看板（只读）",
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
   "/research guidance [路径 [--version v]]  查看或登记科研指导文档",

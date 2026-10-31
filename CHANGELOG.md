@@ -2,6 +2,12 @@
 
 ## 未发布 · R2
 
+- 修复审阅 challenge 随 scope、节点结束或 generation 消失：完整／部分挑战独立保留，使用精确 review_event 和证据登记处置；主协调可直接声明 review scope。
+- 历史对象缺失不再阻断 checkpoint／控制操作，缺口在风险中展示；新引用仍严格校验。移除重复及无关工作流 reconcile。
+- 启动契约失败可重新检查；相同快照复用回执、query 回执稳定去重，完整 checkpoint 优先交付，回执等待不突破上下文期限。控制事件不等待遥测持久化，观测关联并入业务响应，非写请求不再误报 replayed。
+- deadline 改为按运行状态／改额事件定时；节点真实源码／配置变化可计入开发推进，cost 支持小数。会话退出清理交付缓存，压缩历史不保留完整旧工具输出，统一插件实例 ID，修复 cursor 校验及迁移连接关闭。
+- 兼容说明：模型端 typed relate 的 depends_on／branches_from／revises 要求后继节点 source，知识支撑关系要求显式 revision 并追加版本；旧无 contract 的 relate API 保留原路由。直接／离线 checkpoint 首次调用须提供 expected_revision，历史成功请求仍原样重放。Legacy／R1 均执行 CAS。
+
 - schema 11 增量迁移，保留旧 requests、结项和 todo；只读支持 9／10／11，升级前一致性备份及失败重试可恢复。
 - 模型使用 record／revise／checkpoint／dispose／narrow_scope 五个窄工具；旧 memory action 保留适配。修订 preset、显式来源保留和落盘检查响应减少重复填写，不推定执行来源。
 - checkpoint 绑定实际交付给模型的完整快照和真实工作身份，首次写入强制 CAS；同轮并行写、旧缓存、跨进程与迟到响应不能更新基线，原成功请求仍可重放。

@@ -3,7 +3,7 @@
  * and in what role, project setup commands, the board, per-request research
  * memory and ledger tool calls. The autonomous loop lives in engine.ts.
  */
-import { randomUUID } from "node:crypto"
+import { randomUUID, createHash } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import type { StorageClient } from "./storage"
@@ -70,13 +70,13 @@ interface Membership {
 }
 
 export class Research {
-  readonly instanceID = randomUUID()
   readonly checkpoints = new CheckpointDelivery()
   private members = new Map<string, Membership>()
   private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
   private memoryGeneration = 0
   private loading: Promise<void> | null = null
   private contract: Promise<void> | null = null
+  private receipts = new Map<string,{key:string;value:Promise<{base:string}>}>()
   private memoryCache = new Map<string, { text: string; policy_version: string; source_sequence: number;
     checkpoint_snapshot?:Record<string,any>;checkpoint_owner?:Record<string,any> }>()
 
@@ -92,6 +92,8 @@ export class Research {
     scope: string,
     private readonly registryExists: () => boolean,
     private readonly changed: (root: string) => void = () => {},
+    readonly instanceID = randomUUID(),
+    private readonly forgotten: (session:string)=>void = ()=>{},
   ) {
     this.scope = canonical(scope)
   }
@@ -117,7 +119,7 @@ export class Research {
       if (value.memory_write_contract!=='r2-v1') throw Object.assign(
         new Error('Research backend contract mismatch: install the complete R2 package (including bundled Python).'),
         {code:'research_contract_mismatch'})
-    })
+    }).catch(error=>{this.contract=null;throw error})
     return this.contract
   }
 
@@ -184,7 +186,9 @@ export class Research {
   forget(sessionID: string): void {
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)
-    this.checkpoints.clear(sessionID)
+    this.checkpoints.forget(sessionID)
+    this.receipts.delete(sessionID)
+    this.forgotten(sessionID)
   }
 
   notifyChanged(root: string): void {
@@ -342,7 +346,7 @@ export class Research {
     if (method === 'query' && fields.collection === 'checkpoint') {
       const receipt = await this.call('checkpoint_observed', call.sessionID, {
         snapshot: value.snapshot, origin: 'query',
-      })
+      },`observed:${createHash('sha256').update(JSON.stringify([this.instanceID,call,value.snapshot])).digest('hex')}`)
       value = { ...value, ...receipt }
     }
     if (value && typeof value === 'object') this.checkpoints.result(call.sessionID,call.callID,call.name,value)
@@ -442,14 +446,29 @@ export class Research {
     }
   }
 
-  async delivered(sessionID:string,text:string,messages:any[]): Promise<void> {
+  async delivered(sessionID:string,text:string,messages:any[],timeoutMs=MEMORY_TIMEOUT_MS): Promise<void> {
     this.checkpoints.clear(sessionID)
     const cached = this.memoryCache.get(sessionID)
     const matches = cached && (text===cached.text || text===`${cached.text}\n\n[Research memory is stale: storage did not answer in time.]`)
     let context
     if (matches && cached.checkpoint_snapshot) {
-      const read = await this.call('checkpoint_observed',sessionID,{snapshot:cached.checkpoint_snapshot,origin:'context'})
-      context = {base:read.base,snapshot:cached.checkpoint_snapshot}
+      const snapshot=cached.checkpoint_snapshot
+      const {source_sequence,...identity}=snapshot
+      const key=createHash('sha256').update(JSON.stringify([this.instanceID,identity])).digest('hex')
+      let receipt=this.receipts.get(sessionID)
+      if(receipt?.key!==key){
+        const operation=createHash('sha256').update(JSON.stringify([this.instanceID,snapshot])).digest('hex')
+        receipt={key,value:this.call('checkpoint_observed',sessionID,{snapshot,origin:'context'},`observed:${operation}`)}
+        this.receipts.set(sessionID,receipt)
+        receipt.value.catch(()=>{if(this.receipts.get(sessionID)===receipt)this.receipts.delete(sessionID)})
+      }
+      let timer:ReturnType<typeof setTimeout> | undefined
+      try{
+        const read=await Promise.race([receipt.value,new Promise<undefined>(resolve=>{timer=setTimeout(()=>resolve(undefined),Math.max(0,timeoutMs))})])
+        if(read) context={base:read.base,snapshot}
+      } catch {
+        // No acknowledged base is delivered; the next write must explicitly read.
+      } finally {clearTimeout(timer)}
     }
     this.checkpoints.request(sessionID,messages,matches ? cached.checkpoint_owner : undefined,context)
   }

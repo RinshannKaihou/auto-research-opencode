@@ -408,7 +408,7 @@ class WorkflowStore:
                     (node["node_id"],),
                 ).fetchone()
                 if prior:
-                    if prior["state"] == "finished" and prior["cwd"] or prior['state']=='cancelled' and (prior['error'] or '').startswith('wall_clock_budget:'):
+                    if (prior["state"] == "finished" and prior["cwd"]) or (prior['state']=='cancelled' and (prior['error'] or '').startswith('wall_clock_budget:')):
                         db.execute(
                             "UPDATE exploration_tasks SET state='queued',parent_session_id=?,"
                             "generation=?,error=NULL,updated_at=? WHERE task_id=?",

@@ -35,7 +35,6 @@ export interface StorageOptions {
   pythonModulePath?: string
   registryPath?: string
   timeoutMs?: number
-  observeAttempt?: (operationID: string, method: string, attempt: number) => void
   observeRequest?: (operationID: string, method: string,fields:Record<string,unknown>) => {attempt(n:number):void;response(value:any):void} | undefined
 }
 
@@ -65,11 +64,9 @@ export class StorageClient {
   private exits: number[] = []
   private unavailable: Error | null = null
   private closed = false
-  private readonly observeAttempt?: StorageOptions["observeAttempt"]
   private readonly observeRequest?: StorageOptions["observeRequest"]
 
   constructor(options: StorageOptions = {}) {
-    this.observeAttempt = options.observeAttempt
     this.observeRequest = options.observeRequest
     this.python = options.python ?? "python3"
     this.modulePath = options.pythonModulePath ?? pythonModulePath()
@@ -203,7 +200,6 @@ export class StorageClient {
         this.pump()
       }, this.timeoutMs)
       this.pending.set(entry.transportId, entry)
-      this.observeAttempt?.(entry.operationID, entry.method, entry.retries + 1)
       entry.observe?.attempt(entry.retries + 1)
       child.stdin.write(entry.line)
     }

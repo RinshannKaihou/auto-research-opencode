@@ -287,11 +287,14 @@ TOOLS.push(
     }),
   narrow('checkpoint','Save current work state using the base delivered to this model request. No current base: read research_query collection=checkpoint first. Return explicit base/next_base unchanged when needed. Project decision_refs optionally replace the project review scope; scope_reason is required for that change.',
     ['state','base'],['state'],{decision_refs:{type:'array',items:{type:'string'}},scope_reason:{type:'string'}}),
-  narrow('dispose','Append a disposition for exactly one change_id/affected_version. Completing review work does not resolve this risk; provide the scientific reason and evidence explicitly.',
-    ['change_id','affected_version','disposition_kind','reason','evidence_refs','replacement_ref'],['change_id','affected_version','disposition_kind','reason']),
+  narrow('dispose','Dispose exactly one change_id/affected_version or one review_event/affected_version challenge. A handled challenge requires evidence_refs; revised requires replacement_ref. Task completion, scope exit and a new review never dispose a challenge.',
+    ['change_id','affected_version','disposition_kind','reason','evidence_refs','replacement_ref'],['affected_version','disposition_kind','reason'],{review_event:{type:'number'}}),
   narrow('narrow_scope','Narrow a previously unknown affected scope to explicit fixed versions with a reason. This does not itself resolve scientific risk.',
     ['change_id','affected_scope','reason'],['change_id','affected_scope','reason']),
 )
+TOOLS.push({name:'research_review_scope',roles:['main'],method:'review_scope_set',writes:true,
+  description:'Explicitly replace the project synthesis review scope with fixed adopted references and a reason. Empty refs clears the scope; it does not dispose scientific risks. No checkpoint is needed.',
+  parameters:{refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true}},fields:same})
 
 /** One specialist task; the names follow the DSH plugin's research_delegate. */
 const SPECIALIST_TASK: Record<string, Spec> = {

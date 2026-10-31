@@ -2,6 +2,8 @@
 
 日期：2026-10-31（Asia/Shanghai）。状态：R2 的 S0–S7 已开发完成并完成内部验证，统一验收包已齐备，尚未安装到共享 OpenCode 或发布。六项运行时能力、M2 调用观测和 M3 持久预算均已接入；结果见[实施记录](./evidence/r2-runtime/README.md)。下文保留原设计与验收判据，实际接口和边界以实施记录及源码为准。M4 真实模型效果实验另行开展。
 
+2026-11-01 首轮审阅修订：challenge 按事件保留并显式处置，scope 声明与 checkpoint 解耦，观测归属并入业务响应，基线登记共用上下文等待期限；节点源码／配置真实变化可计作开发推进。具体处理与 push back 见[审阅处理记录](./evidence/r2-runtime/review-response.md)。
+
 代码基线：`main` / `0c7b6d5d4d0dba21910c90f407bbb6d5b7fe17fe`，v0.1.1，schema 10；R1 已随 PR #7 合并。依据为用户提供的本地资料 `Remediation implementation plan auto-research-opencode.md` 第 4、7、9 节，技术原则服从 `Remediation roadmap auto-research-opencode.md`；这些规划原稿不随本次 PR 提交。旧计划中的 `0476d81` 是历史调研基线，不作为本次实现基线。
 
 ## 1. 本次交付
@@ -111,7 +113,7 @@ scope_owner 使用非空规范值 `project` 或 `node:<id>`；target_kind 为 kn
 项目范围冻结为 `project.config.r2_review_scope={generation, refs}`，refs 为明确的 fixed knowledge/publication/item 引用；复用配置存储，不新增范围表。只有以下写入口可以变更：
 
 - project owner 的 `research_checkpoint` 可选传 `decision_refs` 和 `scope_reason`，在 checkpoint CAS 成功的同一事务替换 refs。省略表示保留，`[]` 表示明确退出原集合；变更时 scope_reason 必填。node checkpoint 不接受该项目范围字段。
-- host-only `review_scope_set(refs, reason)` 使用同一内部函数；`review_promote` 提升项目义务时将精确目标加入 refs，并注明 promotion 来源。替换 scope 时保留前后集合、actor、reason 与事件上界。
+- `review_scope_set(refs, reason)` 使用同一内部函数，现通过 main 专用 `research_review_scope` 向协调者开放声明入口，不依赖 checkpoint；`review_promote`／例外控制仍为 host-only。提升项目义务时将精确目标加入 refs，并注明 promotion 来源。替换 scope 时保留前后集合、actor、reason 与事件上界。
 - typed support 祖先及已声明材料的 pinned knowledge 从 refs 派生，不把所有 project-visible 知识当项目核心依据。scope 替换/当前 generation 结束触发退出；新 generation 从空集合开始，不能偷用上一代 final_ref。
 
 该集合只声明需要关注/审阅的项目依据，不充当 R3 最终报告选择或结项证明。不提供 refs 时项目范围保持 unknown，不自动 out_of_scope；显式空集合则可确认原显式范围已退出，仍不消除全局风险。旧 conclusion.final_ref 仅用于历史读取，不拿来创建当前 generation 的义务。这里的 checkpoint 可选写字段与 query/context 的同名只读选择参数有意区分。
@@ -314,7 +316,7 @@ S0 的可重复基线是在本基线提交的临时副本中运行相同确定�
 - token/cost：已有真实观察可用于“达到已观测额度后停止后续调用”；有已知请求上限时可预留。无可靠输入/输出/费率上界时不得称为不可超支的全局硬预算；缺使用量显式 unknown，不按 0 发放额度。
 - 预算修改是宿主显式配置操作，记录原值、新值、actor、reason；到限不能靠普通 /research resume 清零。旧运行迁移为 cold，不自动重新调度或补造历史消耗。
 
-增加 host-only `runtime_budget_set(limits, reason)`，复用项目配置写入口；限制值只能为正整数或显式 disabled，generation 启动在同一事务固定 started_at/deadline_at。只读查询返回 configured/disabled/unknown 和执行范围，不将缺 key 解释成已有硬门。到限后的提额保留已用额，更新限额不能创建新 generation 洗掉消耗。
+增加 host-only `runtime_budget_set(limits, reason)`，复用项目配置写入口；限制值只能为正整数或显式 disabled，cost 另允许正小数，generation 启动在同一事务固定 started_at/deadline_at。只读查询返回 configured/disabled/unknown 和执行范围，不将缺 key 解释成已有硬门。到限后的提额保留已用额，更新限额不能创建新 generation 洗掉消耗。
 
 预算参数复用宿主项目配置/已有运行状态，不增加模型每次调用的预算字段。首批 R2 测试项目必须显式设置三个有限上限；契约测试使用 5 turns / 3 nodes / 60 seconds 的小额度。**本次不凭空改变存量项目默认运行时长；面向全部新项目的默认额度随试点数据另定。** 未配置的额度显示 disabled，不能显示“硬预算已启用”。
 

@@ -40,53 +40,53 @@
     {
       "method": "open",
       "outcome": "succeeded",
-      "ms": 16.210874993703328
+      "ms": 16.42262499080971
     },
     {
       "method": "focus",
       "outcome": "succeeded",
-      "ms": 2.1248330012895167
+      "ms": 2.1313749894034117
     },
     {
       "method": "memory_write",
       "outcome": "succeeded",
-      "ms": 3.627792000770569
+      "ms": 3.418541993596591
     },
     {
       "method": "memory_write",
       "outcome": "succeeded",
-      "ms": 3.9974170067580417
+      "ms": 4.094874995644204
     },
     {
       "method": "memory_write",
       "outcome": "succeeded",
-      "ms": 3.763375003472902
+      "ms": 4.103792001842521
     },
     {
       "method": "memory_context",
       "outcome": "succeeded",
-      "ms": 3.115250001428649
+      "ms": 3.22079099714756
     },
     {
       "method": "checkpoint_observed",
       "outcome": "succeeded",
-      "ms": 2.0247089996701106
+      "ms": 1.9880000036209822
     },
     {
       "method": "memory_write",
       "outcome": "succeeded",
-      "ms": 2.8604169929167256
+      "ms": 2.7388329908717424
     },
     {
       "method": "memory_write",
       "outcome": "checkpoint_conflict",
-      "ms": 1.9286250026198104
+      "ms": 1.6837090079206973
     }
   ],
   "stale_write": "checkpoint_conflict",
   "model_input_fields": 13,
   "host_calls_count": 9,
-  "host_call_median_ms": 3.115250001428649,
+  "host_call_median_ms": 3.22079099714756,
   "model_usage": "not_run",
   "research_quality": "not_evaluated"
 }

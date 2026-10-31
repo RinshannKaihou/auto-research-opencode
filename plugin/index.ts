@@ -54,6 +54,11 @@ export default Plugin.define({
       ctx.location.directory,
       () => existsSync(storage.registryPath),
       (root) => emitChanged(root),
+      observations.instanceID,
+      session=>{
+        nativeObservations.forget(session)
+        for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
+      },
     )
     const host: SessionHost = {
       create: async (title, directory, model, permissions) =>
@@ -176,10 +181,6 @@ export default Plugin.define({
             const execute = async () => {
               const args = validateArgs(input, tool.parameters)
               await research.ensureContract()
-              if (root && research.inScope(root)) {
-                const context = await research.call('invocation_context',call.sessionID)
-                observations.append(root,{phase:'binding',invocation_id,context})
-              }
               const value = await runTool(tool, call, args)
               const applied = typeof value==='object' && value!==null && 'applied' in value ? value.applied as Record<string,any> : undefined
               if (root && research.inScope(root)) observations.append(root,{phase:'expansion',invocation_id,
@@ -212,10 +213,11 @@ export default Plugin.define({
           // OpenCode's prompt names the working directory and carries AGENTS.md; a blind reviewer gets neither.
           request.system.splice(0, request.system.length, { type: "text", text: BLIND_SYSTEM })
         }
+        const deadline=performance.now()+2000
         const text = await research.memory(request.sessionID)
         if (text) {
           request.system.push({ type: "text", text })
-          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages)
+          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages,deadline-performance.now())
         }
       } catch {
         // Research state must never break a model request.
@@ -247,23 +249,33 @@ export default Plugin.define({
         research.notifyChanged(root)
       }
     }
-    let checkingBudget = false
-    const budgetTimer = setInterval(async () => {
-      if (checkingBudget) return
-      checkingBudget = true
-      try {
-        for (const root of research.roots()) {
-          const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
-          if (!main) continue
-          const budget = await research.call('runtime_budget_status', main)
-          if (budget.expired && budget.run_state === 'running') {
-            await enforceDeadline(main)
-          }
+    const budgetTimers=new Map<string,ReturnType<typeof setTimeout>>()
+    const refreshingBudgets=new Set<string>()
+    const dirtyBudgets=new Set<string>()
+    async function refreshBudget(root:string):Promise<void>{
+      if(refreshingBudgets.has(root)){dirtyBudgets.add(root);return}
+      refreshingBudgets.add(root)
+      try{
+        const main=research.sessionsIn(root).find(sid=>research.roleOf(sid)==='main')
+        clearTimeout(budgetTimers.get(root));budgetTimers.delete(root)
+        if(!main || !listening)return
+        const deadline=await research.call('runtime_deadline',main)
+        if(listening && deadline.state==='running' && deadline.deadline_at){
+          const delay=Math.max(0,Date.parse(deadline.deadline_at)-Date.now())
+          budgetTimers.set(root,setTimeout(()=>{
+            budgetTimers.delete(root)
+            void (delay>2147483647 ? refreshBudget(root) : enforceDeadline(main)).catch(error=>{
+              observations.append(root,{phase:'coverage_gap',source:'deadline_monitor',error_code:error.code ?? 'storage_unavailable'})
+            })
+          },Math.min(delay,2147483647)))
         }
-      } catch (error) {
-        process.stderr.write(`Research budget monitor: ${error instanceof Error ? error.message : String(error)}\n`)
-      } finally { checkingBudget = false }
-    }, 1000)
+      }catch(error){
+        observations.append(root,{phase:'coverage_gap',source:'deadline_monitor',error_code:(error as any).code ?? 'storage_unavailable'})
+      }finally{
+        refreshingBudgets.delete(root)
+        if(dirtyBudgets.delete(root) && listening)void refreshBudget(root)
+      }
+    }
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe()) {
@@ -271,11 +283,11 @@ export default Plugin.define({
           const { type, data } = event as { type: string; data?: { sessionID?: string } }
           const sessionID = data?.sessionID
           if (!sessionID || !research.isAssociated(sessionID)) continue
-          await nativeObservations.event(event)
           if (type === "session.execution.started") engine.started(sessionID)
           else if (type === "session.execution.succeeded") void engine.ended(sessionID, "succeeded",event.id)
           else if (type === "session.execution.failed") void engine.ended(sessionID, "failed",event.id)
           else if (type === "session.execution.interrupted") void engine.ended(sessionID, "interrupted",event.id)
+          nativeObservations.event(event)
         }
       } catch {
         // The stream ends when the plugin unloads.
@@ -313,6 +325,7 @@ export default Plugin.define({
               const names:Record<string,string> = {turns:'max_session_turns',nodes:'max_total_nodes',seconds:'max_wall_seconds',tokens:'max_tokens',cost:'max_cost'}
               if (!names[args.limit]) throw new Error('未知预算字段')
               await research.call('runtime_budget_set',sid,{limits:{[names[args.limit]!]:args.value==='off'?null:Number(args.value)},reason:args.reason})
+              research.notifyChanged(research.rootOf(sid)!)
             }
             const budget = await research.call('runtime_budget_status',sid)
             return {message:`自主调度预算（token/cost 为已观测停发阈值，外部进程未计量）\n${JSON.stringify(budget,null,2)}`}
@@ -375,11 +388,13 @@ export default Plugin.define({
     })
     emitChanged = (root) => {
       void registration.events.emit("changed", { root }).catch(() => {})
+      void refreshBudget(root).catch(error=>observations.append(root,{phase:'coverage_gap',source:'deadline_monitor',error_code:error.code ?? 'storage_unavailable'}))
     }
+    void research.ready().then(()=>Promise.all(research.roots().map(root=>refreshBudget(root))))
 
     return () => {
       listening = false
-      clearInterval(budgetTimer)
+      for(const timer of budgetTimers.values())clearTimeout(timer)
       storage.close()
     }
   },

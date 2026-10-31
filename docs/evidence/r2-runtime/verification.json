@@ -1,11 +1,14 @@
 {
-  "date": "2026-10-31",
+  "date": "2026-11-01",
   "base_commit": "0c7b6d5",
-  "python_passed": 545,
-  "bun_passed": 79,
+  "python_passed": 571,
+  "bun_passed": 83,
   "independent_package_migration_passed": true,
   "compatible_project_copies": 8,
   "bundled_python_matches_source": true,
   "m4_real_models": "not_run",
-  "shared_opencode_installation": "not_changed"
+  "shared_opencode_installation": "not_changed",
+  "reviewed_commit": "4b46bce8770e433c9a553960766a154b7ea58dbb",
+  "review_regressions_passed": 26,
+  "ci": "not_configured"
 }

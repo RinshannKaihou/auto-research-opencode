@@ -40,13 +40,14 @@ def candidate(db, todo_id, kind, ref, node_id, at):
                 'exact' if kind == 'knowledge-revision' or pinned else 'unknown', at))
 
 
-def closure(store, db, refs):
+def closure(store, db, refs, *, validate=False):
     result, queue = set(), list(refs)
     while queue:
         ref = queue.pop()
         if ref in result:
             continue
-        store._require_ref(db, ref)
+        if validate:
+            store._require_ref(db, ref)
         result.add(ref)
         parsed = frozen_refs.parse(ref)
         if parsed.get('publication_id'):
@@ -54,7 +55,8 @@ def closure(store, db, refs):
             if parsed.get('item_id'):
                 row = db.execute('SELECT knowledge_refs FROM publication_items WHERE publication_id=? AND item_id=?',
                                  (pid, parsed['item_id'])).fetchone()
-                queue.extend(json.loads(row[0]))
+                if row:
+                    queue.extend(json.loads(row[0]))
             else:
                 queue.extend(f'knowledge/{r[0]}@{r[1]}' for r in db.execute(
                     'SELECT knowledge_id,revision FROM publication_knowledge WHERE publication_id=?', (pid,)))
@@ -68,7 +70,7 @@ def set_scope(store, db, refs, reason, operation, actor):
         raise ValidationError('decision_refs must be fixed knowledge/publication/item references')
     if not isinstance(reason, str) or not reason.strip():
         raise ValidationError('scope_reason is required when changing decision_refs')
-    closure(store, db, refs)
+    closure(store, db, refs, validate=True)
     project = store._project(db)
     config = project['config']
     before = config.get('r2_review_scope')
@@ -106,7 +108,7 @@ def reconcile(store, db, operation):
     gen = generation(db)
     scopes = {}
     for row in db.execute('''SELECT DISTINCT a.node_id,a.attempt_id FROM attempts a
-        JOIN associations s USING(association_id) JOIN workflow_sessions w ON w.session_id=s.session_id
+        JOIN associations s USING(association_id) JOIN workflow_sessions w ON w.session_id=s.session_id AND w.host_id=s.host_id
         WHERE a.ended_at IS NULL AND a.node_id IS NOT NULL AND w.detached=0'''):
         nid = row['node_id']
         node = db.execute('SELECT inputs FROM nodes WHERE node_id=?', (nid,)).fetchone()
@@ -173,6 +175,18 @@ def read_row(db, row):
     return value
 
 
+def unresolved_challenges(db):
+    return list(db.execute('''SELECT o.target_ref,o.obligation_id,o.generation,e.event_id,e.evidence_refs
+        FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id)
+        WHERE e.action IN ('completed','report_partial')
+        AND json_extract(e.scope_snapshot,'$.result')='challenges'
+        AND COALESCE((SELECT json_extract(d.scope_snapshot,'$.kind')
+            FROM review_lifecycle_events d WHERE d.action='challenge_disposed'
+            AND json_extract(d.scope_snapshot,'$.review_event')=e.event_id
+            ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved'
+        ORDER BY e.event_id'''))
+
+
 def summary(db, node_id=None):
     owner = 'node:' + node_id if node_id else 'project'
     if db.execute('PRAGMA user_version').fetchone()[0]<11:
@@ -189,6 +203,45 @@ def summary(db, node_id=None):
 
 
 class ReviewStore:
+    def dispose_review_challenge(self, fields, request_id, actor):
+        from .epistemic import DISPOSITION_KINDS
+        def work(db):
+            if type(fields['review_event']) is not int:
+                raise ValidationError('review_event must be an integer')
+            review = db.execute('''SELECT o.*,e.scope_snapshot FROM review_lifecycle_events e
+                JOIN review_obligations o USING(obligation_id) WHERE e.event_id=?
+                AND e.action IN ('completed','report_partial')''',(fields['review_event'],)).fetchone()
+            if not review or json.loads(review['scope_snapshot']).get('result')!='challenges':
+                raise ValidationError('review_event must identify a challenge report')
+            if fields['affected_version']!=review['target_ref'] or fields.get('change_id'):
+                raise ValidationError('Challenge disposition must match the exact review target')
+            role=db.execute('SELECT role,node_id FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
+                            (actor['host_id'],actor['session_id'])).fetchone()
+            if not role or role['role'] not in {'main','node_core'} or (
+                    role['role']=='node_core' and (not role['node_id'] or review['scope_owner']!='node:'+role['node_id'])):
+                raise ValidationError('Challenge belongs to another work owner')
+            kind=fields['disposition_kind']
+            if kind not in DISPOSITION_KINDS or not isinstance(fields.get('reason'),str) or not fields['reason'].strip():
+                raise ValidationError('Explicit challenge disposition kind and reason required')
+            refs=fields.get('evidence_refs',[])
+            if not isinstance(refs,list) or not all(isinstance(ref,str) for ref in refs):
+                raise ValidationError('evidence_refs must be references')
+            if kind!='unresolved' and not refs:
+                raise ValidationError('Handling a challenge requires evidence_refs')
+            for ref in refs:
+                self._require_ref(db,ref)
+            replacement=fields.get('replacement_ref')
+            if kind=='revised':
+                if not replacement or replacement==review['target_ref']:
+                    raise ValidationError('Revised challenge requires a different replacement_ref')
+                self._require_ref(db,replacement)
+            scope=dict(review_event=fields['review_event'],kind=kind,replacement_ref=replacement)
+            event(db,review['obligation_id'],'challenge_disposed',fields['reason'],refs,scope,request_id,actor)
+            db.execute('UPDATE review_obligations SET updated_at=? WHERE obligation_id=?',(now(),review['obligation_id']))
+            self._event(db,'review.challenge_disposed',{**scope,'target_ref':review['target_ref'],'actor':actor,'evidence_refs':refs})
+            return {**scope,'target_ref':review['target_ref'],'risk_status':'unresolved' if kind=='unresolved' else 'handled'}
+        return self._mutate('review.challenge_dispose',fields,request_id,work)
+
     def review_scope_set(self, host_id, session_id, refs, reason, request_id):
         payload = dict(host_id=host_id, session_id=session_id, refs=refs, reason=reason)
         return self._mutate('review.scope', payload, request_id, lambda db:
@@ -197,7 +250,7 @@ class ReviewStore:
     def review_promote(self, fields, request_id, actor):
         def work(db):
             target, owner = fields['target_ref'], fields['scope_owner']
-            closure(self, db, [target])
+            closure(self, db, [target], validate=True)
             refs = fields.get('evidence_refs',[])
             for ref in refs:
                 self._require_ref(db,ref)
@@ -239,7 +292,7 @@ class ReviewStore:
                 raise ValidationError('Review must match the exact current obligation key')
             role = db.execute('SELECT role,node_id FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
                               (actor['host_id'], actor['session_id'])).fetchone()
-            if not role or role['role'] not in {'main','node_core'} or (role['role']=='node_core' and row['scope_owner'] != 'node:' + role['node_id']):
+            if not role or role['role'] not in {'main','node_core'} or (role['role']=='node_core' and (not role['node_id'] or row['scope_owner'] != 'node:' + role['node_id'])):
                 raise ValidationError('Review belongs to another work owner')
             report = fields['source_ref']
             if report == row['target_ref'] or not frozen_refs.is_frozen(report):
@@ -349,6 +402,8 @@ class ReviewStore:
             if cursor and cursor['fingerprint'] != fingerprint:
                 raise ValidationError('read_view_changed: review collection changed; refresh')
             offset = cursor['offset'] if cursor else 0
+            if type(offset) is not int or offset < 0:
+                raise ValidationError('Review cursor offset must be a nonnegative integer')
             limit = max(1,min(int(limit),200))
             selected = rows[offset:offset+limit]
             items = []

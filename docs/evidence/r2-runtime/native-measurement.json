@@ -5,8 +5,8 @@
   },
   "rejections": {},
   "duration_ms": {
-    "median": 5.448666000000003,
-    "p90": 5.448666000000003
+    "median": 6.1684999999999945,
+    "p90": 6.1684999999999945
   },
   "input_fields": {
     "total": 1
@@ -14,14 +14,14 @@
   "input_chars": {
     "total": 22
   },
-  "transport_attempts": 2,
+  "transport_attempts": 1,
   "transport_retries": 0,
   "provider_retry_events": 0,
   "provider_retry_decisions": 0,
   "replayed": 0,
   "deduplicated": 0,
-  "wire_host_metadata_fields": 7,
-  "wire_host_metadata_samples": 2,
+  "wire_host_metadata_fields": 4,
+  "wire_host_metadata_samples": 1,
   "applied_fields": 0,
   "external_executions": 1,
   "model_usage": {
@@ -39,7 +39,7 @@
     "invalid_lines": 0,
     "binding_unknown": 0,
     "explicit_gaps": 0,
-    "replay_unknown": 0,
+    "replay_unknown": 1,
     "model_usage": "observed_subset",
     "transport": "plugin_dispatch_chain",
     "scope": "available log files; unlogged I/O failure cannot be ruled out"

@@ -51,7 +51,7 @@ export function RuntimeDetail(props: { context: Context; summary: any; session: 
       </text>
       <For each={runtimeNotes(props.summary)}>{(note) => <text fg={colors.muted}>{note}</text>}</For>
       <Show when={props.summary?.runtime_budget?.available}>
-        <text fg={colors.muted}>{`自主调度预算 · 已预留 ${props.summary.runtime_budget.turns} 轮 / ${props.summary.runtime_budget.limits.max_session_turns ?? '未配置'} · 交付未核实 ${props.summary.runtime_budget.unconfirmed_reservations} · 节点 ${props.summary.runtime_budget.total_nodes} / ${props.summary.runtime_budget.limits.max_total_nodes ?? '未配置'}`}</text>
+        <text fg={colors.muted}>{`自主调度预算 · 主会话当前工作对象已预留 ${props.summary.runtime_budget.turns} 轮 / ${props.summary.runtime_budget.limits.max_session_turns ?? '未配置'} · 交付未核实 ${props.summary.runtime_budget.unconfirmed_reservations} · 节点 ${props.summary.runtime_budget.total_nodes} / ${props.summary.runtime_budget.limits.max_total_nodes ?? '未配置'}`}</text>
         <text fg={colors.muted}>{`截止 ${props.summary.runtime_budget.deadline_at ?? '未配置'} · token/cost 仅覆盖已观测调用；外部进程未计量`}</text>
         <text fg={colors.muted}>{`已观测 token ${props.summary.runtime_budget.tokens_observed ?? '未知'} / ${props.summary.runtime_budget.limits.max_tokens ?? '未配置'} · cost ${props.summary.runtime_budget.cost_observed ?? '未知'} / ${props.summary.runtime_budget.limits.max_cost ?? '未配置'}`}</text>
       </Show>

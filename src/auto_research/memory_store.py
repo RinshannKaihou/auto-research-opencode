@@ -106,8 +106,8 @@ OPENCODE_AUTO_ROLES = {
         "else is useful. Full experiments belong to node executors, not to you. When node results "
         "arrive, synthesize them: record project-level knowledge with evidence, revise or retract "
         "earlier conclusions, and propose follow-up nodes where evidence is missing. When adopting "
-        "materials for current synthesis, set exact decision_refs and scope_reason on the project "
-        "research_checkpoint; omission keeps the prior review scope, [] explicitly clears it. "
+        "materials for current synthesis, use research_review_scope with exact refs and reason; "
+        "[] explicitly clears the scope. This does not need a checkpoint. "
         "Read review_obligations and link exact reports using research_relate label=reviews; review "
         "task completion does not resolve scientific risk. When the goal is "
         "answered, or further work cannot change the conclusion, publish a final report with "
@@ -1823,11 +1823,21 @@ class MemoryStore:
             return render_context(self, db, blocks, node_id, max_chars,
                                   decision_refs=read_refs,
                                   final_ref=final_ref)
+        from .review_lifecycle import unresolved_challenges
+        challenges=unresolved_challenges(db) if db.execute('PRAGMA user_version').fetchone()[0]>=11 else []
+        if challenges:
+            blocks.insert(0,('review_challenges',{'total':len(challenges),
+                'items':[{'target':r['target_ref'],'review_event':r['event_id'],'review_ref':json.loads(r['evidence_refs'])[0]} for r in challenges[:4]],
+                'expand':{'collection':'critical_now','kind':'review_challenge'}}))
         rendered: list[str] = []
         omitted: list[str] = []
         used = 0
         included_refs = []
         max_chars = max(500, min(max_chars, 12000))
+        checkpoint_blocks=[(name,value) for name,value in blocks if name in {'checkpoint_recovery','checkpoint'}]
+        blocks=[(name,value) for name,value in blocks if name not in {'checkpoint_recovery','checkpoint'}]
+        position=next(i for i,(name,_) in enumerate(blocks) if name=='knowledge')
+        blocks[position:position]=checkpoint_blocks
         for name, value in blocks:
             if (
                 value is None
@@ -1858,6 +1868,8 @@ class MemoryStore:
                     "knowledge": 4000,
                     "questions": 1600 if coordinator else 800,
                     "frozen_context": 1600,
+                    "checkpoint": max_chars,
+                    "review_challenges": 1600,
                 }.get(name, 1000),
             )
             if allowance < 100:
@@ -1929,6 +1941,13 @@ class MemoryStore:
                     if allowance - len(_encoded(entries)) < 500:
                         break
                 value = {"items": entries, "omitted_count": len(knowledge) - len(entries)}
+            elif name=='review_challenges':
+                while len(_encoded(value))>allowance and value['items']:
+                    value['items'].pop()
+            elif name in {'checkpoint','checkpoint_recovery'}:
+                if len(_encoded(value))>allowance:
+                    omitted.append(name)
+                    continue
             else:
                 value = bounded_value(value, allowance)
             text = f"## {name}\n{_encoded(value)}"

@@ -35,10 +35,13 @@
 | editorial／correct_previous + 显式来源保留 | preset 范围确定；返回检查与 query 一致；空／unlinked 来源不升级 |
 | 普通 publication／finish | 增加候选，不把全部历史 pending 当阻断 |
 | 主协调 checkpoint 声明 decision_refs／节点引用证据 | 形成当前精确版本／owner／change 的义务；只读筛选不改变范围 |
+| 主协调 research_review_scope 声明 refs／reason | 不依赖 checkpoint 基线即可更新采用范围；节点和专家不能代主协调设置 |
 | 独立非空报告精确 reviews，complete=true，result=challenges | 对应任务完成，coverage 尚未评估，挑战与未处置风险仍可见 |
+| complete=false 的 challenge；随后节点结束／结项／新 generation | challenge 保留；用 research_dispose 的精确 review_event 和证据另行处置，不改写报告历史 |
 | 缩小范围再恢复、reopen 后提交旧报告 | out_of_scope 保留记录；重入恢复合理状态；旧报告不能抵消重开 |
 | grounded_in／motivated_by；同用途 consume 两次 | 知识关系追加新版本；只有支撑传播；同用途去重而不同用途保留 |
 | 连续 note／checkpoint／相同处置，或纯文案修改 | 不算有意义新进展；连续无进展会暂停 |
+| 节点源码／实验配置真实改变后继续；随后仅 touch 或改文书 | 实际源码变化可算开发推进；无内容变化、Markdown 文书不刷新计数 |
 | 达轮次／节点／时限、再 resume／重启 | 不越限继续自主调度，不清账；显式提额并恢复后才继续 |
 | 到时仍在运行的节点／专家 | 请求中断，排队取消，退出未证实保持未核实；不声称外部计算已退出 |
 

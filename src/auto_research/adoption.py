@@ -111,6 +111,8 @@ class AdoptionStore:
             if cursor and cursor['fingerprint']!=fingerprint:
                 raise ValidationError('read_view_changed: adoption projection changed')
             offset=cursor['offset'] if cursor else 0
+            if type(offset) is not int or offset<0:
+                raise ValidationError('Adoption cursor offset must be a nonnegative integer')
             limit=max(1,min(int(limit),200))
             return {'items':items[offset:offset+limit],'total':len(items),'cursor':
                 dict(project_id=project,node_id=node_id,offset=offset+limit,fingerprint=fingerprint)

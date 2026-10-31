@@ -1,5 +1,6 @@
 """R2 additive storage. Historical tasks, requests and attribution stay intact."""
 from pathlib import Path
+from contextlib import closing
 import sqlite3
 from uuid import uuid4
 
@@ -62,7 +63,7 @@ def ensure_schema11(db):
 
 
 def migrate_schema11(path: Path):
-    with sqlite3.connect(path, isolation_level=None) as db:
+    with closing(sqlite3.connect(path, isolation_level=None)) as db:
         db.execute("BEGIN IMMEDIATE")
         try:
             version = db.execute("PRAGMA user_version").fetchone()[0]
@@ -80,12 +81,12 @@ def migrate_schema11(path: Path):
             try:
                 # The writer lock excludes new commits; a separate reader can
                 # back up the committed WAL snapshot without backing up this transaction.
-                with sqlite3.connect(path) as source, sqlite3.connect(temporary) as target:
+                with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(temporary)) as target:
                     source.backup(target)
                 temporary.replace(backup)
             finally:
                 temporary.unlink(missing_ok=True)
-            with sqlite3.connect(backup) as saved:
+            with closing(sqlite3.connect(backup)) as saved:
                 if (saved.execute("PRAGMA user_version").fetchone()[0] != 10
                         or saved.execute("PRAGMA integrity_check").fetchone()[0] != "ok"):
                     raise ValidationError("Invalid schema 10 backup")

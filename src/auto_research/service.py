@@ -710,6 +710,7 @@ class NativeService:
     def handle(self, request: dict) -> dict:
         transport_id = request.get("transport_id", request.get("request_id"))
         store = None
+        invocation = None
         if not isinstance(transport_id, str) or not transport_id or len(transport_id) > 128:
             raise ValueError("transport_id must be a nonempty string of at most 128 characters")
         method = request.get("method")
@@ -821,11 +822,13 @@ class NativeService:
             value["project_root"] = str(root)
         else:
             store, root, host_id, session_id = self._store(request)
+            store.last_replayed = None
             with store._connection() as db:
                 row = db.execute(
                     "SELECT * FROM workflow_sessions WHERE session_id=?", (session_id,)
                 ).fetchone()
                 role = dict(row) if row else None
+                invocation = store._invocation_context(db,host_id,session_id)
             with store._connection() as db:
                 specialist_row = db.execute("SELECT t.* FROM specialist_tasks t JOIN specialist_bindings b USING(task_id) WHERE b.session_id=?", (session_id,)).fetchone()
             if specialist_row and specialist_row["context_mode"] == "blind" and method in {"query", "status", "history_page", "guidance_status", "workbench_summary", "workbench_page", "knowledge_page", "presentation_get", "reference_content", "reference_entries"}:
@@ -840,6 +843,7 @@ class NativeService:
                 "finish",
                 "close_node",
                 "memory_write",
+                "review_scope_set",
                 "specialist_create",
                 "consume",
             }
@@ -1148,6 +1152,8 @@ class NativeService:
                 value = store.runtime_budget_set(host_id,session_id,request['limits'],request['reason'],self._operation(request))
             elif method == 'runtime_budget_status':
                 value = store.runtime_budget_status(host_id,session_id)
+            elif method == 'runtime_deadline':
+                value = store.runtime_deadline()
             elif method == 'runtime_reserve':
                 value = store.runtime_reserve(host_id,session_id,self._operation(request))
             elif method == 'runtime_budget_stop':
@@ -1189,7 +1195,11 @@ class NativeService:
                     value = store.checkpoint(fields, self._operation(request), execution_identity=(host_id, session_id),
                         receipt=request.get('checkpoint_base'), plugin_instance_id=request.get('plugin_instance_id'))
                 elif action == "dispose":
-                    value = store.dispose_impact(fields, self._operation(request))
+                    if 'review_event' in fields:
+                        value = store.dispose_review_challenge(fields,self._operation(request),
+                            {'host_id':host_id,'session_id':session_id})
+                    else:
+                        value = store.dispose_impact(fields, self._operation(request))
                 elif action == "narrow_scope":
                     value = store.narrow_impact_scope(fields, self._operation(request))
                 else:
@@ -1568,7 +1578,8 @@ class NativeService:
             else:
                 raise ValueError(f"Unknown native research method: {method}")
         return {"request_id": transport_id, "ok": True, "value": redact(value),
-                'replayed': store.last_replayed if store else None}
+                'replayed': store.last_replayed if store else None,
+                **({'invocation_context':invocation} if invocation else {})}
 
 
 def serve(service, source, output):

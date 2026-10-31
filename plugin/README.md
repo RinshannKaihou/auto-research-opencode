@@ -148,7 +148,7 @@ OpenCode 每结束一轮都会发出一个事件，引擎读取研究记录后�
 
 checkpoint 的 base 绑定 host、session、association、attempt、owner、generation 和插件实例。`checkpoint_base_required` 表示需要重新读取；`checkpoint_conflict` 表示当前原始 head 已变，应重新读并综合。响应提供 next_base，但只有该结果进入后续模型请求，才成为自动写入基线。相同 operation ID 仍返回原响应；不能改 payload 后沿用该 ID。连接旧 Python 包时明确报契约不兼容，更新代码后先执行 `bun run sync:python`。
 
-发布、结束、修订和 correction note 只生成候选。活跃节点的输入、真实支撑、依赖和 consume 派生当前审阅范围；主协调在 checkpoint 中显式填写 `decision_refs` 和 `scope_reason` 声明综合采用范围。省略表示保留，空列表表示明确清空，后续查询传入的 decision_refs 只影响该次只读查看。
+发布、结束、修订和 correction note 只生成候选。活跃节点的输入、真实支撑、依赖和 consume 派生当前审阅范围；主协调直接调用 `research_review_scope(refs, reason)` 声明综合采用范围，不依赖 checkpoint。checkpoint 的 `decision_refs`／`scope_reason` 兼容入口仍保留：省略表示保留，空列表表示明确清空。后续查询传入的 decision_refs 只影响该次只读查看。
 
 `research_query` 的 `review_candidates`／`review_obligations`／`adoptions` 支持分页。义务按 generation、owner、精确目标版本及 change_id 区分，使用 `research_relate` 链接报告：
 
@@ -166,6 +166,10 @@ checkpoint 的 base 绑定 host、session、association、attempt、owner、gene
 
 报告必须独立、非空、可解析，目标与义务精确相符。完整 supports／challenges／inconclusive 都可完成任务，覆盖保持“尚未评估”；challenges 继续显示在当前风险中，风险处置另行登记。离开范围标为 out_of_scope，保留历史和风险；宿主可审计地 waive、reopen、accept_previous，模型没有这些管理入口。重开之后旧报告不能自行再次关单。
 
+完整和部分报告中的 challenge 均独立保留，节点结束、停止／结项、范围退出或新 generation 不会清除。处理某个 challenge 使用 `research_dispose`，提供风险条目返回的 `review_event`、精确 `affected_version`、`disposition_kind`、reason 和 evidence_refs；不要同时提供 change_id。`unresolved` 保留风险，其余处置必须有证据，`revised` 还须提供不同的 replacement_ref。该记录只表明显式处理了这一挑战，不证明科学覆盖通过；历史报告与处置仍可查询。普通知识影响仍按 change_id／affected_version 处置。
+
+同一快照在一个插件实例内复用回执，query 回执按工具调用稳定去重。上下文与回执登记共享 2 秒等待期限，迟到回执只在后续完整交付同一快照时可用，不会回填旧请求。预算内优先保留完整 checkpoint，放不下则整个省略并要求显式读，不为截断 state 签发 base。
+
 typed relate 的知识关系追加新 revision，须明确 revision 的变更／范围字段；`grounded_in` 是支撑，`motivated_by` 不传播失效。节点关系以 source 为后继，target 为前驱节点或其发布材料；depends_on 明确指定采用材料，不允许循环或修改已派发节点。提案输入、原材料 pin 和历史知识版本不被改写。引用可派生采用，同 attempt／ref／relation／用途的显式 consume 去重，不同用途仍保留。
 
 ## 自主调度预算与观测
@@ -179,6 +183,12 @@ typed relate 的知识关系追加新 revision，须明确 revision 的变更／
 ```
 
 未配置的维度显示未配置；没有隐藏默认科研预算。turns 按同一 generation／工作 owner 的受管自动请求预留，含节点与专家 kickoff，交付未核实的预留不退还；nodes 限制项目累计节点数；seconds 是包含暂停和重启时间的持久截止时间。resume 不清零，提额须显式给原因。到时取消排队任务并请求中断，原生结束事件到达前保留未核实状态，不把它当作科学失败或已证实外部进程退出。
+
+停止／结项之后 `/research auto` 创建新 generation，开始新的轮次／时限统计；项目累计 nodes 不清零。预算暂停状态不能用 auto 绕过，仍须显式改额后 resume。cost 接受正小数，例如 `/research budget cost 0.25 本次上限`。
+
+节点在受管轮次前后若源码／实验配置的实际内容改变，可计作开发推进；仅调用 shell、touch、note、checkpoint 或改 Markdown 文书不计。检测限于节点 cwd 下的代码及 yaml／toml 配置文件，排除隐藏目录、node_modules、venv、workspaces、缓存和符号链接；只保存内容摘要，不保存文件名或源码。读取失败保持未知，文件摘要在 SQLite 写事务之外计算。这是开发活动信号，不是实验成功或研究质量评分。
+
+deadline 按运行状态和预算变更设置定时器，不持续轮询闲置项目或扫描用量。控制事件不等待遥测落库；原生开始事件的用量登记按事件顺序入队，业务响应附带本次归属，不再单独请求 invocation_context。非写请求的 replayed 为 unknown，不继承上次写入状态。
 
 tokens／cost 是宿主已观测实际用量的停止阈值，覆盖可能不完整；并发请求、未知调用和外部进程不受全局费用／CPU／GPU 硬上限约束。研究 → 运行会话展示已用／限额／未配置和覆盖边界。
 

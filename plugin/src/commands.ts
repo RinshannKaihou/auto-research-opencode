@@ -38,8 +38,9 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
       return { kind: "rpc", action, args: { policy: tail || null } }
     case 'budget': {
       if (!tail) return {kind:'rpc',action,args:{}}
-      const match = /^(turns|nodes|seconds|tokens|cost)\s+(off|[1-9]\d*)\s+(.+)$/.exec(tail)
+      const match = /^(turns|nodes|seconds|tokens|cost)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
       if (!match) return {kind:'error',message:'用法：/research budget turns|nodes|seconds|tokens|cost <正整数|off> <修改原因>'}
+      if(match[2]!=='off' && (!Number.isFinite(Number(match[2])) || Number(match[2])<=0 || match[1]!=='cost' && !/^[1-9]\d*$/.test(match[2]!)))return {kind:'error',message:'预算须为正整数；cost 可使用正小数'}
       return {kind:'rpc',action,args:{limit:match[1]!,value:match[2]!,reason:match[3]!}}
     }
     case "guidance": {
