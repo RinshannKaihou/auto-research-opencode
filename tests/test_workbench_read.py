@@ -198,3 +198,20 @@ def test_knowledge_kind_totals_cover_entries_beyond_the_first_page(tmp_path):
     # The board counts each kind with a one-row query instead of reading the page.
     assert workbench_read.knowledge_page(store, kind="hypothesis", limit=1)["total"] == 1
     assert workbench_read.knowledge_page(store, kind="open_question", limit=1)["total"] == 100
+
+
+def test_directory_references_expand_encoded_snapshot_and_publication_children(tmp_path):
+    root = tmp_path / 'research'
+    tree = root / 'tree'
+    tree.mkdir(parents=True)
+    (tree / '数据%2F.json').write_text('{"value": 7}')
+    service, store, _, _, _, publication = published(tmp_path, items=[{'item_id':'tree','source_path':'tree'}])
+    snapshot = service_call(service,'snapshot','snapshot-tree',paths=['tree'])
+    before = store.db_path.read_bytes()
+    for ref in (publication['refs'][0], snapshot['snapshot_id']+'#tree'):
+        entries = workbench_read.reference_entries(store,root,ref)
+        assert len(entries['items']) == 1
+        content = workbench_read.reference_content(store,root,entries['items'][0]['ref'])
+        assert content['kind'] == 'text'
+        assert base64.b64decode(content['chunk']).decode() == '{"value": 7}'
+    assert store.db_path.read_bytes() == before

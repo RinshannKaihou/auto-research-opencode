@@ -644,6 +644,10 @@ class NativeService:
             return {"project": None, "project_root": str(root)}
         store = NativeStore(root, readonly=True)
         view = request.get("view")
+        if view == "context_preview":
+            if request.get("model_call"):
+                raise ValueError("Context preview requires the host controller")
+            return store.context_preview(request.get("preview_session_id"))
         if view == "summary":
             value = workbench_read.summary(store, None, None)
             value.update(
@@ -652,11 +656,15 @@ class NativeService:
                 knowledge_statuses=sorted(STATUSES),
             )
             return value
+        if view == "page" and request.get("collection") in {"critical_now", "findings", "completed_findings"}:
+            return store.context_page(request["collection"], **{
+                key: request[key] for key in ("cursor", "limit", "node_id", "kind", "query", "decision_refs", "final_ref") if key in request})
         if view == "page":
             return workbench_read.page(
                 store, request.get("collection"), after=request.get("after", 0),
                 upper_id=request.get("upper_id"), limit=request.get("limit", 20),
                 node_id=request.get("node_id"), kind=request.get("kind"),
+                state=request.get("state"), trigger_kind=request.get("trigger_kind"),
             )
         if view == "knowledge":
             return workbench_read.knowledge_page(
@@ -683,7 +691,7 @@ class NativeService:
         if view == "reference_chunk":
             return store.reference_chunk(
                 request.get("ref"), offset=request.get("offset", 0),
-                limit=request.get("limit", 8192),
+                limit=request.get("limit", 8192), expected_digest=request.get("expected_digest"),
             )
         raise ValueError(f"Unknown project view: {view}")
 
@@ -1010,13 +1018,19 @@ class NativeService:
                     value = store.reference_chunk(
                         request["ref"],
                         offset=request.get("offset", 0),
-                        limit=request.get("limit", 8192),
+                        limit=request.get("limit", 8192), expected_digest=request.get("expected_digest"),
                     )
                 elif request.get("ref"):
                     value = store.reference_query(request["ref"])
+                elif request.get("collection") in {"critical_now", "findings", "completed_findings"}:
+                    value = store.context_page(request["collection"], **{
+                        key: request[key] for key in ("cursor", "limit", "node_id", "kind", "query", "decision_refs", "final_ref") if key in request})
                 elif request.get("collection") == "hints":
                     value = store.hints_query(limit=request.get("limit", 8), offset=request.get("offset", 0),
                                               node_id=request.get("node_id"), klass=request.get("kind"))
+                elif request.get("collection") == "review_todos":
+                    value = store.history_page("review_todos", **{
+                        key: request[key] for key in ("after", "upper_id", "limit", "node_id", "state", "trigger_kind") if key in request})
                 elif any(
                     request.get(key) is not None
                     for key in ("query", "kind", "node_id", "status", "revision", "conditions")
@@ -1073,8 +1087,28 @@ class NativeService:
             elif method in {"memory", "memory_context"}:
                 value = store.context_view(
                     host_id, session_id, int(request.get("max_chars", 12000)),
-                    profile=request.get("profile"),
+                    profile=request.get("profile"), policy=request.get("policy"),
+                    decision_refs=request.get("decision_refs"), final_ref=request.get("final_ref"),
                 )
+            elif method == "context_policy":
+                if not role or role["role"] != "main":
+                    raise ValueError("Only the research main session may configure context policy")
+                if request.get("policy") is None:
+                    with store._read() as db:
+                        value = {"policy_version": store._project(db)["config"].get("context_policy", "memory-v2")}
+                else:
+                    value = store.set_context_policy(request["policy"], self._operation(request))
+                with store._read() as db:
+                    last = db.execute(
+                        "SELECT p.policy_version,r.created_at FROM context_requests r "
+                        "JOIN context_packs p USING(pack_id) WHERE r.host_id=? AND r.session_id=? "
+                        "ORDER BY r.context_id DESC LIMIT 1", (host_id, session_id),
+                    ).fetchone()
+                value = {**value, "last_recorded": dict(last) if last else None}
+            elif method == "context_shadow":
+                value = store.context_shadow(host_id, session_id,
+                    max_chars=request.get("max_chars", 12000), profile=request.get("profile"),
+                    decision_refs=request.get("decision_refs"), final_ref=request.get("final_ref"))
             elif method == "conclude":
                 value = store.conclude(host_id, session_id, request.get("fields", {}), self._operation(request))
             elif method == "context_record":

@@ -253,11 +253,21 @@ export class Engine {
     const refs = ((pubs as any)?.items ?? [])
       .map((pub: any) => `pub/${pub.publication_id}（${oneLine(pub.display?.title ?? pub.summary, 40)}）`)
       .join("、")
+    const policy = await this.call("context_policy", this.mainIn(root)!)
+    let finding = ""
+    if (policy.policy_version === "memory-r1-v1" && payload.kind === "finished") {
+      const page: any = await this.research.storage.request("project_read", {
+        root, view: "page", collection: "findings", node_id: payload.node_id, limit: 1,
+      })
+      const value = page.items[0]
+      finding = value ? `发现：${value.ref} ${oneLine(value.statement, 120)}；scope/conditions 用 research_query ref 展开。` : "发现：未登记发现"
+    }
     const outcome = NOTICE_OUTCOME[payload.kind] ?? payload.kind
     return [
       `节点 ${payload.node_id} ${outcome}（任务 ${payload.task_id}）。`,
       `总结：${payload.summary || "（未提供）"}`,
       `发布：${refs || "无"}`,
+      ...(finding ? [finding] : []),
     ].join("\n")
   }
 

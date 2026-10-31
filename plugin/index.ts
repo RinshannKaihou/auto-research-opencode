@@ -223,6 +223,8 @@ export default Plugin.define({
           return research.takeover(needsSession(sessionID, action), directory)
         case "detach":
           return research.detach(needsSession(sessionID, action))
+        case "context-policy":
+          return research.contextPolicy(needsSession(sessionID, action), args.policy)
         case "guidance":
           return research.guidance(needsSession(sessionID, action), directory, args.path, args.version)
         default:

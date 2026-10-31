@@ -29,6 +29,8 @@ import { fit, knowledgeOwners, nodeTitles, processView, type ProcessView } from 
 import { ProcessDetail, ProcessLegend, ProcessList } from "./ProcessView"
 import { RuntimeDetail, SessionRow } from "./RuntimeView"
 import { KeyHints, Markdown } from "./ui"
+import { REVIEW_COLLECTIONS, reviewCard, reviewRows, reviewFilterLabel } from "./review"
+import { ReviewDetail, ReviewRow } from "./ReviewView"
 
 const POLL_MS = 5000
 const CHUNK = 32 * 1024
@@ -39,6 +41,9 @@ interface Reader {
   markdown: boolean
   text: string
   nextOffset: number | null
+  byteChunks?: Buffer[]
+  truncated?: boolean
+  directory?: { items: { ref: string; name: string; kind: string }[]; cursor: Record<string, unknown> | null; selected: number }
 }
 
 export function ResearchBoard(props: {
@@ -55,11 +60,27 @@ export function ResearchBoard(props: {
   const rpc = context.client.rpc(ResearchRpc)
   const location = () => context.location ?? context.data.location.default()
   const [tab, setTab] = createSignal<Tab>("overview")
+  const activeTab = () => TABS.find((group) => group.views.some((view) => view.id === tab()))!
+  const subviews = () => activeTab().views
   const [summary, setSummary] = createSignal<any>(null)
   const [presentation, setPresentation] = createSignal<any>(null)
   const [rows, setRows] = createSignal<Row[]>([])
+  const [pageCursor, setPageCursor] = createSignal<Record<string, unknown> | null>(null)
+  const [nextCursor, setNextCursor] = createSignal<Record<string, unknown> | null>(null)
+  const [pageHistory, setPageHistory] = createSignal<(Record<string, unknown> | null)[]>([])
+  const [reviewCollection, setReviewCollection] = createSignal("critical_now")
+  const [reviewSource, setReviewSource] = createSignal<any>(null)
+  const [reviewLink, setReviewLink] = createSignal(0)
+  const [reviewRaw, setReviewRaw] = createSignal(false)
+  const [reviewNode, setReviewNode] = createSignal("")
+  const [reviewState, setReviewState] = createSignal("")
+  const [reviewKind, setReviewKind] = createSignal("")
+  const [reviewTotal, setReviewTotal] = createSignal(0)
+  const [reviewKinds, setReviewKinds] = createSignal<string[]>([])
+  const [knowledgeDetail, setKnowledgeDetail] = createSignal<any>(null)
   const [selected, setSelected] = createSignal(0)
   const [reader, setReader] = createSignal<Reader | null>(null)
+  const [readerHistory, setReaderHistory] = createSignal<Reader[]>([])
   const [error, setError] = createSignal("")
   const [loading, setLoading] = createSignal(false)
   const [kindFilter, setKindFilter] = createSignal("")
@@ -68,7 +89,7 @@ export function ResearchBoard(props: {
   const [processNode, setProcessNode] = createSignal<any>(null)
   const [tasks, setTasks] = createSignal<any[]>([])
   const [knowledgeTotals, setKnowledgeTotals] = createSignal<{ kind?: string; total: number }[]>([])
-  /** How many entries match the current filters; the list shows at most the first page. */
+  /** How many entries match the current filters across all pages. */
   const [knowledgeListed, setKnowledgeListed] = createSignal(0)
   const chips = createMemo(() => kindChips(knowledgeTotals()))
   const [owners, setOwners] = createSignal<(item: any) => { node: string; via?: string }[]>(() => [])
@@ -89,8 +110,34 @@ export function ResearchBoard(props: {
     return value
   }
 
-  const pages = (collections: string[]) =>
-    Promise.all(collections.map((collection) => board("page", { collection, limit: 100 }).then((page) => page?.items ?? [])))
+  async function fullReference(ref: string): Promise<any> {
+    const chunks: Buffer[] = []
+    let offset: number | null = 0
+    let digest: string | undefined
+    do {
+      const part: any = await board("reference_chunk", { ref, offset, limit: CHUNK, ...(digest ? { expected_digest: digest } : {}) })
+      chunks.push(Buffer.from(part.chunk, "base64"))
+      digest = part.content_sha256
+      offset = part.next_offset
+    } while (offset !== null)
+    const record = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    if (record.version_context) record.value = { ...record.value, ...record.version_context }
+    return record
+  }
+
+  // Graphs and ownership need the full index; each RPC remains paginated.
+  const pages = (collections: string[]) => Promise.all(collections.map(async (collection) => {
+    const items: any[] = []
+    let cursor: Record<string, unknown> | null = null
+    do {
+      const page: any = collection === "knowledge"
+        ? await board("knowledge", { limit: 100, ...(cursor ?? {}) })
+        : await board("page", { collection, limit: 100, ...(cursor ?? {}) })
+      items.push(...page.items)
+      cursor = page.cursor
+    } while (cursor)
+    return items
+  }))
 
   async function load(target: Tab = tab()) {
     const run = ++generation
@@ -101,12 +148,13 @@ export function ResearchBoard(props: {
       if (run !== generation) return
       setSummary(nextSummary)
       let nextRows: Row[] = []
+      setNextCursor(null)
       if (!nextSummary?.project) {
         nextRows = []
       } else if (target === "overview") {
         setPresentation(await board("presentation"))
       } else if (target === "process") {
-        const [nodes, dependencies, attempts, taskPage, sessions, publications, snapshots] = await pages([
+        const [nodes, dependencies, attempts, taskPage, sessions, publications, snapshots, knowledge] = await pages([
           "nodes",
           "dependencies",
           "attempts",
@@ -114,8 +162,8 @@ export function ResearchBoard(props: {
           "sessions",
           "publications",
           "snapshots",
+          "knowledge",
         ])
-        const knowledge = await board("knowledge", { limit: 100 })
         const view = processView({
           nodes: nodes!,
           dependencies: dependencies!,
@@ -124,7 +172,7 @@ export function ResearchBoard(props: {
           sessions: sessions!,
           publications: publications!,
           snapshots: snapshots!,
-          knowledge: knowledge?.items ?? [],
+          knowledge: knowledge!,
         })
         if (run !== generation) return
         setGraph(view)
@@ -135,7 +183,7 @@ export function ResearchBoard(props: {
         const status = statusFilter() ? { status: statusFilter() } : {}
         const kinds: string[] = nextSummary.knowledge_kinds ?? []
         const [shown, totals, [nodes, publications, snapshots, attempts]] = await Promise.all([
-          board("knowledge", { limit: 100, ...(kindFilter() ? { kind: kindFilter() } : {}), ...status }),
+          board("knowledge", { limit: 100, ...(pageCursor() ?? {}), ...(kindFilter() ? { kind: kindFilter() } : {}), ...status }),
           Promise.all(
             [undefined, ...kinds].map((kind) =>
               board("knowledge", { limit: 1, ...(kind ? { kind } : {}), ...status }).then((page) => ({
@@ -152,14 +200,34 @@ export function ResearchBoard(props: {
         const resolve = knowledgeOwners({ publications: publications!, snapshots: snapshots!, attempts: attempts! })
         setOwners(() => resolve)
         setTitles(nodeTitles(nodes!, publications!))
+        setNextCursor(shown.cursor)
         nextRows = knowledgeRows(shown)
       } else if (target === "materials") {
-        nextRows = materialRows(await board("page", { collection: "publications", limit: 100 }))
-      } else {
-        const [sessions, taskPage] = await pages(["sessions", "tasks"])
+        const page = await board("page", { collection: "publications", limit: 100, ...(pageCursor() ?? {}) })
         if (run !== generation) return
+        setNextCursor(page.cursor)
+        nextRows = materialRows(page)
+      } else if (target === "review") {
+        const collection = reviewCollection()
+        const derived = ["critical_now", "findings", "completed_findings"].includes(collection)
+        const page = await board("page", { collection, limit: 50,
+          ...(reviewNode() ? { node_id: reviewNode() } : {}),
+          ...(reviewKind() ? { kind: reviewKind(), trigger_kind: reviewKind() } : collection === "hints" ? { kind: "clerical" } : {}),
+          ...(collection === "review_todos" && reviewState() ? { state: reviewState() } : {}),
+          ...(derived ? { cursor: pageCursor() } : pageCursor() ?? {}) })
+        if (run !== generation) return
+        setNextCursor(page.cursor)
+        setReviewTotal(page.total)
+        setReviewKinds(page.kinds ?? page.trigger_types ?? [])
+        nextRows = reviewRows(page.items)
+      } else {
+        const [sessionPage, [taskPage]] = await Promise.all([
+          board("page", { collection: "sessions", limit: 100, ...(pageCursor() ?? {}) }), pages(["tasks"]),
+        ])
+        if (run !== generation) return
+        setNextCursor(sessionPage.cursor)
         setTasks(taskPage!)
-        nextRows = sessionRows({ items: sessions })
+        nextRows = sessionRows(sessionPage)
       }
       if (run !== generation) return
       setRows(nextRows)
@@ -175,24 +243,67 @@ export function ResearchBoard(props: {
   /** Only the process detail needs more than its row: the page view shortens long fields. */
   async function describe() {
     const row = current()
-    if (tab() !== "process" || !row) return
-    const node = await board("reference_get", { ref: row.id }).catch(() => null)
+    if (!row) return
+    if (tab() === "knowledge") {
+      setKnowledgeDetail(null)
+      setReviewLink(0)
+      const value = await fullReference(row.data.ref)
+      if (current()?.id === row.id) setKnowledgeDetail(value.value)
+      return
+    }
+    if (tab() === "review") {
+      setReviewSource(null)
+      setReviewLink(0)
+      const ref = row.data.expand?.ref ?? row.data.trigger_ref ?? row.data.ref ?? row.data.node_id
+      if (ref) {
+        const value = await fullReference(ref)
+        if (current()?.id === row.id) setReviewSource({ ...value.value, ref })
+      }
+      return
+    }
+    if (tab() !== "process") return
+    const node = await fullReference(row.id)
     if (current()?.id === row.id) setProcessNode(node?.value ?? null)
   }
 
-  async function openReader(offset = 0) {
+  async function openReviewLink() {
+    if (!current()) return
+    const source = tab() === "knowledge" ? knowledgeDetail() : reviewSource()
+    const link = reviewCard(current()!.data, source).links[reviewLink()]
+    if (!link) return
+    if (link.file) await openReader(0, link.ref, link.path)
+    else {
+      const value = await fullReference(link.ref)
+      if (tab() === "knowledge") setKnowledgeDetail({ ...value.value, ref: link.ref })
+      else setReviewSource({ ...value.value, ref: link.ref })
+      setReviewLink(0)
+      detailBox?.scrollTo(0)
+    }
+  }
+
+  async function openReader(offset = 0, reference?: string, sourcePath?: string) {
     const row = current()
-    const ref = offset ? reader()?.ref : row?.ref
+    const ref = offset ? reader()?.ref : reference ?? row?.ref
     if (!ref) return
-    const path = offset ? reader()?.path : row?.data?.item?.source_path
+    const path = offset ? reader()?.path : sourcePath ?? row?.data?.item?.source_path
     try {
       const content = await board("reference_content", { ref, offset, limit: CHUNK })
-      const text = decodeChunk(content)
+      if (content.kind === "directory") {
+        const entries = await board("reference_entries", { ref, limit: 100 })
+        setReader({ ref, path, markdown: false, text: "", nextOffset: null,
+          directory: { items: entries.items, cursor: entries.cursor, selected: 0 } })
+        return
+      }
+      const byteChunks = content.kind === "text"
+        ? [...(offset ? reader()!.byteChunks! : []), Buffer.from(content.chunk, "base64")] : []
+      const text = content.kind === "text"
+        ? new TextDecoder().decode(Buffer.concat(byteChunks), { stream: content.next_offset !== null })
+        : decodeChunk(content)
       setReader({
         ref,
         path,
         markdown: content?.kind === "text" && isMarkdown(path ?? ref),
-        text: offset ? `${reader()?.text ?? ""}${text}` : text,
+        text, byteChunks, truncated: content.truncated,
         nextOffset: content?.next_offset ?? null,
       })
     } catch (failure) {
@@ -200,8 +311,37 @@ export function ResearchBoard(props: {
     }
   }
 
+  async function nextDirectoryPage() {
+    const value = reader()!
+    const entries = await board("reference_entries", { ref: value.ref, limit: 100, ...value.directory!.cursor })
+    setReader({ ...value, directory: { items: entries.items, cursor: entries.cursor, selected: 0 } })
+  }
+
+  function resetPage() {
+    setPageCursor(null)
+    setNextCursor(null)
+    setPageHistory([])
+  }
+
+  function turnPage(forward: boolean) {
+    if (forward) {
+      if (!nextCursor()) return
+      setPageHistory([...pageHistory(), pageCursor()])
+      setPageCursor(nextCursor())
+    } else {
+      if (!pageHistory().length) return
+      setPageCursor(pageHistory().at(-1)!)
+      setPageHistory(pageHistory().slice(0, -1))
+    }
+    setSelected(0)
+    void load()
+  }
+
   function switchTab(next: Tab) {
+    resetPage()
     setReader(null)
+    setReaderHistory([])
+    setReviewRaw(false)
     // Each tab renders its own row shape; never show another tab's rows while loading.
     setRows([])
     setSelected(0)
@@ -211,6 +351,15 @@ export function ResearchBoard(props: {
   }
 
   function move(delta: number) {
+    if (reader()) {
+      const value = reader()!
+      if (value.directory && value.directory.items.length) {
+        const selected = Math.max(0, Math.min(value.directory.items.length - 1, value.directory.selected + delta))
+        setReader({ ...value, directory: { ...value.directory, selected } })
+        readerBox?.scrollChildIntoView(`reader-entry-${selected}`)
+      }
+      return
+    }
     const count = rows().length
     if (!count) return
     const next = Math.max(0, Math.min(count - 1, selected() + delta))
@@ -218,19 +367,26 @@ export function ResearchBoard(props: {
     list?.scrollChildIntoView(`research-row-${next}`)
     // A refresh keeps the reading position; only a new selection starts from the top.
     detailBox?.scrollTo(0)
-    void describe()
+    void describe().catch((failure) => setError(errorText(failure)))
   }
 
   function cycle(values: readonly string[], current: string, set: (value: string) => void) {
     const options = ["", ...values]
     set(options[(options.indexOf(current) + 1) % options.length]!)
     setSelected(0)
+    resetPage()
     void load("knowledge")
   }
 
   context.keymap.layer(() => ({
+    mode: "global",
+    priority: 1,
     commands: [
       ...TABS.map((item) => ({ bind: item.key, run: () => switchTab(item.id) })),
+      { bind: "v", enabled: () => !reader() && subviews().length > 1, run: () => {
+        const views = subviews()
+        switchTab(views[(views.findIndex((view) => view.id === tab()) + 1) % views.length]!.id)
+      } },
       { bind: "j", run: () => move(1) },
       { bind: "down", run: () => move(1) },
       { bind: "k", run: () => move(-1) },
@@ -238,33 +394,82 @@ export function ResearchBoard(props: {
       {
         bind: "return",
         run: () => {
+          if (reader()) {
+            const value = reader()!
+            const entry = value.directory?.items[value.directory.selected]
+            if (entry) { setReaderHistory([...readerHistory(), value]); void openReader(0, entry.ref, entry.name) }
+            return
+          }
           const row = current()
           if (tab() === "runtime" && row) props.openSession?.(row.id)
+          else if (tab() === "review" || tab() === "knowledge") void openReviewLink().catch((failure) => setError(errorText(failure)))
           else void openReader()
         },
       },
+      { bind: "home", run: () => (reader() ? readerBox : detailBox)?.scrollTo(0) },
+      { bind: "end", run: () => { const box = reader() ? readerBox : detailBox; box?.scrollTo(box.scrollHeight) } },
       { bind: "pagedown", run: () => (reader() ? readerBox : detailBox)?.scrollBy(0.8, "viewport") },
       { bind: "pageup", run: () => (reader() ? readerBox : detailBox)?.scrollBy(-0.8, "viewport") },
-      { bind: "n", enabled: () => reader()?.nextOffset != null, run: () => void openReader(reader()!.nextOffset!) },
-      { bind: "r", run: () => void load() },
+      { bind: "n", enabled: () => reader()?.nextOffset != null || !!reader()?.directory?.cursor, run: () => {
+        if (reader()?.directory) void nextDirectoryPage().catch((failure) => setError(errorText(failure)))
+        else void openReader(reader()!.nextOffset!)
+      } },
+      { bind: "]", enabled: () => !reader() && nextCursor() !== null, run: () => turnPage(true) },
+      { bind: "[", enabled: () => !reader() && pageHistory().length > 0, run: () => turnPage(false) },
+      { bind: "r", run: () => {
+        if (reader()) void openReader(0, reader()!.ref, reader()!.path)
+        else { resetPage(); void load() }
+      } },
+      { bind: "x", enabled: () => !reader() && (tab() === "review" || tab() === "knowledge"), run: () => setReviewRaw(!reviewRaw()) },
+      { bind: "l", enabled: () => !reader() && (tab() === "review" || tab() === "knowledge"), run: () => {
+        const count = current() ? reviewCard(current()!.data, tab() === "knowledge" ? knowledgeDetail() : reviewSource()).links.length : 0
+        if (count) setReviewLink((reviewLink() + 1) % count)
+        detailBox?.scrollTo(0)
+      } },
+      { bind: "backspace", enabled: () => reader() ? readerHistory().length > 0 : tab() === "review" || tab() === "knowledge", run: () => {
+        if (reader()) { setReader(readerHistory().at(-1)!); setReaderHistory(readerHistory().slice(0, -1)) }
+        else void describe().catch((failure) => setError(errorText(failure)))
+      } },
       {
         bind: "f",
-        enabled: () => tab() === "knowledge",
+        enabled: () => !reader() && (tab() === "knowledge" || tab() === "review"),
         run: () => {
+          if (tab() === "review") {
+            const collections = REVIEW_COLLECTIONS.map((v) => v.id)
+            setReviewCollection(collections[(collections.indexOf(reviewCollection() as any) + 1) % collections.length]!)
+            setReviewKind("")
+            setReviewState("")
+            resetPage()
+            void load()
+            return
+          }
           const kinds = chips().kinds.map((entry) => entry.kind)
           cycle(kinds.length ? kinds : summary()?.knowledge_kinds ?? [], kindFilter(), setKindFilter)
         },
       },
       {
         bind: "s",
-        enabled: () => tab() === "knowledge",
-        run: () => cycle(summary()?.knowledge_statuses ?? [], statusFilter(), setStatusFilter),
+        enabled: () => !reader() && (tab() === "knowledge" || tab() === "review" && reviewCollection() === "review_todos"),
+        run: () => {
+          if (tab() === "knowledge") cycle(summary()?.knowledge_statuses ?? [], statusFilter(), setStatusFilter)
+          else { const values = ["", "pending", "running", "proposal_ready", "completed"]; setReviewState(values[(values.indexOf(reviewState()) + 1) % values.length]!); resetPage(); void load() }
+        },
       },
+      { bind: "g", enabled: () => !reader() && tab() === "review", run: () => {
+        const values = ["", ...reviewKinds()]
+        setReviewKind(values[(values.indexOf(reviewKind()) + 1) % values.length]!)
+        resetPage(); void load()
+      } },
+      { bind: "o", enabled: () => !reader() && tab() === "review", run: () => {
+        const values = ["", ...(graph()?.nodes.map((v) => v.id) ?? summary()?.node_ids ?? [])]
+        setReviewNode(values[(values.indexOf(reviewNode()) + 1) % values.length]!)
+        resetPage(); void load()
+      } },
       {
         title: "Close research board",
         bind: "escape",
         run: () => {
-          if (reader()) setReader(null)
+          if (reader()) { setReader(null); setReaderHistory([]) }
           else props.onClose()
         },
       },
@@ -287,13 +492,16 @@ export function ResearchBoard(props: {
   })
 
   const hints = createMemo((): [string, string][] => {
+    if (reader()?.directory) return [["j/k", "选择"], ["Enter", "打开"], ["n", "下一页"], ["r", "目录首页"], ["Backspace", "上级"], ["Esc", "返回看板"]]
     if (reader()) return [["Esc", "返回"], ["PgUp/PgDn", "翻页"], ...(reader()?.nextOffset != null ? [["n", "读取下一段"] as [string, string]] : [])]
-    if (tab() === "overview") return [["1-5", "切换视图"], ["PgUp/PgDn", "滚动"], ["r", "刷新"], ["Esc", "关闭"]]
+    if (tab() === "review") return [["v", "成果内容"], ["f", "检查类别"], ["j/k", "移动"], ["[/]", "页"], ["l/Enter", "依据"], ["Esc", "关闭"]]
+    if (tab() === "overview") return [["1-3", "导航"], ["PgUp/PgDn", "滚动"], ["r", "刷新"], ["Esc", "关闭"]]
     return [
-      ["1-5", "切换视图"],
+      ["v", "切换内容"],
       ["j/k", "移动"],
+      ["[/]", "列表翻页"],
       ["PgUp/PgDn", "滚动详情"],
-      ["Enter", tab() === "runtime" ? "打开会话" : "打开文件"],
+      [tab() === "knowledge" ? "l/Enter" : "Enter", tab() === "runtime" ? "打开会话" : tab() === "knowledge" ? "依据" : "打开文件"],
       ["r", "刷新"],
       ["Esc", "关闭"],
     ]
@@ -318,9 +526,9 @@ export function ResearchBoard(props: {
             <>
               <span
                 style={{
-                  fg: item.id === tab() ? colors.base : colors.muted,
-                  bg: item.id === tab() ? colors.tab : colors.none,
-                  attributes: item.id === tab() ? TextAttributes.BOLD : TextAttributes.NONE,
+                  fg: item.id === activeTab().id ? colors.base : colors.muted,
+                  bg: item.id === activeTab().id ? colors.tab : colors.none,
+                  attributes: item.id === activeTab().id ? TextAttributes.BOLD : TextAttributes.NONE,
                 }}
               >
                 {` ${item.key} ${item.title} `}
@@ -330,6 +538,13 @@ export function ResearchBoard(props: {
           )}
         </For>
       </text>
+      <Show when={subviews().length > 1 && !reader()}>
+        <text flexShrink={0}>
+          <For each={subviews()}>{(view) => <span style={{ fg: view.id === tab() ? colors.base : colors.muted,
+            attributes: view.id === tab() ? TextAttributes.BOLD : TextAttributes.NONE }}>{` ${view.title} `}</span>}</For>
+          <span style={{ fg: colors.muted }}> · v 切换</span>
+        </text>
+      </Show>
       <Show when={tab() === "knowledge" && !reader() && knowledgeTotals().length}>
         <box marginTop={1} flexShrink={0}>
           <KnowledgeFilter
@@ -339,6 +554,13 @@ export function ResearchBoard(props: {
             kind={kindFilter()}
             status={statusFilter()}
           />
+        </box>
+      </Show>
+      <Show when={tab() === "review" && !reader()}>
+        <box flexDirection="column" flexShrink={0}>
+        <text fg={colors.base} flexShrink={0}>{`${REVIEW_COLLECTIONS.find((v) => v.id === reviewCollection())!.title} · 共 ${reviewTotal()} 条 · 第 ${pageHistory().length + 1} 页${reviewNode() ? ` · ${reviewNode()}` : " · 全项目"}${reviewKind() ? ` · ${reviewFilterLabel(reviewKind())}` : ""}${reviewState() ? ` · ${reviewFilterLabel(reviewState())}` : ""}`}</text>
+        <text fg={colors.muted} flexShrink={0}>{REVIEW_COLLECTIONS.find((v) => v.id === reviewCollection())!.note}</text>
+        <text fg={colors.muted} flexShrink={0}>g 类型 · s 审阅状态 · o 节点 · x 原始详情</text>
         </box>
       </Show>
       <Show when={error()}>
@@ -355,9 +577,16 @@ export function ResearchBoard(props: {
                 <span style={{ fg: colors.link }}>{reader()?.ref}</span>
                 <span style={{ fg: colors.muted }}>{reader()?.path ? `  ${reader()?.path}` : ""}</span>
               </text>
-              <box marginTop={1}>
-                <Show when={reader()?.markdown} fallback={<text fg={colors.base}>{reader()?.text}</text>}>
+              <Show when={reader()?.truncated}><text fg={colors.warning}>文件超出内置预览范围，以下内容未显示完整。</text></Show>
+              <box marginTop={1} flexDirection="column">
+                <Show when={reader()?.directory} fallback={<Show when={reader()?.markdown} fallback={<text fg={colors.base}>{reader()?.text}</text>}>
                   <Markdown style={markdown} content={reader()?.text ?? ""} />
+                </Show>}>
+                  {(directory) => <For each={directory().items} fallback={<text fg={colors.muted}>空目录</text>}>
+                    {(entry, index) => <text id={`reader-entry-${index()}`} fg={index() === directory().selected ? colors.brand : colors.base}>
+                      {`${index() === directory().selected ? "▸" : " "} ${entry.kind === "directory" ? "目录" : "文件"}  ${entry.name}`}
+                    </text>}
+                  </For>}
                 </Show>
               </box>
             </box>
@@ -387,6 +616,9 @@ export function ResearchBoard(props: {
                         )}
                       </For>
                     </Match>
+                    <Match when={rows().length && tab() === "review"}>
+                      <For each={rows()}>{(row, index) => <ReviewRow context={context} row={row} index={index()} selected={index() === selected()} width={listWidth() - 4} />}</For>
+                    </Match>
                     <Match when={rows().length && tab() === "runtime"}>
                       <For each={rows()}>
                         {(row, index) => (
@@ -403,7 +635,7 @@ export function ResearchBoard(props: {
               {/* Outside the scrolling list, so it stays visible: the list is one page, the counts are not. */}
               <Show when={tab() === "knowledge" && knowledgeListed() > rows().length}>
                 <text fg={colors.muted} wrapMode="none" flexShrink={0}>
-                  {` 只列出前 ${rows().length} 条，共 ${knowledgeListed()} 条`}
+                  {` 本页 ${rows().length} 条，共 ${knowledgeListed()} 条；[/] 翻页`}
                 </text>
               </Show>
             </box>
@@ -432,10 +664,25 @@ export function ResearchBoard(props: {
                   )}
                 </Match>
                 <Match when={tab() === "knowledge"}>
-                  <KnowledgeDetail context={context} item={current()?.data} owners={owners()} titles={titles()} />
+                  <Show when={knowledgeDetail()?.ref && !knowledgeDetail().ref.startsWith("knowledge/")} fallback={<>
+                    <Show when={current()}>
+                      <text fg={colors.link}>{(() => {
+                        const links = reviewCard(current()!.data, knowledgeDetail()).links
+                        const link = links[reviewLink()]
+                        return link ? `l/Enter ${link.label}：${link.ref} · Backspace 返回 · x 原始详情` : ""
+                      })()}</text>
+                    </Show>
+                    <KnowledgeDetail context={context} item={knowledgeDetail() ?? current()?.data} owners={owners()} titles={titles()} />
+                    <Show when={reviewRaw()}><text fg={colors.muted}>{JSON.stringify(knowledgeDetail(), null, 2)}</text></Show>
+                  </>}>
+                    <ReviewDetail context={context} item={current()?.data} source={knowledgeDetail()} selectedLink={reviewLink()} raw={reviewRaw()} />
+                  </Show>
                 </Match>
                 <Match when={tab() === "materials"}>
                   <PublicationDetail context={context} row={current()} markdown={markdown} width={detailWidth() - 4} />
+                </Match>
+                <Match when={tab() === "review"}>
+                  <ReviewDetail context={context} item={current()?.data} source={reviewSource()} selectedLink={reviewLink()} raw={reviewRaw()} />
                 </Match>
                 <Match when={tab() === "runtime"}>
                   <RuntimeDetail context={context} summary={summary()} session={current()?.data} tasks={tasks()} />

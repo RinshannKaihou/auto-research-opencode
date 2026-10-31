@@ -10,6 +10,7 @@ import { KNOWLEDGE_KINDS, KNOWLEDGE_STATUSES, STATUS_NOTE, knowledgeCode, type R
 import { palette } from "./palette"
 import { displayWidth, fit } from "./process"
 import { Row, Section } from "./ui"
+import { recordFields } from "./review"
 
 const QUIET_STATUSES = new Set(["proposed", "working"])
 
@@ -64,14 +65,6 @@ export function KnowledgeRow(props: { context: Context; row: RowData; index: num
   )
 }
 
-function entries(value: unknown): [string, string][] {
-  if (!value || typeof value !== "object") return []
-  return Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
-    key,
-    typeof entry === "string" ? entry : JSON.stringify(entry),
-  ])
-}
-
 export function KnowledgeDetail(props: {
   context: Context
   item: any
@@ -110,9 +103,8 @@ export function KnowledgeDetail(props: {
               {(ref: string) => <text fg={ref.startsWith("pub/") ? colors.link : colors.base}>{ref}</text>}
             </For>
           </Section>
-          <Show when={entries(item().conditions).length}>
             <Section context={props.context} title="条件">
-              <For each={entries(item().conditions)}>
+              <For each={recordFields(item().conditions)} fallback={<text fg={colors.muted}>未记录</text>}>
                 {([key, value]) => (
                   <text>
                     <span style={{ fg: colors.muted }}>{`${key}  `}</span>
@@ -121,10 +113,8 @@ export function KnowledgeDetail(props: {
                 )}
               </For>
             </Section>
-          </Show>
-          <Show when={entries(item().scope).length}>
             <Section context={props.context} title="范围">
-              <For each={entries(item().scope)}>
+              <For each={recordFields(item().scope)} fallback={<text fg={colors.muted}>未记录</text>}>
                 {([key, value]) => (
                   <text>
                     <span style={{ fg: colors.muted }}>{`${key}  `}</span>
@@ -132,6 +122,21 @@ export function KnowledgeDetail(props: {
                   </text>
                 )}
               </For>
+            </Section>
+          <Section context={props.context} title="字段检查" count={(item().field_checks ?? []).length}>
+            <For each={item().field_checks ?? []} fallback={<text fg={colors.muted}>未登记字段检查；不推定检查通过。</text>}>
+              {(check) => <text fg={colors.base}>{`检查 ${check.check_index}：${check.result === "consistent" ? "字段与冻结材料一致（不证明科学结论）" : check.result === "inconsistent" ? "字段与冻结材料不一致" : "无法检查"}${check.reason ? ` · ${check.reason}` : ""} · ${check.input_ref}`}</text>}
+            </For>
+          </Section>
+          <Show when={item().current_ref && item().current_ref !== item().ref}>
+            <Section context={props.context} title="当前版本">
+              <text fg={colors.link}>{item().current_ref}</text>
+              <text fg={colors.muted}>存在更新版本不表示固定版本自动失效，需查看修订范围。</text>
+            </Section>
+          </Show>
+          <Show when={(item().published_refs ?? []).length}>
+            <Section context={props.context} title="发布固定引用">
+              <For each={item().published_refs}>{(ref: string) => <text fg={colors.link}>{ref}</text>}</For>
             </Section>
           </Show>
           <Show when={(item().supersedes ?? []).length}>

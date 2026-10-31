@@ -7,6 +7,7 @@ single traversal boundary; it does not claim a snapshot shared with later RPCs.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sqlite3
 from typing import Any
@@ -49,6 +50,11 @@ def _bounded_text(value: str, expand_ref: str, maximum: int = 8192) -> dict | st
 
 
 class QueryStore:
+    def context_page(self, collection, **fields):
+        from .context_policy import page
+        with self._read() as db:
+            return page(self, db, collection, **fields)
+
     @staticmethod
     def _decode_page_row(
         db: sqlite3.Connection, collection: str, row: sqlite3.Row, *, full: bool = False
@@ -211,6 +217,7 @@ class QueryStore:
         project_id: str | None = None,
         order: str | None = None,
         offset: int = 0,
+        node_id=None, state=None, trigger_kind=None,
     ) -> dict:
         if collection == "hints":
             return self.hints_query(limit=limit, offset=offset)
@@ -231,13 +238,15 @@ class QueryStore:
                 )
             else:
                 upper_id = max(0, int(upper_id))
-            rows = list(
-                db.execute(
-                    f"SELECT {key} AS _cursor,* FROM {table} "
-                    f"WHERE {key}>? AND {key}<=? ORDER BY {key} LIMIT ?",
-                    (after, upper_id, limit + 1),
-                )
-            )
+            clause, filters = "", []
+            if collection == "review_todos":
+                for column, value in (("node_id", node_id), ("state", state), ("trigger_kind", trigger_kind)):
+                    if value is not None:
+                        clause += f" AND {column}=?"
+                        filters.append(value)
+            rows = list(db.execute(
+                f"SELECT {key} AS _cursor,* FROM {table} WHERE {key}>? AND {key}<=?{clause} ORDER BY {key} LIMIT ?",
+                (after, upper_id, *filters, limit + 1)))
             visible = rows[:limit]
             items = [self._decode_page_row(db, collection, row) for row in visible]
             next_after = int(visible[-1]["_cursor"]) if len(rows) > limit and visible else None
@@ -370,7 +379,17 @@ class QueryStore:
                     (kid, revision),
                 ).fetchone()
                 if row:
-                    return {"kind": "knowledge", "value": self._decode_knowledge(row, db)}
+                    from . import epistemic
+                    current = self._latest_revision(db, kid)
+                    current_ref = f"knowledge/{kid}@{current['revision']}"
+                    published_refs = [f"knowledge/{kid}@{r[0]}" for r in db.execute(
+                        "SELECT DISTINCT revision FROM publication_knowledge WHERE knowledge_id=? ORDER BY revision", (kid,))]
+                    notices = epistemic.version_notices(db, ref)
+                    if current_ref != ref:
+                        notices.append({"notice": "newer_revision_exists", "source": ref, "current_ref": current_ref})
+                    return {"kind": "knowledge", "value": self._decode_knowledge(row, db),
+                            "version_context": {"current_ref": current_ref, "published_refs": published_refs,
+                                                "version_notices": notices}}
             node = db.execute(
                 "SELECT rowid AS _cursor,* FROM nodes WHERE node_id=?", (ref,)
             ).fetchone()
@@ -405,6 +424,7 @@ class QueryStore:
                 ("specialist-task", "specialists", "task_id"),
                 ("checkpoint", "checkpoints", "checkpoint_id"),
                 ("review-todo", "review_todos", "todo_id"),
+                ("impact", "impacts", "impact_id"),
             ):
                 table, _ = COLLECTIONS[collection]
                 row = db.execute(
@@ -423,12 +443,15 @@ class QueryStore:
                 return {"kind": "legacy-ref", "value": value}
         raise NotFoundError(f"Unknown research reference: {ref}")
 
-    def reference_chunk(self, ref: str, *, offset: int = 0, limit: int = 8192) -> dict:
+    def reference_chunk(self, ref: str, *, offset: int = 0, limit: int = 8192, expected_digest=None) -> dict:
         """Expand one fixed reference without allowing an unbounded IPC response."""
         offset = max(0, int(offset or 0))
         limit = max(1, min(int(limit or 8192), 32768))
         selected = self.reference_query(ref, full=True)
         encoded = json.dumps(selected, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        if expected_digest is not None and digest != expected_digest:
+            raise ValidationError("read_view_changed: reference changed while reading; refresh the record")
         chunk = base64.b64encode(encoded[offset : offset + limit]).decode("ascii")
         next_offset = offset + limit if offset + limit < len(encoded) else None
         return {
@@ -438,6 +461,7 @@ class QueryStore:
             "chunk": chunk,
             "next_offset": next_offset,
             "total_bytes": len(encoded),
+            "content_sha256": digest,
         }
 
     def control_state(self, host_id: str | None = None, session_id: str | None = None) -> dict:

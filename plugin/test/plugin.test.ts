@@ -236,9 +236,10 @@ describe("autonomous research", () => {
     expect(restarted.said("ses_main").some((item) => item.resume)).toBe(false)
   })
 
-  test("runs goal → nodes → node sessions → synthesis → conclusion without human messages", async () => {
+  test.each(["legacy", "r1"])("runs goal → nodes → node sessions → synthesis → conclusion (%s)", async (policy) => {
     const host = await load()
     const started = await host.command("auto", "ses_main", { goal: "Find X" })
+    await host.command("context-policy", "ses_main", { policy })
     expect(started.message).toContain("自主研究已开始")
     expect(host.said("ses_main").at(-1)).toMatchObject({ resume: true })
     expect(host.said("ses_main").at(-1).text).toContain("开始自主研究")
@@ -276,6 +277,20 @@ describe("autonomous research", () => {
     await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-001 已完成")), "coordinator wake-up")
     const wake = host.said("ses_main").at(-1)
     expect(wake.text).toContain(`pub/${pub.publication_id}`)
+    const request = modelRequest("ses_main")
+    await host.hooks.get("context")!(request)
+    if (policy === "r1") {
+      expect(wake.text).toContain("发现：knowledge/")
+      expect(JSON.stringify(request.system)).toContain("X holds under A")
+      expect(JSON.stringify(request.system)).toContain("## findings")
+      await until(async () => {
+        const view = await host.rpc().board({ view: "context_preview", directory: project })
+        return view.last_recorded?.policy_version === "memory-r1-v1"
+      }, "actual R1 injection record")
+      const observed = await host.rpc().board({ view: "context_preview", directory: project })
+      expect(observed.observations.generated).toBeGreaterThan(0)
+      expect(observed.observations.recorded).toBeGreaterThan(0)
+    } else expect(JSON.stringify(request.system)).not.toContain("X holds under A")
 
     // Coordinator dispatches the second node; node 2 finishes with a content-only publication.
     host.turn.start("ses_main")
@@ -291,6 +306,7 @@ describe("autonomous research", () => {
     host.turn.end("ses_node_2")
     await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-002 已完成")), "second wake-up")
 
+    if (policy === "r1") expect(host.said("ses_main").some((value) => value.text.includes("未登记发现"))).toBe(true)
     // Synthesis and conclusion stop the loop.
     host.turn.start("ses_main")
     const final = await host.call("research_publish", "ses_main", {
@@ -823,4 +839,44 @@ describe("board text", () => {
     expect(missing).toContain("不在本机")
     expect(missing).toContain("object_missing")
   })
+})
+
+test("R1 context policy switches through the host and remains opt-in", async () => {
+  const host = await load()
+  await host.command("init", "ses_main", { goal: "R1 policy fixture" })
+  const legacy = modelRequest("ses_main")
+  await host.hooks.get("context")!(legacy)
+  expect(JSON.stringify(legacy.system)).not.toContain("critical_now")
+  const switched = await host.command("context-policy", "ses_main", { policy: "r1" })
+  expect(switched.message).toContain("memory-r1-v1")
+  expect(switched.message).not.toContain("诊断")
+  expect(switched.state.last_recorded.policy_version).toBe("memory-v2")
+  const current = modelRequest("ses_main")
+  await host.hooks.get("context")!(current)
+  expect(JSON.stringify(current.system)).toContain("critical_now")
+  expect(JSON.stringify(current.system)).toContain("findings")
+  const back = await host.command("context-policy", "ses_main", { policy: "legacy" })
+  expect(back.state.policy_version).toBe("memory-v2")
+  expect(back.state.last_recorded.policy_version).toBe("memory-r1-v1")
+  const restored = modelRequest("ses_main")
+  await host.hooks.get("context")!(restored)
+  expect(JSON.stringify(restored.system)).not.toContain("critical_now")
+})
+
+test("switching context policy clears cached and in-flight legacy context", async () => {
+  const { Research } = await import("../src/research")
+  let resolveRead!: (value: any) => void
+  const storage = {
+    request: async (method: string) => {
+      if (method === "context_policy") return { policy_version: "memory-r1-v1" }
+      if (method === "memory_context") return new Promise((resolve) => { resolveRead = resolve })
+      return {}
+    },
+  } as unknown as StorageClient
+  const research = new Research(storage, project, () => false)
+  research.register("main", project, "main")
+  const pending = research.memory("main")
+  await research.contextPolicy("main", "r1")
+  resolveRead({ text: "LEGACY_IN_FLIGHT", policy_version: "memory-v2", source_sequence: 1 })
+  expect(await pending).not.toContain("LEGACY_IN_FLIGHT")
 })
