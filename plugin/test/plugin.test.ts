@@ -205,7 +205,7 @@ test('an attachment that saw no registry discovers a later research association'
     await creator.init('ses_main', project, 'membership fixture')
     await observer.confirmMembership('ses_main')
     expect(observer.roleOf('ses_main')).toBe('main')
-    expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(true)
+    expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(false)
     await observer.confirmMembership('ordinary')
     expect(observer.isAssociated('ordinary')).toBe(false)
   } finally {
@@ -702,7 +702,8 @@ describe("autonomous research", () => {
       await host.hooks.get("context")!(request)
       expect(Object.keys(request.tools)).not.toContain("subagent")
       expect(Object.keys(request.tools)).not.toContain("question")
-      expect(Object.keys(request.tools)).toContain("shell")
+      if (sessionID === "ses_main") expect(Object.keys(request.tools)).not.toContain("shell")
+      else expect(Object.keys(request.tools)).toContain("shell")
     }
     const plain = modelRequest("ses_plain")
     await host.hooks.get("context")!(plain)
@@ -826,6 +827,16 @@ describe("autonomous research", () => {
       .rejects.toMatchObject({ metadata: { code: 'research_control_paused' } })
   })
 
+  test("coordinator cannot execute native or unknown tools through an old request", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "role fixture" })
+    for (const tool of ["shell", "edit", "write", "research_shell"]) {
+      await expect(host.hooks.get("tool.execute.before")!({ tool, sessionID: "ses_main", id: `blocked-${tool}`, input: {} }))
+        .rejects.toMatchObject({ metadata: { code: "research_role_violation", allow_fallback: false } })
+    }
+    await host.hooks.get("tool.execute.before")!({ tool: "read", sessionID: "ses_main", id: "read", input: {} })
+  })
+
   test("paused context replaces continue instructions and cannot propose new work", async () => {
     const host = await load()
     await host.command("auto", "ses_main", { goal: "control fixture" })
@@ -892,7 +903,8 @@ describe("autonomous research", () => {
     await first.hooks.get('context')!(request)
     expect(Object.keys(request.tools)).toContain('research_finish')
     expect(Object.keys(request.tools)).not.toContain('research_dispatch')
-    await first.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'old-main', input: {} })
+    await expect(first.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'old-main', input: {} }))
+      .rejects.toMatchObject({ metadata: { code: 'research_role_violation' } })
     const nodes = await first.call('research_query', child, { collection: 'nodes' })
     expect(nodes.items.some((item: any) => item.node_id === 'X-001')).toBe(true)
     release()

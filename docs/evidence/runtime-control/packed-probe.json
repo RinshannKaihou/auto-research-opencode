@@ -1,0 +1,17 @@
+{
+  "host": "OpenCode 2.2.5",
+  "scope": "isolated temporary release archive, local scripted provider, local pinned SDK",
+  "build_tree_deleted_before_start": true,
+  "python_loaded_from_extracted_archive": true,
+  "normal": {"actions": ["propose", "dispatch", "node_finish"], "node_launch": "submitted", "node_finish": "completed", "task_state": "finished"},
+  "pause": {"run_state": "paused", "task_state": "finished", "reservations_before": 3, "reservations_after": 3},
+  "explicit_resume": {"run_state": "running", "node_launch_count": 1, "task_state": "finished"},
+  "specialist": {"launch": "submitted", "state": "completed", "exit_verified": true},
+  "stop_during_specialist": {"run_state": "stopped", "node_task": "unverified", "specialist_native_outcome": "interrupted", "specialist_state": "cancelled"},
+  "node_during_real_host_restart": {"process_changed": true, "run_state": "paused", "task_after_resume": "unverified", "launch_count": 1, "node_reservations_before_and_after": 1},
+  "specialist_during_real_host_restart": {"process_changed": true, "run_state": "paused", "task_after_resume": "unverified", "specialist_after_resume": "unverified", "specialist_launch_count": 1},
+  "active_specialist_same_process_reattach": {"trigger": "test plugin invokes setup in real host context", "run_state": "running", "fence_advanced": true, "state": "completed", "launch_count": 1, "identity_scope_deadline_preserved": true},
+  "lost_kickoff_response_in_instrumented_copy": {"task_state": "unverified", "launches_before_user_check": 1, "node_reservations_before_and_after_terminal": 1, "launches_after_explicit_retry": 2, "retry_message_id_changed": true},
+  "lost_report_response_in_instrumented_copy": {"accepted_by_host": true, "status_exposed_uncertainty": true, "operator_confirmed_state": "delivered", "message_id_preserved": true},
+  "limitations": ["The provider is local and scripted; host configuration reload teardown and all multi-process interleavings were not exercised."]
+}

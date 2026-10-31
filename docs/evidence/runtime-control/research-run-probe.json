@@ -1,0 +1,25 @@
+{
+  "host": "OpenCode 2.2.5",
+  "scope": "isolated temporary project, separate registry and local scripted provider",
+  "normal_run": {
+    "model_actions": ["research_propose", "research_dispatch", "research_finish"],
+    "nodes": 1,
+    "task_state": "finished",
+    "launch_intent": "submitted",
+    "finish_intent": "completed",
+    "coordinator_shell_advertised": false,
+    "node_shell_and_finish_advertised": true
+  },
+  "pause_during_node_turn": {
+    "project_state": "paused",
+    "task_state": "finished",
+    "finish_intent": "completed",
+    "reservations_at_pause": 3,
+    "reservations_after_finish": 3
+  },
+  "finding": "Equivalent /var and /private/var paths caused separate host plugin attachments. Calls are now forwarded to the current controller and generated sessions retain the host's location spelling.",
+  "limitations": [
+    "The scripted provider uses controlled local responses, not a real external model.",
+    "This probe does not inject a lost network response, host crash, or expert timeout; those cases are covered by local fault-injection tests."
+  ]
+}

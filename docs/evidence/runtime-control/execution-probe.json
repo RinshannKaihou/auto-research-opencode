@@ -1,0 +1,26 @@
+{
+  "host": "OpenCode 2.2.5",
+  "sdk": "@opencode/plugin 2.0.18",
+  "scope": "temporary XDG directories and an isolated loopback fake OpenAI-compatible provider",
+  "provider_requests": 2,
+  "synthetic_requests_accepted": 2,
+  "first_observed_execution": {
+    "inbox_delivered_seq": 4,
+    "step_started_seq": 5,
+    "execution_succeeded_seq": 10,
+    "execution_started_observed": false
+  },
+  "second_observed_execution": {
+    "execution_started_seq": 12,
+    "inbox_delivered_seq": 13,
+    "execution_succeeded_seq": 19
+  },
+  "returned_inbox_id_matches_submitted_id": true,
+  "delivered_message_visible_in_context": true,
+  "context_order": ["synthetic", "assistant", "idle", "synthetic", "assistant", "idle"],
+  "terminal_outcomes": ["succeeded", "succeeded"],
+  "limitations": [
+    "The first execution-start event was not observed; the probe does not establish whether it was emitted before subscription or omitted.",
+    "The probe does not establish behavior under lost HTTP responses, interrupted tool calls, or plugin reload during a live model execution."
+  ]
+}

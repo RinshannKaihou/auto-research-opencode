@@ -5,6 +5,7 @@
  * the delegate tools run node specialists.
  */
 import type { Spec } from "./schema"
+import { coordinatorMayUseNative } from "./coordinator-boundary"
 
 export type Role = "main" | "node_core" | "specialist"
 export type EngineAction = "dispatch" | "wait" | "finish" | "conclude" | "delegate" | "delegate_batch"
@@ -427,5 +428,7 @@ export function keepsTool(
   if (role === "specialist") return specialistTools.includes(name)
   if (NATIVE_BLOCKED.has(name)) return false
   const own = TOOLS.find((tool) => tool.name === name)
-  return !own || own.roles.includes(role as Role)
+  if (own) return own.roles.includes(role as Role)
+  if (role === "main" || !role) return coordinatorMayUseNative(name)
+  return true
 }
