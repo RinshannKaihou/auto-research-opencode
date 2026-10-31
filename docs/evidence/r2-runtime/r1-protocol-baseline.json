@@ -1,0 +1,95 @@
+{
+  "contract": "legacy",
+  "model_calls": [
+    {
+      "tool": "research_memory",
+      "input_fields": 9,
+      "input_chars": 277,
+      "keys": [
+        "action",
+        "ref",
+        "changes",
+        "reason",
+        "expected_revision",
+        "change_kind",
+        "affected_scope_mode",
+        "affected_scope",
+        "execution_refs"
+      ]
+    },
+    {
+      "tool": "research_memory",
+      "input_fields": 9,
+      "input_chars": 308,
+      "keys": [
+        "action",
+        "ref",
+        "changes",
+        "reason",
+        "expected_revision",
+        "change_kind",
+        "affected_scope_mode",
+        "affected_scope",
+        "execution_refs"
+      ]
+    },
+    {
+      "tool": "research_memory",
+      "input_fields": 3,
+      "input_chars": 81,
+      "keys": [
+        "action",
+        "state",
+        "expected_revision"
+      ]
+    }
+  ],
+  "host_calls": [
+    {
+      "method": "open",
+      "outcome": "succeeded",
+      "ms": 16.384457994718105
+    },
+    {
+      "method": "focus",
+      "outcome": "succeeded",
+      "ms": 2.013082994380966
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 3.4411660017212853
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 3.9259589975699782
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 3.6661250051110983
+    },
+    {
+      "method": "memory_context",
+      "outcome": "succeeded",
+      "ms": 5.999083005008288
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 3.0548340000677854
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 2.7159999881405383
+    }
+  ],
+  "stale_write": "accepted",
+  "model_input_fields": 21,
+  "host_calls_count": 8,
+  "host_call_median_ms": 3.553645503416192,
+  "model_usage": "not_run",
+  "research_quality": "not_evaluated"
+}

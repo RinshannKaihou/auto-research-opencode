@@ -2,6 +2,8 @@
 
 **当前版本：v0.1.1**（2026-09-29），实验版本。已审阅一次真实模型研究实例；本版针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
+当前源码包含尚未发布的 R1／R2，数据库使用 schema 11。R2 已完成窄写工具、已交付基线 CAS、候选／审阅义务、关系与采用记录、持久自主调度预算及调用观测。内部验证与统一验收步骤见 [R2 实施记录](docs/evidence/r2-runtime/README.md)；版本号尚未变更。
+
 给出一个研究目标，插件就在 OpenCode V2 里驱动模型自己完成规划、派发、实验、综合和收尾，中间不需要你再发消息。你可以随时插话指导，也可以暂停或停止。研究中的节点、发布材料、知识和依据都记在项目目录的研究记录里，中断后能接着做，每条结论都能追到来源。
 
 ## 它能做什么
@@ -38,7 +40,9 @@
 2. 安装插件依赖：
 
    ```bash
-   cd ~/work/agent-research/auto-research-opencode/plugin && bun install
+   cd ~/work/agent-research/auto-research-opencode/plugin
+   bun install
+   bun run sync:python
    ```
 
 3. 打开 OpenCode 的全局配置 `~/.config/opencode/opencode.jsonc`（或 `opencode.json`），在最外层加上插件目录的**绝对路径**：
@@ -124,6 +128,7 @@ opencode --auto
 | `/research resume` | 恢复。OpenCode 重启后，正在运行的项目会先暂停，也用这条命令继续 |
 | `/research stop` | 中断正在运行的会话，取消排队和进行中的节点任务（需要确认），已有记录保留 |
 | `/research status` | 查看项目和本会话的状态 |
+| `/research budget` | 查看持久预算、已用轮次与用量覆盖；`/research budget turns 20 原因` 显式调整限额，resume 不清账 |
 | 在某个会话里按 Esc | 中断这一轮，并暂停这个会话的自动推进 |
 
 其余命令（`init`、`guidance`、`takeover`、`detach`）见 [plugin/README.md](plugin/README.md#命令)。
@@ -169,9 +174,9 @@ opencode --auto
 
 ## 更新
 
-v0.1.1 将研究记录升级到 **schema 10**。首次以可写存储打开旧 schema-9 项目时，会保存 `.research/schema-9-backup.sqlite3` 并迁移；研究会话的状态查询或恢复也可能触发，不必等到第一次科研写入。独立只读浏览（`project_read`）不迁移。历史结项显示“结项记录：未记录；审阅情况未知”，不会自动推定审阅通过。
+当前源码将研究记录升级到 **schema 11**。首次以可写存储打开旧项目时，schema 9 依次升级到 10、11，schema 10 升级到 11；迁移前分别保存 `.research/schema-9-backup.sqlite3`、`.research/schema-10-backup.sqlite3`。迁移失败后的新写入会触发带后缀的新备份，保留原备份。研究会话的状态查询或恢复也可能触发可写打开，不必等到第一次科研写入。独立只读浏览（`project_read`）支持 9／10／11 且不迁移。旧审阅 todo 映射为目标未知的候选，旧 completed 不推定新义务完成；历史结项标签和原请求响应保持原样。
 
-升级后不能直接用旧版插件写入 schema 10。回退代码不会回退数据库；如必须回退，应先停止相关服务并保留整个当前项目副本，再在副本中使用升级前备份恢复研究记录。恢复到该备份会丢失升级后的研究记录，不能将其当作无损降级。
+升级后不能直接用旧版插件写入 schema 11。回切 Legacy 只改变读取策略，不关闭 CAS 或降数据库版本。回退代码前应停止相关服务并保留整个当前项目副本，再在副本中使用升级前备份恢复研究记录。恢复到该备份会丢失升级后的研究记录，不能将其当作无损降级。
 
 checkpoint 默认绑定当前节点；主协调没有节点工作时才写项目级 checkpoint。已知误归属和来源不明的历史项目 checkpoint 会从自动恢复上下文中隔离，原始记录仍可查询。
 
@@ -181,7 +186,7 @@ checkpoint 默认绑定当前节点；主协调没有节点工作时才写项目
 cd ~/work/agent-research/auto-research-opencode && git pull
 ```
 
-如果 `plugin/package.json` 的依赖变了，再在 `plugin/` 里执行一次 `bun install`。最后重启后台服务：
+如果 `plugin/package.json` 的依赖变了，再在 `plugin/` 里执行一次 `bun install`。更新后先在 `plugin/` 执行 `bun run sync:python` 刷新内置后端，最后重启后台服务：
 
 ```bash
 opencode service restart
@@ -189,14 +194,14 @@ opencode service restart
 
 若本地曾生成 `plugin/python/`，更新代码后需在 `plugin/` 执行 `bun run sync:python`，刷新优先加载的内置 Python 代码。`bun pm pack` 会通过 `prepack` 自动同步；独立打包测试验证 tarball 解压后无需仓库 `src/` 即可启动。
 
-## v0.1.1 的研究可信度边界
+## 当前源码的研究可信度边界
 
-本版修复状态归属和交付要求，不自动证明研究结论。以下 P1 仍待后续版本处理：
+R2 修复写入契约、审阅任务生命周期和受管自动推进，不自动证明研究结论。以下工作仍待后续版本处理：
 
 - **高优先级：研究结论的适用条件、证据依赖与最终报告审阅。** 条件可能在知识压缩中丢失，漏登记的依赖无法触发修订传播；审阅声明不能替代对每条研究结论的验证，也不能替代对反例的分析和处理。
-- **高优先级：完整审阅流程及实验预算执行。** 发起审阅、分派任务和处理审阅结果的流程尚未完整实现；CPU/GPU 运行预算主要依赖研究 agent 的执行与记录，不能宣称已由框架统一强制保障。
+- **高优先级：完整科学审阅与结项准入。** R2 已支持精确版本的审阅义务与报告闭合，但任务完成、科学覆盖、风险处置分开记录。完整结项 coverage 与独立性准入属于 R3。持久轮次、总节点和时限约束插件调度；外部 CPU/GPU 进程不受全局强制限额控制。
 - **中高优先级：复现材料完整性。** 保存所选文件的固定版本不代表代码、环境、原始运行和模型状态已经齐全。
-- **中优先级：模型成本采集和框架效果评估。** 尚不能完整报告单位成本收益，也没有用等预算对照证明自演进提高了研究质量。
+- **中优先级：完整成本与框架效果评估。** 原生事件提供的实际 token／cost 按来源去重采集，缺失保持未知。观测阈值不能保证全局费用硬上限，也没有用等预算真实模型对照证明研究质量提高。
 
 ## 卸载
 
@@ -232,7 +237,7 @@ opencode service restart
 
 这个项目来自 DSH（DeepSeek Harness）版的研究插件：[auto-research-dsh](https://github.com/RinshannKaihou/auto-research-dsh)，最终版本 **0.6.11**。
 
-- **研究记录来自 DSH 0.6.11**：初始研究记录使用相同的 schema 9；当前工作版本增加 schema 10 结项记录。OpenCode 另有两种上下文配置、单向接管、节点会话登记和无需会话身份的只读浏览。节点问题、依赖和分支、固定引用、知识修订，以及追踪材料变化对结论影响的功能，沿用原有设计。
+- **研究记录来自 DSH 0.6.11**：初始研究记录使用相同的 schema 9；schema 10 增加结项记录，当前 R2 源码使用 schema 11。OpenCode 另有两种上下文配置、单向接管、节点会话登记和无需会话身份的只读浏览。节点问题、依赖和分支、固定引用、知识修订，以及追踪材料变化对结论影响的功能，沿用原有设计。
 - **DSH 版已停止维护**：DSH 版停在 0.6.11，不再开发。两边的代码从此各自维护，新功能只进这个仓库。
 - **接管 DSH 建的项目**：在项目目录里用 `/research takeover` 接管，项目必须先在 DSH 里停下。接管是**单向**的：原来的 DSH 主会话会被移出项目，之后由 OpenCode 继续。同一个项目不要同时在 DSH 和 OpenCode 里打开。
 
@@ -268,7 +273,7 @@ make test-plugin   # 只跑插件测试（假宿主 + 真实 Python）
 
 `research_query` 的 `critical_now`、`findings`、`completed_findings` 集合可分页展开，后续请求原样传回 `cursor`。`review_todos` 和 `hints` 也支持原样传回游标，自动恢复筛选；续页时改变筛选会要求刷新。结果变化提示刷新，仅 usage 事件不影响续页。固定 `ref` 可读取完整记录；超长记录使用 `offset/limit` 分段，携带首段的 `content_sha256` 作为 `expected_digest`，避免混合不同读取状态。
 
-此版本保持 schema 10 和研究写入语义；R1 读取与浏览不关闭 todo、不重新计算字段检查。回放与开发验证见 [R1 实施记录](docs/evidence/r1-context/README.md)。
+R1 原提交保持 schema 10 和研究写入语义；当前 R2 另行升级到 schema 11。R1 读取与浏览不关闭 todo、不重新计算字段检查。回放与开发验证见 [R1 实施记录](docs/evidence/r1-context/README.md)。
 
 ## 许可证
 

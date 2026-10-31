@@ -10,6 +10,7 @@ from .errors import ValidationError, NotFoundError
 
 POLICIES = ("memory-v2", "memory-r1-v1")
 COLLECTIONS = ("critical_now", "findings", "completed_findings")
+CHECKPOINT_CONTEXT_CHARS = 4000
 
 
 def encoded(value):
@@ -21,6 +22,11 @@ def digest(value):
 
 
 def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
+    if decision_refs is None:
+        declared = store._project(db)['config'].get('r2_review_scope')
+        run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+        if declared is not None and run and declared['generation']==run[0]:
+            decision_refs = declared['refs']
     if decision_refs is not None and (not isinstance(decision_refs, list) or
             any(not isinstance(ref, str) or not ref.strip() for ref in decision_refs)):
         raise ValidationError("decision_refs must be a list of nonempty references")
@@ -57,7 +63,7 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
         parsed = frozen_refs.parse(ref)
         if frozen_refs.is_frozen(ref):
             resolution = frozen_refs.resolve(db, store.root, ref)
-            if resolution['outcome'] == 'not_found':
+            if resolution['outcome'] == 'not_found' and resolution['reason']!='object_missing':
                 raise NotFoundError(resolution['message'])
             if resolution['outcome'] in ('unsupported', 'ambiguous'):
                 raise ValidationError(resolution['message'])
@@ -211,6 +217,17 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
         if status != 'no impact found' or not check['targets_complete']:
             risk('publication', ref, {'status': status, 'versions': check['result']['versions'],
                                      'targets_complete': check['targets_complete']}, {'ref': ref})
+    if db.execute('PRAGMA user_version').fetchone()[0]>=11:
+        from .review_lifecycle import unresolved_challenges
+        for review in unresolved_challenges(db):
+            risk('review_challenge',review['target_ref'],{'review_event':review['event_id'],
+                'obligation_id':review['obligation_id'],'review_ref':json.loads(review['evidence_refs'])[0],
+                'status':'unresolved'}, {'ref':review['target_ref']})
+    for ref in scope:
+        if frozen_refs.is_frozen(ref):
+            resolution=frozen_refs.resolve(db,store.root,ref)
+            if resolution['outcome']!='resolved':
+                risk('material_unavailable',ref,{'status':'unavailable','reason':resolution['reason']},{'ref':ref})
     for row in selected.values():
         row['current_ref'] = latest[row['knowledge_id']]['ref']
         row['version_notices'] = epistemic.version_notices(db, row['ref'], bound)
@@ -308,20 +325,24 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     views['findings']['completed_nodes'] = {
         'total': len(completed), 'items': completed[:8], 'shown': min(8, len(completed)),
         'has_more': len(completed) > 8, 'expand': {'collection': 'completed_findings'}}
-    counts = dict(db.execute("SELECT trigger_kind,COUNT(*) FROM review_todos WHERE state='pending' "
-                             "AND (? IS NULL OR node_id=?) GROUP BY trigger_kind", (node_id, node_id)))
     clerical = Counter(v['class'] for v in hints.structure_hints(
         db, limit=None, node_id=node_id, klass='clerical')['items'])
-    views['review_backlog'] = {'total': sum(counts.values()), 'by_trigger_kind': {},
-                               'categories_omitted': len(counts),
-                               'expand': {'collection': 'review_todos', 'state': 'pending',
-                                          **({'node_id': node_id} if node_id else {})}}
-    for kind, count in sorted(counts.items()):
-        views['review_backlog']['by_trigger_kind'][kind] = count
-        if len('## review_backlog\n' + encoded(views['review_backlog'])) > 600:
-            del views['review_backlog']['by_trigger_kind'][kind]
-            break
-        views['review_backlog']['categories_omitted'] -= 1
+    if db.execute('PRAGMA user_version').fetchone()[0]>=11:
+        from .review_lifecycle import summary
+        views['review_backlog'] = summary(db,node_id)
+    else:
+        counts = dict(db.execute("SELECT trigger_kind,COUNT(*) FROM review_todos WHERE state='pending' "
+                                 "AND (? IS NULL OR node_id=?) GROUP BY trigger_kind", (node_id, node_id)))
+        views['review_backlog'] = {'total': sum(counts.values()), 'by_trigger_kind': {},
+                                   'categories_omitted': len(counts),
+                                   'expand': {'collection': 'review_todos', 'state': 'pending',
+                                              **({'node_id': node_id} if node_id else {})}}
+        for kind, count in sorted(counts.items()):
+            views['review_backlog']['by_trigger_kind'][kind] = count
+            if len('## review_backlog\n' + encoded(views['review_backlog'])) > 600:
+                del views['review_backlog']['by_trigger_kind'][kind]
+                break
+            views['review_backlog']['categories_omitted'] -= 1
     views['clerical_index'] = {'by_class': dict(clerical),
                                'expand': {'collection': 'hints', 'kind': 'clerical',
                                           **({'node_id': node_id} if node_id else {})}}
@@ -361,7 +382,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         for item in model['critical_now']:
             index = {'kind': item['kind'], 'target': item['target'], 'ref': item['expand']['ref'],
                      'risk': {key: item['risk'][key] for key in
-                              ('status', 'result', 'check_index', 'retracted_ref', 'scope_unconfirmed')
+                              ('status', 'result', 'check_index', 'retracted_ref', 'scope_unconfirmed','review_event')
                               if key in item['risk']}}
             entries = views['critical_now']['risk_index']
             entries.append(index)
@@ -369,6 +390,14 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
                 entries.pop()
                 break
         risk_budget = max(0, risk_budget - len(encoded(views['critical_now']['risk_index'])))
+    # Keep a complete recovery snapshot ahead of optional finding prose.
+    for key in ('checkpoint_recovery','checkpoint'):
+        if block_map[key] is not None:
+            if key=='checkpoint' and len(encoded(block_map[key]))>CHECKPOINT_CONTEXT_CHARS:
+                continue
+            views[key]=block_map[key]
+            if len(body())>max_chars:
+                del views[key]
     findings = model['findings']
     groups = [
         [v for v in findings if 'explicit_input' in v['selection_reasons']],
@@ -406,7 +435,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         views[name]['details_complete'] = len(views[name]['items']) == len(model[name]) and not any(
             value['truncated_fields'] for value in views[name]['items'])
         views[name]['expand_required'] = not views[name]['details_complete']
-    for key in ('questions', 'checkpoint_recovery', 'checkpoint', 'conclusion', 'frozen_context', 'specialist_task', 'method_guidance', 'recent_node_notes'):
+    for key in ('questions', 'conclusion', 'frozen_context', 'specialist_task', 'method_guidance', 'recent_node_notes'):
         if block_map[key] is not None:
             views[key] = block_map[key]
             if len(body()) > max_chars:

@@ -491,6 +491,7 @@ class QueryStore:
         }
 
     def control_state(self, host_id: str | None = None, session_id: str | None = None) -> dict:
+        from .review_lifecycle import summary as review_summary
         with self._read() as db:
             project = self._project(db)
             association = attempt = owned_goal = None
@@ -552,8 +553,11 @@ class QueryStore:
                 "owned_goal": dict(owned_goal) if owned_goal else None,
                 "workflow": workflow,
                 "usage": usage_value,
+                'runtime_budget': self.runtime_budget_summary(db),
                 "specialists": specialists,
-                "review_queue": {
+                "review_queue": review_summary(db,
+                    attempt['node_id'] if attempt else (workflow.get('session') or {}).get('node_id'))
+                if db.execute('PRAGMA user_version').fetchone()[0]>=11 else {
                     "pending_total": int(
                         db.execute("SELECT COUNT(*) FROM review_todos WHERE state='pending'").fetchone()[0]
                     ),
@@ -571,6 +575,6 @@ class QueryStore:
                 "pagination": {
                     "default_limit": 50,
                     "maximum_limit": 200,
-                    "collections": list(COLLECTIONS) + ["usage", "changes"],
+                    "collections": list(COLLECTIONS) + ["usage", "changes",'review_candidates','review_obligations','review_events','adoptions'],
                 },
             }

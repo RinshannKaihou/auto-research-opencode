@@ -1,0 +1,92 @@
+{
+  "contract": "r2",
+  "model_calls": [
+    {
+      "tool": "research_revise",
+      "input_fields": 6,
+      "input_chars": 189,
+      "keys": [
+        "ref",
+        "changes",
+        "reason",
+        "preset",
+        "preserve_sources",
+        "no_new_evidence"
+      ]
+    },
+    {
+      "tool": "research_revise",
+      "input_fields": 6,
+      "input_chars": 203,
+      "keys": [
+        "ref",
+        "changes",
+        "reason",
+        "preset",
+        "preserve_sources",
+        "no_new_evidence"
+      ]
+    },
+    {
+      "tool": "research_checkpoint",
+      "input_fields": 1,
+      "input_chars": 33,
+      "keys": [
+        "state"
+      ]
+    }
+  ],
+  "host_calls": [
+    {
+      "method": "open",
+      "outcome": "succeeded",
+      "ms": 17.708582992781885
+    },
+    {
+      "method": "focus",
+      "outcome": "succeeded",
+      "ms": 2.3787919926689938
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 4.076999990502372
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 4.180457995971665
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 4.372666997369379
+    },
+    {
+      "method": "memory_context",
+      "outcome": "succeeded",
+      "ms": 3.588207997381687
+    },
+    {
+      "method": "checkpoint_observed",
+      "outcome": "succeeded",
+      "ms": 2.3121659905882552
+    },
+    {
+      "method": "memory_write",
+      "outcome": "succeeded",
+      "ms": 3.0805840069660917
+    },
+    {
+      "method": "memory_write",
+      "outcome": "checkpoint_conflict",
+      "ms": 1.8181250052293763
+    }
+  ],
+  "stale_write": "checkpoint_conflict",
+  "model_input_fields": 13,
+  "host_calls_count": 9,
+  "host_call_median_ms": 3.588207997381687,
+  "model_usage": "not_run",
+  "research_quality": "not_evaluated"
+}

@@ -1,10 +1,10 @@
 # auto-research-opencode · 自主研究插件（OpenCode V2）
 
-版本 v0.1.1（实验版本）。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲插件怎么工作。
+发布版本 v0.1.1（实验版本）；当前源码含未发布 R1／R2。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲当前插件怎么工作。
 
 这是面向 OpenCode V2（`@opencode/plugin` 2.0.18）的研究插件。**它会自动推进研究**：你给出研究目标后，插件驱动模型自己完成规划、派发、执行、综合和收尾。你可以随时插话指导，也可以暂停或停止。
 
-研究记录由仓库根目录 `src/auto_research/` 下的 Python 代码管理，保存在 `<项目>/.research/`。数据格式从 DSH 版 0.6.11 的 schema 9 升级到 schema 10。首次以可写存储打开项目时备份并升级 schema 9，包括研究会话的状态查询或恢复；独立只读浏览不升级。旧版不能直接写入 schema 10，回退代码不会自动降级研究记录。
+研究记录由仓库根目录 `src/auto_research/` 下的 Python 代码管理，保存在 `<项目>/.research/`。当前为 schema 11，首次可写打开将 schema 9／10 逐级备份后升级，包括研究会话的状态查询或恢复；独立只读浏览支持 9／10／11 且不升级。旧 todo 保留并映射为 unknown 候选，不自动生成已完成义务。旧版不能直接写入 schema 11；回退代码不降级数据库，恢复备份只能在保留当前完整数据之后的副本中进行。
 
 ## 结项要求
 
@@ -33,7 +33,7 @@
 - 历史 pending 待审项、open 问题不会一律阻止结项。这些结项要求尚不包含完整的科学审阅，也不会检查是否已逐条审阅所有研究结论。
 - 状态和概览显示登记的最终引用、结果及审阅说明；后续发布的材料不会替换最终引用。历史 `complete` 项目无结项记录时显示“结项记录：未记录；审阅情况未知”。重新开展研究使用 `/research auto [补充指令]` 创建新运行 generation。
 
-`research_memory action=checkpoint` 默认写入当前工作对象，后端拒绝不同节点和伪造来源。恢复上下文的 `checkpoint_recovery.head_revision` 用于下一次 checkpoint 的 `expected_revision`；它可能大于显示的有效 checkpoint 版本，因为误归属历史记录被保留但隔离。来源未知的历史项目 checkpoint 不参与自动恢复。
+`research_checkpoint` 默认写入真实当前工作对象。插件仅从本次请求已收到的完整 context／query／上次写入结果登记基线，再由后端原子比较并追加；后台缓存和 execute.after 不代表模型已经收到结果。原始 head 与可见 checkpoint 分开保存，来源未知的历史项目 checkpoint 仍被隔离。无可信基线时先查询 `research_query(collection="checkpoint")`，在后续请求中使用返回的 base；冲突后重新读、重新综合，不盲目重试旧 state。见下文 R2 写入契约。
 
 ## 一句话开始
 
@@ -47,7 +47,7 @@
 
 1. **主协调会话**提出研究节点（`research_propose`），把节点派发出去（`research_dispatch`），然后等待（`research_wait`）。
 2. 插件为每个派发的节点**新建一个执行会话**，标题形如"X-001 · 问题"，并给它一个独立的工作目录 `workspaces/branch-*/`。
-3. 节点执行会话做实验，发布报告和数据（`research_publish`），记录引用这些材料的结论（`research_memory`）；需要独立复核时可以叫一位只读专家（`research_delegate`，见下文"节点内专家"）；完成或受阻时调用 `research_finish`。
+3. 节点执行会话做实验，发布报告和数据（`research_publish`），记录引用这些材料的结论（`research_record`）；需要独立复核时可以叫一位只读专家（`research_delegate`，见下文"节点内专家"）；完成或受阻时调用 `research_finish`。
 4. 插件把节点结果交给主协调，唤醒它继续：综合结果，派发后续节点。
 5. 目标回答后，主协调发布最终报告并调用 `research_conclude`，研究结束。
 
@@ -69,7 +69,7 @@ OpenCode 每结束一轮都会发出一个事件，引擎读取研究记录后�
 | 主协调在等待，或者有节点在跑而它这一轮没有产出 | 进入等待，节点结束后再唤醒 |
 | 节点调用了 `research_finish` | 结束节点本次执行，把总结和已发布材料交给主协调，调度下一个排队的节点 |
 | 节点这一轮有产出但还没结束 | 让它继续 |
-| 同一会话连续 3 轮没有写入任何研究记录 | 暂停这个会话（原因：没有进展） |
+| 同一会话连续 3 轮没有有意义的研究进展 | 暂停这个会话；note、checkpoint、重复处置、重放和纯文案修订不重置计数 |
 | 一轮出错 | 自动重试一次，再出错就暂停这个会话 |
 | 你按 Esc 中断一轮 | 暂停这个会话 |
 | OpenCode 重启 | 运行中的项目改为暂停，需要用 `/research resume` 继续，不会自动重跑 |
@@ -101,6 +101,8 @@ OpenCode 每结束一轮都会发出一个事件，引擎读取研究记录后�
 | `/research resume` | 恢复所有受插件管理的会话 |
 | `/research stop` | 中断正在运行的会话，取消排队中和进行中的节点任务（需要确认），已有记录保留 |
 | `/research status` | 查看项目和本会话的状态 |
+| `/research budget` | 查看持久限额、使用量和覆盖范围 |
+| `/research budget <turns\|nodes\|seconds\|tokens\|cost> <正整数\|off> <原因>` | 主会话显式修改限额，off 表示未启用；resume 不清账 |
 | `/research board` | 打开只读看板：1 概览、2 研究、3 成果；v 切换所属内容 |
 | `/research context-policy [legacy\|r1]` | 主会话查看／切换上下文策略；后续模型请求生效，不重开项目 |
 | `/research init <目标>` | 只建立项目、不开始，适合先和模型讨论方案 |
@@ -114,8 +116,85 @@ OpenCode 每结束一轮都会发出一个事件，引擎读取研究记录后�
 |---|---|
 | 主协调 | `propose`、`dispatch`、`wait`、`conclude`、`close_node` |
 | 节点执行 | `finish`、`consume`、`delegate`、`delegate_batch` |
-| 两者共用 | `query`、`memory`、`note`、`snapshot`、`publish`、`relate` |
+| 两者共用 | `query`、`record`、`revise`、`checkpoint`、`dispose`、`narrow_scope`、`note`、`snapshot`、`publish`、`relate` |
 | 专家 | `query`、`read_input`（盲评只有 `read_input`），外加 OpenCode 自带的 `read`、`glob`、`grep` |
+
+## R2 写入与审阅
+
+主协调和节点共享五个窄写工具，模型上下文不再列出 `research_memory`。旧接口保留给历史调用，仍走同一权限与领域事务；首次无基线 checkpoint 会被拒绝，旧成功请求按原 ID／payload 重放。
+
+| 工具 | 最小意图与边界 |
+|---|---|
+| `research_record` | 知识种类和 statement；证据、条件及科学关系由模型明确声明 |
+| `research_revise` | 固定 ref、changes、reason、preset；editorial 只改文案，correct_previous 只影响该输入版本，custom 明确填写 change_kind／affected_scope_mode／affected_scope |
+| `research_checkpoint` | 通常只填 state；当前请求无已交付基线时先读 checkpoint，再据返回值重新组织 state |
+| `research_dispose` | 指定 change_id／affected_version 的科学处置，不代替审阅报告 |
+| `research_narrow_scope` | 明确缩小未知影响范围，不表示风险解决 |
+
+例如仅改措辞、未增加证据且保留执行来源：
+
+```json
+{
+  "ref": "knowledge/K-001@2",
+  "changes": {"statement": "在已测条件下观察到改善"},
+  "reason": "限定表述",
+  "preset": "editorial",
+  "preserve_sources": true,
+  "no_new_evidence": true
+}
+```
+
+两个来源标志必须明确提供；一旦改变证据、支撑或 checks，不能借此保留旧验证结果。旧空来源仍为空、unlinked 仍为 unlinked，不从 author 推定执行来源。record／revise 返回实际持久化 field_checks。
+
+checkpoint 的 base 绑定 host、session、association、attempt、owner、generation 和插件实例。`checkpoint_base_required` 表示需要重新读取；`checkpoint_conflict` 表示当前原始 head 已变，应重新读并综合。响应提供 next_base，但只有该结果进入后续模型请求，才成为自动写入基线。相同 operation ID 仍返回原响应；不能改 payload 后沿用该 ID。连接旧 Python 包时明确报契约不兼容，更新代码后先执行 `bun run sync:python`。
+
+发布、结束、修订和 correction note 只生成候选。活跃节点的输入、真实支撑、依赖和 consume 派生当前审阅范围；主协调直接调用 `research_review_scope(refs, reason)` 声明综合采用范围，不依赖 checkpoint。checkpoint 的 `decision_refs`／`scope_reason` 兼容入口仍保留：省略表示保留，空列表表示明确清空。后续查询传入的 decision_refs 只影响该次只读查看。
+
+`research_query` 的 `review_candidates`／`review_obligations`／`adoptions` 支持分页。义务按 generation、owner、精确目标版本及 change_id 区分，使用 `research_relate` 链接报告：
+
+```json
+{
+  "source_ref": "pub/P-009#review",
+  "target_ref": "knowledge/K-001@2",
+  "label": "reviews",
+  "note": "已检查这一固定版本，发现反例",
+  "obligation_id": "<query 返回的真实 obligation_id>",
+  "result": "challenges",
+  "complete": true
+}
+```
+
+报告必须独立、非空、可解析，目标与义务精确相符。完整 supports／challenges／inconclusive 都可完成任务，覆盖保持“尚未评估”；challenges 继续显示在当前风险中，风险处置另行登记。离开范围标为 out_of_scope，保留历史和风险；宿主可审计地 waive、reopen、accept_previous，模型没有这些管理入口。重开之后旧报告不能自行再次关单。
+
+完整和部分报告中的 challenge 均独立保留，节点结束、停止／结项、范围退出或新 generation 不会清除。处理某个 challenge 使用 `research_dispose`，提供风险条目返回的 `review_event`、精确 `affected_version`、`disposition_kind`、reason 和 evidence_refs；不要同时提供 change_id。`unresolved` 保留风险，其余处置必须有证据，`revised` 还须提供不同的 replacement_ref。该记录只表明显式处理了这一挑战，不证明科学覆盖通过；历史报告与处置仍可查询。普通知识影响仍按 change_id／affected_version 处置。
+
+同一快照在一个插件实例内复用回执，query 回执按工具调用稳定去重。上下文与回执登记共享 2 秒等待期限，迟到回执只在后续完整交付同一快照时可用，不会回填旧请求。Legacy／R1 的完整 checkpoint 块均最多 4,000 字符；超过上限或剩余上下文预算时整个省略，要求显式读，不为截断 state 签发 base，也不让长 state 挤占科研依据。
+
+typed relate 的知识关系追加新 revision，须明确 revision 的变更／范围字段；`grounded_in` 是支撑，`motivated_by` 不传播失效。节点关系以 source 为后继，target 为前驱节点或其发布材料；depends_on 明确指定采用材料，不允许循环或修改已派发节点。提案输入、原材料 pin 和历史知识版本不被改写。引用可派生采用，同 attempt／ref／relation／用途的显式 consume 去重，不同用途仍保留。
+
+## 自主调度预算与观测
+
+先 `/research init <目标>`，按需配置预算，再开始研究。例如：
+
+```text
+/research budget turns 20 本次试验上限
+/research budget nodes 8 本次试验上限
+/research budget seconds 1800 本次试验上限
+```
+
+未配置的维度显示未配置；没有隐藏默认科研预算。turns 按同一 generation／工作 owner 的受管自动请求预留，含节点与专家 kickoff，交付未核实的预留不退还；nodes 限制项目累计节点数；seconds 是包含暂停和重启时间的持久截止时间。resume 不清零，提额须显式给原因。到时取消排队任务并请求中断，原生结束事件到达前保留未核实状态，不把它当作科学失败或已证实外部进程退出。
+
+停止／结项之后 `/research auto` 创建新 generation，开始新的轮次／时限统计；项目累计 nodes 不清零。预算暂停状态不能用 auto 绕过，仍须显式改额后 resume。cost 接受正小数，例如 `/research budget cost 0.25 本次上限`。
+
+节点在受管轮次前后若源码／实验配置的实际内容改变，可计作开发推进；仅调用 shell、touch、note、checkpoint 或改 Markdown 文书不计。检测由宿主 worker 执行，Python 后端不遍历／读取工作区，RPC 重放不触发扫描。只检测节点 cwd 下代码及 yaml／toml，排除隐藏目录、inputs、node_modules、venv、workspaces、缓存、site-packages／dist-packages、符号链接，以及带 pyvenv.cfg／conda-meta 的环境目录。
+
+探测归属读取与 worker 共享 500ms 等待预算，每次最多遍历 10,000 个目录项、2,000 个源文件、新读取 16MiB。大小／修改时间／ctime／inode 未变的文件复用上次摘要；touch 后重算但内容摘要不变。一个插件实例最多运行一个探测，忙碌、超限、读取失败或工作段变化都保持 unknown，不使用部分摘要刷新 idle。缓存只保留最近一个工作区，后端按 owner／attempt／generation 和算法标识校验前后摘要，仅保存摘要和归属指纹。这是开发活动信号，不是文件完整性认证、实验成功或研究质量评分；科研调用预算另行约束。
+
+deadline 按运行状态和预算变更设置定时器，不持续轮询闲置项目或扫描用量；刷新读取失败保留旧定时器，得到新状态后才替换或清除。控制事件不等待遥测落库；原生开始事件的用量登记按事件顺序入队，业务响应在有活跃关联时附带归属，无关联不阻断合法重放。非写请求的 replayed 为 unknown，不继承上次写入状态。Legacy 优先展示当前 generation 的最新挑战，旧代未处置挑战仍在完整索引中。
+
+tokens／cost 是宿主已观测实际用量的停止阈值，覆盖可能不完整；并发请求、未知调用和外部进程不受全局费用／CPU／GPU 硬上限约束。研究 → 运行会话展示已用／限额／未配置和覆盖边界。
+
+`.research/observations/<插件实例>.jsonl` 独立记录调用起止、输入字段／字符数、拒绝码、传输尝试、重放、preset 展开、实际模型／variant／原生 usage 和外部工具执行元数据。事务失败不会回滚该日志；日志 I/O 失败不改写已提交业务结果，会报告 coverage 缺口。不存提示词、工具参数或命令正文。缺失 token／cost 保持 unknown，聚合 usage.updated 不重复计量；使用 `python3 scripts/r2_measure.py <日志文件...>` 汇总。
 
 ## 用真实模型时的注意事项
 

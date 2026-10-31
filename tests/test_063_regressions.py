@@ -309,7 +309,7 @@ def test_pending_review_context_reports_total_instead_of_calling_eight_the_total
         part for part in context["text"].split("## ") if part.startswith("pending_review\n")
     )
     pending = __import__("json").loads(block.split("\n", 1)[1])
-    assert pending["pending_total"] == 12
-    assert pending["shown_count"] == 8
-    assert pending["has_more"] is True
-    assert len(pending["items"]) == 8
+    assert pending['candidate_total'] == 12
+    assert pending['pending_total'] == 0
+    assert pending['expand']['collection'] == 'review_obligations'
+    assert 'items' not in pending  # candidates are folded, not copied into every model request

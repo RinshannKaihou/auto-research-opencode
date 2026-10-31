@@ -31,7 +31,7 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
   const fakeBoard = async ({ view, fields: f = {} }: any) => {
     calls.push({ view, ...f })
     await beforeRead?.(view, f)
-    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 } }
+    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 },runtime_budget:{available:true,turns:3,total_nodes:101,unconfirmed_reservations:1,limits:{max_session_turns:8,max_total_nodes:120,max_tokens:2000},tokens_observed:420,cost_observed:null,deadline_at:'2026-10-31T12:00:00Z'} }
     if (view === "presentation") return { status: "missing" }
     if (view === "reference_chunk") {
       const value = f.ref === "X-001" ? { node_id: "X-001", question: "Q" } : f.ref.startsWith("knowledge/") ? knowledge(Number(/K-(\d+)/.exec(f.ref)![1])) : { ...file, ref: f.ref, ...(folder ? { source_path: "materials", object_kind: "directory" } : {}) }
@@ -60,6 +60,7 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
         total: 101, kinds: ["publication"], cursor: after + count < 101 ? { after: after + count, fingerprint: "fixture" } : null,
       }
       if (f.collection === "review_todos") return { items: [{ todo_id: "todo-1", node_id: "X-001", state: "pending", trigger_kind: "publication", trigger_ref: target }], total: 1, trigger_types: ["publication"], cursor: null }
+      if (f.collection === 'review_obligations') return {items:[{obligation_id:'RO-fixture',generation:1,scope_owner:'project',target_ref:'knowledge/K-001@1',change_id:'CH-001',state:'completed',risk_disposition:'unresolved',risk:{needs_action:true},events:[{action:'completed',reason:'已核对精确版本，报告提出反例',evidence_refs:[target],scope_snapshot:{result:'challenges'}}]}],total:1,cursor:null}
       if (f.collection === "hints") return { items: [{ class: "whole_snapshot_evidence", target: "knowledge/K-001@1", evidence: { ref: "S-001" } }], total: 1, kinds: ["whole_snapshot_evidence"], cursor: null }
       return { items: [], total: 0, cursor: null }
     }
@@ -115,12 +116,38 @@ test.each([80, 132])("risk view at %i columns explains unknown coverage and open
     await ui.press("[")
     expect(ui.frame()).toContain("第 2 页")
     await ui.press("f")
+    expect(ui.frame()).toContain('当前审阅义务')
+    await ui.press('f')
+    expect(ui.frame()).toContain('审阅候选')
+    await ui.press('f')
     expect(ui.frame()).toContain("历史审阅队列")
     expect(ui.frame()).toContain("不是继续研究或结项")
     await ui.press("f")
     expect(ui.frame()).toContain("文书提示")
     expect(ui.calls.filter((v) => v.collection === "hints").at(-1).kind).toBe("clerical")
   } finally { ui.screen.renderer.destroy() }
+})
+
+test.each([80,132])('R2 review at %i columns separates completed tasks from unresolved risk',async width=>{
+  const ui=await mounted(width)
+  try {
+    await ui.press('3'); await ui.press('v'); await ui.press('v'); await ui.press('f')
+    const frame=ui.frame()
+    expect(frame).toContain('任务已完成')
+    expect(frame).toContain('尚未解决')
+    expect(frame).toContain('尚未评估')
+    expect(frame).toContain('CH-001')
+    if(process.env.R2_CAPTURE_TUI){
+      const dir=new URL('../../docs/evidence/r2-runtime/ui/',import.meta.url)
+      mkdirSync(dir,{recursive:true});writeFileSync(new URL(`review-${width}.txt`,dir),frame.replace(/[ \t]+$/gm,'').trimEnd()+'\n')
+    }
+    await ui.press('2');await ui.press('v')
+    const runtime=ui.frame()
+    expect(runtime).toContain('自主调度预算')
+    expect(runtime).toContain('420 / 2000')
+    expect(runtime).toContain('cost 未知')
+    if(process.env.R2_CAPTURE_TUI) writeFileSync(new URL(`../../docs/evidence/r2-runtime/ui/runtime-${width}.txt`,import.meta.url),runtime.replace(/[ \t]+$/gm,'').trimEnd()+'\n')
+  }finally{ui.screen.renderer.destroy()}
 })
 
 test("knowledge list reaches item 101 and requests complete conditions", async () => {
@@ -209,6 +236,8 @@ test.each([80, 132])("three primary destinations retain results, checks and sess
     expect(ui.calls.every((v) => v.view !== "context_preview")).toBe(true)
     await ui.press("v")
     expect(ui.frame()).toContain("当前风险")
+    await ui.press("f")
+    await ui.press("f")
     await ui.press("f")
     await ui.press("f")
     await ui.press("f")

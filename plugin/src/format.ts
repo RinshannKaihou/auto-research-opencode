@@ -26,7 +26,8 @@ const PAUSE_REASONS: Record<string, string> = {
   segment_complete: "节点工作已结束",
   native_stop: "你中断了这一轮",
   fault: "连续出错",
-  no_progress: "连续几轮没有写入研究记录",
+  no_progress: "连续几轮没有研究推进",
+  budget:'自主调度预算到限，须显式提额后恢复',
   cold: "OpenCode 重启后暂停",
   project: "项目已暂停",
   detached: "已移出项目",
@@ -85,10 +86,13 @@ export function associatedStatus(state: any): string {
     `目标：${state.project?.goal ?? "未记录"}`,
     `项目：${state.project_root ?? ""}`,
     `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
+    state.schema_version>=11 ? `写入契约：R2 · schema ${state.schema_version}` : '',
     work,
     ...conclusionLines(state.workflow?.conclusion, state.workflow?.run?.state),
     countsLine(state.counts),
-    pending ? `待整理 ${pending} 项` : "",
+    state.review_queue?.semantics==='task_completion_is_not_risk_resolution'
+      ? `当前审阅义务 ${pending} 项 · 候选 ${state.review_queue.candidate_total} 项（按需查看）`
+      : pending ? `历史待整理 ${pending} 项` : "",
   ]
     .filter(Boolean)
     .join("\n")
@@ -115,6 +119,7 @@ export const USAGE = [
   "/research resume              恢复自主研究",
   "/research stop                停止自主研究，取消节点任务（需确认）",
   "/research status              查看项目和本会话状态",
+  "/research budget [turns|nodes|seconds|tokens|cost <正数|off> <原因>]  查看或改额；仅 cost 允许小数",
   "/research board               打开研究看板（只读）",
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
   "/research guidance [路径 [--version v]]  查看或登记科研指导文档",

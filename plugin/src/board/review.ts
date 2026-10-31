@@ -3,6 +3,8 @@ import type { Row } from "./model"
 
 export const REVIEW_COLLECTIONS = [
   { id: "critical_now", title: "当前风险", note: "与当前范围相关或相关性尚不明确的检查结果。" },
+  { id: 'review_obligations', title:'当前审阅义务',note:'精确到版本和变更。任务完成不表示科学风险解决。' },
+  { id: 'review_candidates', title:'审阅候选',note:'普通事件形成的候选，按需展开；不会自动阻断研究。' },
   { id: "review_todos", title: "历史审阅队列", note: "历史审阅记录，不是继续研究或结项的统一门槛。" },
   { id: "hints", title: "文书提示", note: "可按需整理的引用和关系提示，不代表科学结论错误。" },
 ] as const
@@ -20,7 +22,7 @@ const TRIGGERS: Record<string, string> = {
   publication: "发布材料", "attempt-finished": "工作段结束",
   "knowledge-revision": "知识修订", "correction-note": "纠正说明",
 }
-const STATES: Record<string, string> = { pending: "待审阅", running: "审阅中", proposal_ready: "审阅材料已准备", completed: "任务已完成" }
+const STATES: Record<string, string> = { pending: "待审阅", running: "审阅中", proposal_ready: "审阅材料已准备", completed: "任务已完成",out_of_scope:'已离开范围（风险保留）',waived:'显式例外（未证明通过）' }
 export function reviewFilterLabel(value: string): string {
   const labels: Record<string, string> = { ...TRIGGERS, ...STATES,
     impact: "知识影响", retracted_basis: "撤回依据", input_reference: "输入版本风险", residual_use: "旧依据使用",
@@ -54,6 +56,28 @@ export function reviewCard(item: any, source?: any): ReviewCard {
   function link(ref: string, label: string, file = false, path?: string) {
     if (!seen.has(ref)) { card.links.push({ ref, label, file, path }); seen.add(ref) }
   }
+  if (item.obligation_id) {
+    card.title = STATES[item.state] ?? item.state
+    card.summary = `${item.target_ref}${item.change_id ? ` · ${item.change_id}` : ''}`
+    card.relevance = `${item.scope_owner} · generation ${item.generation}`
+    card.sections.push({title:'任务与风险',lines:[`任务：${card.title}`,`科学审阅覆盖：尚未评估`,
+      item.risk_disposition ? `风险处置：${({unresolved:'尚未解决',resolved:'已记录处置',not_assessed:'尚未评估'} as Record<string,string>)[item.risk_disposition] ?? item.risk_disposition}` : '任务完成不表示风险已解决。',
+      ...(item.risk?.needs_action ? ['知识仍需处置。'] : [])]})
+    link(item.target_ref,'查看精确目标')
+    for (const event of item.events ?? []) {
+      card.sections.push({title:event.action,lines:[event.reason,`证据 ${event.evidence_refs.length} 项`,
+        ...(event.scope_snapshot.result ? [`结果：${event.scope_snapshot.result}`] : [])]})
+      for (const ref of event.evidence_refs) link(ref,'查看审阅证据',ref.startsWith('pub/') || ref.startsWith('S-'))
+    }
+    return card
+  }
+  if (item.candidate_id) {
+    card.title = `候选 · ${TRIGGERS[item.trigger_kind] ?? item.trigger_kind}`
+    card.summary = '候选不自动成为义务，不阻断研究。'
+    card.sections.push({title:'候选来源',lines:[item.trigger_ref,`目标映射：${item.mapping_status}`]})
+    for (const ref of item.target_refs ?? []) link(ref,'查看候选目标')
+    return card
+  }
   const risk = item.risk
   if (risk) {
     const titles: Record<string, string> = {
@@ -61,9 +85,16 @@ export function reviewCard(item: any, source?: any): ReviewCard {
       residual_use: "仍在使用已处置的旧依据", coverage: "部分依据尚未覆盖检查",
       field_check: risk.result === "inconsistent" ? "声明字段与冻结材料不一致" : "声明字段无法检查",
       publication: risk.status === "attention" ? "报告引用的依据需要关注" : risk.status === "coverage partial" ? "报告的部分依据未覆盖检查" : "报告的检查覆盖未知",
+      review_challenge:'审阅提出挑战（未处置）',
+      material_unavailable:'采用的冻结材料不可读取',
     }
     card.title = titles[item.kind]
-    if (item.kind === "publication") {
+    if (item.kind==='material_unavailable') {
+      card.summary='材料仍属于已声明的采用范围，但冻结对象不可读取。恢复材料前无法完成相关核查；该缺口不会阻止暂停研究。'
+    } else if (item.kind==='review_challenge') {
+      card.summary='审阅任务已完成，但报告中的挑战仍需科学判断；完成任务不表示风险解决。'
+      link(risk.review_ref,'打开挑战报告',true)
+    } else if (item.kind === "publication") {
       card.summary = risk.status === "coverage unknown"
         ? "该材料未登记结构化知识引用，系统无法检查其知识依据的版本与风险。"
         : risk.status === "attention" ? "已登记的知识引用存在待处理影响或仍在使用旧依据。"
@@ -173,9 +204,9 @@ export function reviewCard(item: any, source?: any): ReviewCard {
 export function reviewRows(items: any[]): Row[] {
   return items.map((item) => {
     const card = reviewCard(item)
-    return { id: JSON.stringify([item.ref ?? item.target ?? item.todo_id ?? item.node_id,
-      item.kind ?? item.class, item.risk?.change_id, item.risk?.check_index, item.risk?.retracted_ref, item.evidence]),
-      code: item.target ?? item.ref ?? item.todo_id ?? item.node_id,
+    return { id: JSON.stringify([item.obligation_id ?? item.candidate_id ?? item.ref ?? item.target ?? item.todo_id ?? item.node_id,
+      item.kind ?? item.class, item.risk?.change_id, item.risk?.check_index, item.risk?.retracted_ref, item.risk?.review_event,item.evidence]),
+      code: item.target_ref ?? item.candidate_id ?? item.target ?? item.ref ?? item.todo_id ?? item.node_id,
       title: card.title, data: item }
   })
 }

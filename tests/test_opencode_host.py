@@ -74,7 +74,9 @@ def test_manual_node_work_attaches_results_to_the_node(tmp_path):
         knowledge_refs=[],
     )
     ref = f"pub/{publication['publication_id']}#report"
-    host.call("memory_write", model_call=True, action="checkpoint", fields={"state": {"next": "x"}})
+    seen = host.call('query', collection='checkpoint')
+    host.call("memory_write", model_call=True, action="checkpoint", fields={"state": {"next": "x"},
+        'expected_revision': seen['snapshot']['head_revision']})
     host.call(
         "consume", model_call=True, source_ref=ref, use="baseline", relation_type="context"
     )

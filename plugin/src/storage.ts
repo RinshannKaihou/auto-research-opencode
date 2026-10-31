@@ -35,9 +35,13 @@ export interface StorageOptions {
   pythonModulePath?: string
   registryPath?: string
   timeoutMs?: number
+  observeRequest?: (operationID: string, method: string,fields:Record<string,unknown>) => {attempt(n:number):void;response(value:any):void} | undefined
 }
 
 interface Entry {
+  observe?: {attempt(n:number):void;response(value:any):void}
+  operationID: string
+  method: string
   transportId: string
   line: string
   resolve: (value: any) => void
@@ -60,8 +64,10 @@ export class StorageClient {
   private exits: number[] = []
   private unavailable: Error | null = null
   private closed = false
+  private readonly observeRequest?: StorageOptions["observeRequest"]
 
   constructor(options: StorageOptions = {}) {
+    this.observeRequest = options.observeRequest
     this.python = options.python ?? "python3"
     this.modulePath = options.pythonModulePath ?? pythonModulePath()
     this.registryPath = options.registryPath ?? defaultRegistryPath()
@@ -83,7 +89,8 @@ export class StorageClient {
     const line = JSON.stringify({ ...fields, transport_id: transportId, operation_id: operationId, method }) + "\n"
     if (Buffer.byteLength(line) > MAX_REQUEST) return Promise.reject(new Error("Research request is too large"))
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({ transportId, line, resolve, reject, retries: 0 })
+      this.queue.push({ transportId, operationID: operationId, method, line, resolve, reject, retries: 0,
+        observe:this.observeRequest?.(operationId,method,fields) })
       this.ensureStarted().then(() => this.pump(), (error) => this.failAll(error))
     })
   }
@@ -172,8 +179,11 @@ export class StorageClient {
       if (!entry) continue
       this.pending.delete(response.request_id)
       clearTimeout(entry.timer)
+      entry.observe?.response(response)
       if (response.ok) entry.resolve(response.value)
-      else entry.reject(new Error(response.error?.message ?? "Research storage request failed"))
+      else entry.reject(Object.assign(new Error(response.error?.message ?? "Research storage request failed"), {
+        code: response.error?.code, details: response.error?.details,
+      }))
     }
     if (this.buffer.length > MAX_RESPONSE) this.buffer = Buffer.alloc(0)
     this.pump()
@@ -190,6 +200,7 @@ export class StorageClient {
         this.pump()
       }, this.timeoutMs)
       this.pending.set(entry.transportId, entry)
+      entry.observe?.attempt(entry.retries + 1)
       child.stdin.write(entry.line)
     }
   }

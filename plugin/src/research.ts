@@ -3,10 +3,11 @@
  * and in what role, project setup commands, the board, per-request research
  * memory and ledger tool calls. The autonomous loop lives in engine.ts.
  */
-import { randomUUID } from "node:crypto"
+import { randomUUID, createHash } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import type { StorageClient } from "./storage"
+import { CheckpointDelivery } from './checkpoint-delivery'
 import { associatedStatus, unassociatedStatus } from "./format"
 
 export const HOST_ID = "opencode"
@@ -69,11 +70,15 @@ interface Membership {
 }
 
 export class Research {
+  readonly checkpoints = new CheckpointDelivery()
   private members = new Map<string, Membership>()
   private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
   private memoryGeneration = 0
   private loading: Promise<void> | null = null
-  private memoryCache = new Map<string, { text: string; policy_version: string; source_sequence: number }>()
+  private contract: Promise<void> | null = null
+  private receipts = new Map<string,{key:string;value:Promise<{base:string}>}>()
+  private memoryCache = new Map<string, { text: string; policy_version: string; source_sequence: number;
+    checkpoint_snapshot?:Record<string,any>;checkpoint_owner?:Record<string,any> }>()
 
   /**
    * OpenCode loads one plugin instance per directory and every instance sees
@@ -87,6 +92,8 @@ export class Research {
     scope: string,
     private readonly registryExists: () => boolean,
     private readonly changed: (root: string) => void = () => {},
+    readonly instanceID = randomUUID(),
+    private readonly forgotten: (session:string)=>void = ()=>{},
   ) {
     this.scope = canonical(scope)
   }
@@ -105,6 +112,15 @@ export class Research {
   ready(): Promise<void> {
     this.loading ??= this.registryExists() ? this.refresh().catch(() => {}) : Promise.resolve()
     return this.loading
+  }
+
+  ensureContract(): Promise<void> {
+    this.contract ??= this.storage.request('capabilities').then(value => {
+      if (value.memory_write_contract!=='r2-v1') throw Object.assign(
+        new Error('Research backend contract mismatch: install the complete R2 package (including bundled Python).'),
+        {code:'research_contract_mismatch'})
+    }).catch(error=>{this.contract=null;throw error})
+    return this.contract
   }
 
   private async refresh(): Promise<void> {
@@ -170,6 +186,9 @@ export class Research {
   forget(sessionID: string): void {
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)
+    this.checkpoints.forget(sessionID)
+    this.receipts.delete(sessionID)
+    this.forgotten(sessionID)
   }
 
   notifyChanged(root: string): void {
@@ -179,7 +198,7 @@ export class Research {
   call<T = any>(method: string, sessionID: string, fields: Record<string, unknown> = {}, operationId?: string) {
     return this.storage.request<T>(
       method,
-      { host_id: HOST_ID, session_id: sessionID, ...fields },
+      { host_id: HOST_ID, session_id: sessionID, ...fields, plugin_instance_id: this.instanceID },
       (operationId ?? `${sessionID}:${method}:${randomUUID()}`).slice(0, 256),
     )
   }
@@ -314,14 +333,23 @@ export class Research {
     fields: Record<string, unknown>,
     writes: boolean,
   ): Promise<unknown> {
+    const checkpoint_base = method==='memory_write' && fields.action==='checkpoint'
+      ? this.checkpoints.forCall(call.sessionID,call.messageID,call.callID) : undefined
     await this.ready()
     const root = this.requireAssociated(call.sessionID)
-    const value = await this.call(
+    let value = await this.call(
       method,
       call.sessionID,
-      { ...fields, model_call: true },
+      { ...fields, model_call: true, ...(checkpoint_base ? {checkpoint_base} : {}) },
       `${call.sessionID}:${call.messageID}:${call.callID}:${call.name}`,
     )
+    if (method === 'query' && fields.collection === 'checkpoint') {
+      const receipt = await this.call('checkpoint_observed', call.sessionID, {
+        snapshot: value.snapshot, origin: 'query',
+      },`observed:${createHash('sha256').update(JSON.stringify([this.instanceID,call,value.snapshot])).digest('hex')}`)
+      value = { ...value, ...receipt }
+    }
+    if (value && typeof value === 'object') this.checkpoints.result(call.sessionID,call.callID,call.name,value)
     if (writes) this.changed(root)
     return value
   }
@@ -389,7 +417,8 @@ export class Research {
       if (generation !== this.memoryGeneration) throw new Error("Research context policy changed during read")
       const text = `Research context:\n${view.text}`
       this.memoryObservations.generated++
-      this.memoryCache.set(sessionID, { text, policy_version: view.policy_version, source_sequence: view.source_sequence })
+      this.memoryCache.set(sessionID, { text, policy_version: view.policy_version, source_sequence: view.source_sequence,
+        checkpoint_snapshot:view.checkpoint_snapshot,checkpoint_owner:view.checkpoint_owner })
       void this.call("context_record", sessionID, {
         fields: {
           body: view.text,
@@ -415,5 +444,32 @@ export class Research {
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  async delivered(sessionID:string,text:string,messages:any[],timeoutMs=MEMORY_TIMEOUT_MS): Promise<void> {
+    this.checkpoints.clear(sessionID)
+    const cached = this.memoryCache.get(sessionID)
+    const matches = cached && (text===cached.text || text===`${cached.text}\n\n[Research memory is stale: storage did not answer in time.]`)
+    let context
+    if (matches && cached.checkpoint_snapshot) {
+      const snapshot=cached.checkpoint_snapshot
+      const {source_sequence,...identity}=snapshot
+      const key=createHash('sha256').update(JSON.stringify([this.instanceID,identity])).digest('hex')
+      let receipt=this.receipts.get(sessionID)
+      if(receipt?.key!==key){
+        const operation=createHash('sha256').update(JSON.stringify([this.instanceID,snapshot])).digest('hex')
+        receipt={key,value:this.call('checkpoint_observed',sessionID,{snapshot,origin:'context'},`observed:${operation}`)}
+        this.receipts.set(sessionID,receipt)
+        receipt.value.catch(()=>{if(this.receipts.get(sessionID)===receipt)this.receipts.delete(sessionID)})
+      }
+      let timer:ReturnType<typeof setTimeout> | undefined
+      try{
+        const read=await Promise.race([receipt.value,new Promise<undefined>(resolve=>{timer=setTimeout(()=>resolve(undefined),Math.max(0,timeoutMs))})])
+        if(read) context={base:read.base,snapshot}
+      } catch {
+        // No acknowledged base is delivered; the next write must explicitly read.
+      } finally {clearTimeout(timer)}
+    }
+    this.checkpoints.request(sessionID,messages,matches ? cached.checkpoint_owner : undefined,context)
   }
 }

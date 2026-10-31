@@ -65,6 +65,7 @@ def summary(store, host_id: str, session_id: str) -> dict:
         "revision": revision,
         "counts": state["counts"],
         "review_queue": state["review_queue"],
+        'runtime_budget':state['runtime_budget'],
         "run": workflow.get("run", {}),
         "session": workflow.get("session"),
         "attempt": state.get("attempt"),

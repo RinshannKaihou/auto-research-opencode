@@ -1,0 +1,5 @@
+Excerpt from the full Bun suite in plugin-tests.txt:
+
+test/package.test.ts:
+(pass) release versions agree across Python and plugin metadata [0.92ms]
+(pass) packed backend starts, concludes and restarts without repository sources [500.27ms]

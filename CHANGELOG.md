@@ -1,5 +1,26 @@
 # 版本记录
 
+## 未发布 · R2
+
+- 二轮复审收尾：源码探测移到宿主 worker，缓存未变文件并限制时间／目录项／文件数／读取字节，环境目录和不可变 inputs 排除；后端不扫描，重放不读文件，跨工作段或超限保持 unknown。
+- 观测归属可缺失，不再阻断项目库已提交而登记库尚未更新的 detach 重试；失败的 deadline 刷新保留旧计时器。
+- Legacy／R1 的 checkpoint 整块上限为 4,000 字符，超限走显式读取，保护科研依据预算；Legacy 的挑战摘要按当前 generation、最新事件优先。
+
+- 修复审阅 challenge 随 scope、节点结束或 generation 消失：完整／部分挑战独立保留，使用精确 review_event 和证据登记处置；主协调可直接声明 review scope。
+- 历史对象缺失不再阻断 checkpoint／控制操作，缺口在风险中展示；新引用仍严格校验。移除重复及无关工作流 reconcile。
+- 启动契约失败可重新检查；相同快照复用回执、query 回执稳定去重，完整 checkpoint 优先交付，回执等待不突破上下文期限。控制事件不等待遥测持久化，观测关联并入业务响应，非写请求不再误报 replayed。
+- deadline 改为按运行状态／改额事件定时；节点真实源码／配置变化可计入开发推进，cost 支持小数。会话退出清理交付缓存，压缩历史不保留完整旧工具输出，统一插件实例 ID，修复 cursor 校验及迁移连接关闭。
+- 兼容说明：模型端 typed relate 的 depends_on／branches_from／revises 要求后继节点 source，知识支撑关系要求显式 revision 并追加版本；旧无 contract 的 relate API 保留原路由。直接／离线 checkpoint 首次调用须提供 expected_revision，历史成功请求仍原样重放。Legacy／R1 均执行 CAS。
+
+- schema 11 增量迁移，保留旧 requests、结项和 todo；只读支持 9／10／11，升级前一致性备份及失败重试可恢复。
+- 模型使用 record／revise／checkpoint／dispose／narrow_scope 五个窄工具；旧 memory action 保留适配。修订 preset、显式来源保留和落盘检查响应减少重复填写，不推定执行来源。
+- checkpoint 绑定实际交付给模型的完整快照和真实工作身份，首次写入强制 CAS；同轮并行写、旧缓存、跨进程与迟到响应不能更新基线，原成功请求仍可重放。
+- 发布／修订／结束形成候选；节点实际依赖和主协调显式采用形成精确审阅义务。完整报告仅关闭对应任务，挑战与未处置风险保留；支持出入范围、重开和显式例外。
+- typed relate 路由知识支撑、节点依赖与审阅；知识关系追加版本，引用派生采用，同用途 consume 去重，motivation 不进入支撑传播。
+- 持久轮次、总节点、wall-clock 限制与领域事件进展判断覆盖自主调度。重启／resume 不清账，到时停止继续调度并请求中断；外部退出未核实保持未核实。
+- 独立调用元数据记录拒绝、真实 IPC 重试／重放、原生模型／variant／usage 和外部工具执行；缺失用量保持未知，聚合事件不重复收费。
+- 现有依据检查显示义务与折叠候选，运行详情显示预算及覆盖。三主入口与 Legacy／R1 读取策略保留。验证与统一验收见 `docs/evidence/r2-runtime/README.md`；尚未发布或进行真实模型效果实验。
+
 ## 未发布 · R1
 
 - 修复筛选集合续页、未知决策引用、活跃 attempt 遗漏、小预算展开范围和异步详情覆盖；过时分页明确要求刷新。

@@ -77,7 +77,7 @@ def test_memory_validation_conflicts_and_reference_types(tmp_path):
         store.knowledge_query(conditions={"bad key!": "x"})
 
     checkpoint = store.checkpoint(
-        {"node_id": node["node_id"], "state": {"next": "measure"}}, "checkpoint"
+        {"node_id": node["node_id"], "state": {"next": "measure"}, "expected_revision": 0}, "checkpoint"
     )
     with pytest.raises(ConflictError):
         store.checkpoint(
@@ -178,7 +178,7 @@ def test_query_pages_decode_every_new_collection_and_validate_cursor(tmp_path):
     store = make_store(tmp_path)
     node = store.propose("Q", "now", "plan", "node")
     store.focus("host", "main", node["node_id"], "planner", "manual", "focus")
-    checkpoint = store.checkpoint({"node_id": node["node_id"], "state": {"x": 1}}, "cp")
+    checkpoint = store.checkpoint({"node_id": node["node_id"], "state": {"x": 1}, "expected_revision": 0}, "cp")
     store.revise_knowledge(
         {
             "ref": node["question_ref"],
@@ -245,7 +245,7 @@ def test_service_routes_memory_pages_guidance_and_chunks(tmp_path):
         "memory_write",
         "memory-checkpoint",
         action="checkpoint",
-        fields={"state": {"next": "test"}},
+        fields={"state": {"next": "test"}, "expected_revision": 0},
     )
     assert call(service, "query", "query-ref", ref=revised["ref"])["kind"] == "knowledge"
     assert call(service, "query", "query-search", query="误报")["items"]

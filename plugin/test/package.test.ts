@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 
@@ -51,6 +51,17 @@ test("packed backend starts, concludes and restarts without repository sources",
     const project = join(temporary, "project")
     mkdirSync(project)
     writeFileSync(join(project, "report.md"), "# Result\nThe research question remains unresolved.\n")
+    writeFileSync(join(project,'experiment.py'),'print(1)\n')
+    const workerProbe=spawnSync(process.execPath,['-e',`
+import {WorkspaceProbe} from ${JSON.stringify(pathToFileURL(join(release,'package/src/workspace-probe.ts')).href)};
+const probe=new WorkspaceProbe();
+try {const result=await probe.sample(${JSON.stringify(project)});console.log(JSON.stringify(result));}
+finally {probe.close();}
+`],{cwd:release,encoding:'utf8',timeout:10_000})
+    expect({status:workerProbe.status,error:workerProbe.stderr}).toMatchObject({status:0})
+    const sourceResult=JSON.parse(workerProbe.stdout)
+    expect(sourceResult.digest).toBeString()
+    expect(sourceResult.files).toBe(1)
     const registry = join(temporary, "registry.sqlite3")
     const request = (id: string, method: string, fields: Record<string, unknown> = {}) => ({
       transport_id: id, operation_id: id, host_id: "opencode", session_id: "main", method, ...fields,
@@ -70,7 +81,7 @@ test("packed backend starts, concludes and restarts without repository sources",
     const responses = run([
       request("capabilities", "capabilities"),
       request("open", "open", { root: project, cwd: project, goal: "Packaged research" }),
-      request("checkpoint", "memory_write", { model_call: true, action: "checkpoint", fields: { state: { phase: "synthesis" } } }),
+      request("checkpoint", "memory_write", { model_call: true, action: "checkpoint", fields: { state: { phase: "synthesis" }, expected_revision: 0 } }),
       request("publish", "publish", { model_call: true, status: "complete", summary: "Report", gaps: [], knowledge_refs: [],
         items: [{ item_id: "report", kind: "report", source_path: "report.md" }] }),
       request("bad-conclusion", "conclude", { fields: { ...contract, final_ref: "pub/P-001#missing" } }),
@@ -78,7 +89,9 @@ test("packed backend starts, concludes and restarts without repository sources",
       request("status", "status"),
     ])
     expect(responses.map((response) => response.ok)).toEqual([true, true, true, true, false, true, true])
-    expect(responses[0].value.schema_version).toBe(10)
+    expect(responses[0].value.schema_version).toBe(11)
+    expect(responses[0].value.memory_write_contract).toBe('r2-v1')
+    expect(responses[0].value.checkpoint_base).toBe('receipt-cas-v1')
     expect(responses[4].error.message).toContain("item_missing")
     expect(responses[6].value.workflow.run.state).toBe("complete")
     const restarted = run([request("restart-status", "status"), request("conclusion", "conclude", { fields: contract }),
@@ -93,6 +106,26 @@ test("packed backend starts, concludes and restarts without repository sources",
     expect(restarted[3].value.available).toBe(true)
     expect(restarted[3].value.views["memory-r1-v1"].text).toBe(restarted[2].value.text)
     expect(restarted[3].value.views["memory-v2"].source_sequence).toBe(restarted[2].value.source_sequence)
+
+    // Exercise the migration from the extracted package, with no source-tree imports.
+    const downgraded = spawnSync(python,['-S','-c',`
+import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as db:
+    for table in ('review_candidates','review_obligations','review_lifecycle_events','checkpoint_read_receipts','runtime_budgets','runtime_budget_reservations','runtime_progress'):
+        db.execute('DROP TABLE '+table)
+    db.execute('PRAGMA user_version=10')
+`,join(project,'.research/state.sqlite3')],{cwd:release,env,encoding:'utf8',timeout:10_000})
+    expect({status:downgraded.status,error:downgraded.stderr}).toMatchObject({status:0})
+    const old=run([request('old-capabilities','project_read',{root:project,view:'capabilities'})])
+    expect(old[0].value.schema_version).toBe(10)
+    expect(old[0].value.memory_write_contract).toBe('requires_migration')
+    const migrated=run([request('migrated-status','status'),
+      request('new-capabilities','project_read',{root:project,view:'capabilities'}),
+      request('checkpoint','memory_write',{model_call:true,action:'checkpoint',fields:{state:{phase:'synthesis'},expected_revision:0}})])
+    expect(migrated.every(row=>row.ok)).toBe(true)
+    expect(migrated[1].value.schema_version).toBe(11)
+    expect(migrated[2].value).toEqual(responses[2].value)
+    expect(readFileSync(join(project,'.research/schema-10-backup.sqlite3')).length).toBeGreaterThan(0)
   } finally {
     rmSync(temporary, { recursive: true, force: true })
   }

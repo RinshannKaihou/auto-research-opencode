@@ -2542,7 +2542,9 @@ CE24 = [
     ({'checks':[bc(tolerance='0.1')]}, ValidationError, 'checks[0]: invalid_tolerance'),
     ({'checks':[{**bc(op='le'), 'tolerance':0.001}]}, ValidationError, 'checks[0]: tolerance_not_allowed'),
     ({'checks':[bc(op='le',value=True)]}, ValidationError, 'checks[0]: invalid_value'),
-    ({'checks':[bc(value=float('nan'))]}, ValidationError, 'checks[0]: invalid_value'),
+    # Request serialization now rejects non-finite JSON before opening frozen objects.
+    ({'checks':[bc(value=float('nan'))]}, ValidationError,
+     'Value is not finite JSON: Out of range float values are not JSON compliant'),
     ({'checks':[bc(op='eq',value=[1,2])]}, ValidationError, 'checks[0]: invalid_value'),
     ({'checks':[{k:v for k,v in bc(op='eq').items() if k!='value'}]}, ValidationError, 'checks[0]: invalid_value'),
     ({'checks':[bc(ref='S-001')]}, ValidationError, 'checks[0]: not_a_file'),
@@ -2622,6 +2624,7 @@ def test_ce25_evaluation_table(b_fixture, index, monkeypatch):
     value = b_record(b_fixture, 'ce25', checks=[row[0] for row in CE25])
     assert value['ref'] == 'knowledge/K-002@1'
     rows = b_results(b_fixture[2], value['ref'])
+    assert value['field_checks'] == rows
     assert len(rows) == 25
     spec,result,reason,text = CE25[index]
     assert rows[index] == dict(target=value['ref'],check_index=index,spec=spec,input_ref=B_REF,
@@ -2670,6 +2673,19 @@ def b_revise(fixture, ref, changes, operation, *, retract=False):
         'affected_scope':[ref] if retract else [],'change_kind':'retract' if retract else 'reword'})
 
 
+def test_r2_revision_retry_precedes_current_check_validation(b_fixture, monkeypatch):
+    from auto_research import field_checks
+    original = b_record(b_fixture, 'r2-record', checks=[bc()])
+    changes = {'statement': 'revised', 'checks': [bc('le', value=0.01)]}
+    saved = b_revise(b_fixture, original['ref'], changes, 'r2-revise')
+    assert saved['field_checks'][0]['result'] == 'inconsistent'
+    def unavailable(*args, **kwargs):
+        raise AssertionError('replay attempted to validate current objects')
+    monkeypatch.setattr(field_checks, 'declare', unavailable)
+    assert b_revise(b_fixture, original['ref'], changes, 'r2-revise') == saved
+    assert b_record(b_fixture, 'r2-record', checks=[bc()]) == original
+
+
 @pytest.mark.parametrize('stop',range(1,10),ids=range(1,10))
 def test_ce26_nine_steps(b_fixture,stop):
     service,root,instance,objects=b_fixture
@@ -2686,6 +2702,7 @@ def test_ce26_nine_steps(b_fixture,stop):
                            (value['knowledge_id'],value['revision'])).fetchone()[0]
         assert raw==json.dumps(specs,sort_keys=True,ensure_ascii=False,allow_nan=False)
         rows=b_results(instance,ref)
+        assert value['field_checks'] == rows
         assert [(r['result'],r['reason']) for r in rows]==expected
         assert [r['spec'] for r in rows]==specs
         history[ref]=rows

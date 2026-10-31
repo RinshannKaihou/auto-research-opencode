@@ -1,0 +1,14 @@
+{
+  "version": "r2-m4-fixtures/1",
+  "status": "prepared_not_run",
+  "arms": ["r1_contract", "r2_contract", "single_agent"],
+  "freeze_before_run": ["model", "provider", "variant", "tool_permissions", "environment", "task_data_sha256", "token_budget", "cost_budget", "wall_budget", "seeds_and_repetitions"],
+  "researcher_visible": "task and input data only; grading.md is withheld",
+  "tasks": [
+    {"id": "editorial", "task": "仅修正原结论措辞，保留适用条件和来源，然后继续综合。", "data": {"condition": "batch=8, synthetic workload", "claim": "该优化提高所有业务吞吐", "measured_speedup": [1.02, 1.03, 1.01]}},
+    {"id": "correction", "task": "重算发现原均值错误；修正该版本并判断其下游结论是否仍可使用。", "data": {"old_mean": 12, "measurements": [8, 10, 12], "downstream_rule": "mean > 11 implies improvement", "adopted_version": "knowledge/K-basis@1"}},
+    {"id": "stale_checkpoint", "task": "两个研究会话从同一 checkpoint 开始；会话 A 新增反例后更新，恢复迟到的会话 B，继续研究并保留反例。", "data": {"initial_state": {"next": "synthesis"}, "A_adds": "counterexample invalidates universal claim", "B_old_state": {"next": "publish universal claim"}}},
+    {"id": "negative_result", "task": "依据配对数据决定能否宣称改善，交付允许负结果或未解决的研究报告。", "data": {"baseline": [10, 11, 9, 10], "candidate": [10, 9, 11, 10], "conditions": "same four seeds, no additional observations"}},
+    {"id": "counterevidence_review", "task": "独立审阅报告提出反例。记录审阅完成，并决定最终综合的表述与风险披露。", "data": {"claim": "detector catches every fault", "review": "missed 2 of 20 held-out faults", "review_status": "complete", "new_experiments": "not authorized"}}
+  ]
+}

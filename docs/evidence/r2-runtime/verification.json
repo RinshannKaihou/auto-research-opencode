@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-01",
+  "base_commit": "0c7b6d5",
+  "python_passed": 581,
+  "bun_passed": 92,
+  "independent_package_migration_passed": true,
+  "compatible_project_copies": 8,
+  "bundled_python_matches_source": true,
+  "m4_real_models": "not_run",
+  "shared_opencode_installation": "not_changed",
+  "reviewed_commit": "ba6e60abb5f708f480a1532c73c11590764343ef",
+  "review_regressions_passed": 26,
+  "ci": "not_configured",
+  "round2_python_regressions": 10,
+  "round2_bun_regressions": 9,
+  "workspace_probe": "host_worker_bounded_incremental",
+  "packed_workspace_worker": true
+}
