@@ -397,7 +397,7 @@ export class Research {
           purpose: "primary",
           policy_version: view.policy_version,
           dependencies: view.dependencies ?? [],
-          selection: { source_digest: view.source_digest, omitted: view.omitted ?? [],
+          selection: { source_digest: view.source_digest, context_mode: view.context_mode, omitted: view.omitted ?? [],
             selected: view.selection, coverage: view.coverage, block_chars: view.block_chars, truncation: view.truncation },
         },
       }).then(() => { this.memoryObservations.recorded++ }, () => { this.memoryObservations.recordFailed++ })

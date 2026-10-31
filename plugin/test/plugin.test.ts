@@ -694,6 +694,7 @@ describe("node specialists", () => {
   test("a blind reviewer sees only its assigned inputs, without the project or OpenCode's prompt", async () => {
     const host = await load()
     const workspace = await nodeAtWork(host)
+    await host.command("context-policy", "ses_main", { policy: "r1" })
     mkdirSync(join(workspace, "output"), { recursive: true })
     writeFileSync(join(workspace, "output", "report.md"), "# 结果\nWAL 快 3 倍\n")
     const pub = await host.call("research_publish", "ses_node_1", {
@@ -721,6 +722,11 @@ describe("node specialists", () => {
     expect(system).not.toContain("base system")
     expect(system).toContain("blind reviewer")
     expect(system).not.toContain("Find X")
+    await until(async () => {
+      const preview = await host.rpc().board({ view: "context_preview", directory: project, fields: { preview_session_id: child } })
+      const row = preview.last_recorded
+      return row?.policy_version === "memory-r1-v1" && row.selection.context_mode === "blind"
+    }, "saved R1 blind context mode")
 
     expect((await host.call("research_read_input", child, { input_id: "input-1" })).text).toContain("WAL 快 3 倍")
     await expect(host.call("research_query", child, { collection: "nodes" })).rejects.toThrow("Blind reviewers")

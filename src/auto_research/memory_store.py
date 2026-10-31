@@ -1325,14 +1325,14 @@ class MemoryStore:
                          12000, "opencode-auto", policy, None, None)
                      for policy in ("memory-v2", "memory-r1-v1")}
             last = db.execute(
-                "SELECT r.source_sequence,r.created_at,p.policy_version,p.body AS text "
+                "SELECT r.source_sequence,r.created_at,r.selection,p.policy_version,p.body AS text "
                 "FROM context_requests r JOIN context_packs p USING(pack_id) "
                 "WHERE r.host_id=? AND r.session_id=? ORDER BY r.context_id DESC LIMIT 1",
                 (selected["host_id"], selected["session_id"]),
             ).fetchone()
             return {**result, "session": selected, "views": views,
                     "metrics": {policy: context_metrics(view) for policy, view in views.items()},
-                    "last_recorded": dict(last) if last else None}
+                    "last_recorded": {**dict(last), "selection": json.loads(last["selection"])} if last else None}
 
     def _context_view(self, db, host_id, session_id, max_chars, profile,
                       policy, decision_refs, final_ref):
