@@ -7,6 +7,9 @@
  */
 import { Plugin } from "@opencode/plugin"
 import { existsSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { Observations } from "./src/observations"
+import { NativeObservations } from './src/native-observations'
 import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
 import { Research, guidanceNote, type CommandResult } from "./src/research"
@@ -41,7 +44,10 @@ export default Plugin.define({
       specialistFanout?: number
       specialistTimeoutMs?: number
     }
-    const storage = new StorageClient({ python: options.python, registryPath: options.registryPath })
+    const observations = new Observations()
+    const storage = new StorageClient({ python: options.python, registryPath: options.registryPath,
+      observeRequest: (operation_id,method,fields) => observations.transportObserver(operation_id,method,fields),
+    })
     let emitChanged: (root: string) => void = () => {}
     const research = new Research(
       storage,
@@ -63,7 +69,21 @@ export default Plugin.define({
         await ctx.session.switchModel({ sessionID, model })
       },
       synthetic: async (sessionID, text, label, resume) => {
+        let reservation:any
+        if (resume && research.isAssociated(sessionID)) {
+          reservation = await research.call('runtime_reserve', sessionID)
+          if (!reservation.allowed) {
+            if (reservation.reason==='wall_clock') await enforceDeadline(sessionID)
+            research.notifyChanged(research.rootOf(sessionID)!)
+            throw Object.assign(new Error(`自主调度预算已到限：${reservation.reason}；先用 /research budget 显式调整额度，再恢复。`), { code: 'runtime_budget_exhausted' })
+          }
+        }
         await ctx.session.synthetic({ sessionID, text, description: label, resume })
+        if (reservation?.allowed) await research.call('runtime_submitted',sessionID,
+          {reservation_id:reservation.reservation_id},`submitted:${reservation.reservation_id}`).catch(error => {
+            observations.append(research.rootOf(sessionID)!,{phase:'coverage_gap',source:'budget_submission',
+              session_id:sessionID,error_code:error.code ?? 'storage_unavailable'})
+          })
       },
       interrupt: async (sessionID) => {
         await ctx.session.interrupt({ sessionID })
@@ -73,6 +93,30 @@ export default Plugin.define({
       },
       messages: async (sessionID) => (await ctx.session.context({ sessionID })) as any[],
     }
+    const nativeObservations = new NativeObservations(research,observations)
+    await ctx.session.hook('model.request',request => nativeObservations.modelRequest(request))
+    await ctx.session.hook('retry',request => {
+      const root = research.rootOf(request.sessionID)
+      if (root && research.inScope(root)) observations.append(root,{phase:'provider_retry',session_id:request.sessionID,
+        attempt:request.attempt,model:request.model,will_retry:request.decision.retry})
+    })
+    const externalStarts = new Map<string,number>()
+    await ctx.tool.hook('execute.before',request => {
+      const root = research.rootOf(request.sessionID)
+      if (!root || request.tool.startsWith('research_')) return
+      externalStarts.set(`${request.sessionID}:${request.id}`,performance.now())
+      observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
+        status:'started',execution_ref:`session:${request.sessionID}`,resource_usage:'unknown'})
+    })
+    await ctx.tool.hook('execute.after',request => {
+      const key = `${request.sessionID}:${request.id}`
+      const started = externalStarts.get(key)
+      if (started===undefined) return
+      externalStarts.delete(key)
+      const root = research.rootOf(request.sessionID)!
+      observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
+        status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
+    })
     const count = (value: unknown, fallback: number) => Math.max(1, Math.floor(Number(value ?? fallback)) || fallback)
     const engine = new Engine(research, host, count(options.concurrency, 1))
     const specialists = new Specialists(
@@ -124,10 +168,31 @@ export default Plugin.define({
           input: parameters(tool.parameters),
           options: { codemode: false },
           async execute(input, call) {
-            const args = validateArgs(input, tool.parameters)
-            const value = await runTool(tool, call, args)
-            if (tool.writes) engine.wroteLedger(call.sessionID)
-            return { content: JSON.stringify(value, null, 2) }
+            if (tool.name==='research_checkpoint' || tool.name==='research_memory' && (input as any)?.action==='checkpoint') {
+              research.checkpoints.forCall(call.sessionID,call.messageID,call.id)
+            }
+            const invocation_id = randomUUID()
+            const root = research.rootOf(call.sessionID)
+            const execute = async () => {
+              const args = validateArgs(input, tool.parameters)
+              await research.ensureContract()
+              if (root && research.inScope(root)) {
+                const context = await research.call('invocation_context',call.sessionID)
+                observations.append(root,{phase:'binding',invocation_id,context})
+              }
+              const value = await runTool(tool, call, args)
+              const applied = typeof value==='object' && value!==null && 'applied' in value ? value.applied as Record<string,any> : undefined
+              if (root && research.inScope(root)) observations.append(root,{phase:'expansion',invocation_id,
+                applied_fields:applied && ['editorial','correct_previous'].includes(applied.preset)
+                  ? ['change_kind','affected_scope_mode','affected_scope'].filter(key=>key in applied).length : 0})
+              if (tool.writes) engine.wroteLedger(call.sessionID)
+              return { content: JSON.stringify(value, null, 2) }
+            }
+            if (!root || !research.inScope(root)) return execute()
+            const operation_id = `${call.sessionID}:${call.messageID}:${call.id}:${tool.name}`
+              return await observations.invoke(root, { invocation_id, operation_id, session_id: call.sessionID,
+                tool: tool.name, contract: "r2-v1", input_fields: Object.keys(input ?? {}).length,
+                input_chars: Array.from(JSON.stringify(input) ?? "").length }, execute)
           },
         })
       }
@@ -148,7 +213,10 @@ export default Plugin.define({
           request.system.splice(0, request.system.length, { type: "text", text: BLIND_SYSTEM })
         }
         const text = await research.memory(request.sessionID)
-        if (text) request.system.push({ type: "text", text })
+        if (text) {
+          request.system.push({ type: "text", text })
+          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages)
+        }
       } catch {
         // Research state must never break a model request.
       }
@@ -168,6 +236,34 @@ export default Plugin.define({
     })
 
     let listening = true
+    async function enforceDeadline(sessionID:string): Promise<void> {
+      const stopped = await research.call('runtime_budget_stop', sessionID)
+      if (stopped.stopped) {
+        const root = research.rootOf(sessionID)!
+        for (const sid of research.sessionsIn(root)) engine.expectInterrupt(sid)
+        await Promise.all(research.sessionsIn(root).map(sessionID => ctx.session.interrupt({sessionID})))
+        const main = research.sessionsIn(root).find(sid=>research.roleOf(sid)==='main')
+        if (main) await ctx.session.synthetic({sessionID:main,text:'【Research】自主调度已到时限，排队任务已取消，正在停止会话。需显式提额后恢复。',description:'自主调度时限已到',resume:false})
+        research.notifyChanged(root)
+      }
+    }
+    let checkingBudget = false
+    const budgetTimer = setInterval(async () => {
+      if (checkingBudget) return
+      checkingBudget = true
+      try {
+        for (const root of research.roots()) {
+          const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+          if (!main) continue
+          const budget = await research.call('runtime_budget_status', main)
+          if (budget.expired && budget.run_state === 'running') {
+            await enforceDeadline(main)
+          }
+        }
+      } catch (error) {
+        process.stderr.write(`Research budget monitor: ${error instanceof Error ? error.message : String(error)}\n`)
+      } finally { checkingBudget = false }
+    }, 1000)
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe()) {
@@ -175,10 +271,11 @@ export default Plugin.define({
           const { type, data } = event as { type: string; data?: { sessionID?: string } }
           const sessionID = data?.sessionID
           if (!sessionID || !research.isAssociated(sessionID)) continue
+          await nativeObservations.event(event)
           if (type === "session.execution.started") engine.started(sessionID)
-          else if (type === "session.execution.succeeded") void engine.ended(sessionID, "succeeded")
-          else if (type === "session.execution.failed") void engine.ended(sessionID, "failed")
-          else if (type === "session.execution.interrupted") void engine.ended(sessionID, "interrupted")
+          else if (type === "session.execution.succeeded") void engine.ended(sessionID, "succeeded",event.id)
+          else if (type === "session.execution.failed") void engine.ended(sessionID, "failed",event.id)
+          else if (type === "session.execution.interrupted") void engine.ended(sessionID, "interrupted",event.id)
         }
       } catch {
         // The stream ends when the plugin unloads.
@@ -209,6 +306,18 @@ export default Plugin.define({
       switch (action) {
         case "status":
           return research.status(sessionID, directory)
+        case 'budget': {
+          return (async () => {
+            const sid = needsSession(sessionID,action)
+            if (args.limit) {
+              const names:Record<string,string> = {turns:'max_session_turns',nodes:'max_total_nodes',seconds:'max_wall_seconds',tokens:'max_tokens',cost:'max_cost'}
+              if (!names[args.limit]) throw new Error('未知预算字段')
+              await research.call('runtime_budget_set',sid,{limits:{[names[args.limit]!]:args.value==='off'?null:Number(args.value)},reason:args.reason})
+            }
+            const budget = await research.call('runtime_budget_status',sid)
+            return {message:`自主调度预算（token/cost 为已观测停发阈值，外部进程未计量）\n${JSON.stringify(budget,null,2)}`}
+          })()
+        }
         case "auto":
           return engine.auto(sessionID, directory, String(args.goal ?? ""), modelArg(args.model))
         case "pause":
@@ -237,6 +346,7 @@ export default Plugin.define({
         reported(async () => {
           const action = String(input.action ?? "help")
           if (action === "help") return { message: USAGE }
+          if (['auto','resume','init','takeover','budget'].includes(action)) await research.ensureContract()
           await within(research.ready(), STARTUP_WAIT_MS)
           const sessionID = input.sessionID ? String(input.sessionID) : null
           const directory = sessionID ? await sessionDirectory(sessionID) : String(input.directory ?? ctx.location.directory)
@@ -251,7 +361,10 @@ export default Plugin.define({
       session: (input: any) =>
         reported(async () => {
           await within(research.ready(), STARTUP_WAIT_MS)
-          return research.sessionState(String(input.sessionID))
+          const sessionID = String(input.sessionID)
+          const state = await research.sessionState(sessionID)
+          const root = research.rootOf(sessionID)
+          return { ...state, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
         }),
       board: (input: any) =>
         reported(async () => {
@@ -266,6 +379,7 @@ export default Plugin.define({
 
     return () => {
       listening = false
+      clearInterval(budgetTimer)
       storage.close()
     }
   },

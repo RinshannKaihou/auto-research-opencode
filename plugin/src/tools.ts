@@ -32,9 +32,10 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read a bounded research summary, retrieve a fixed reference, search knowledge, or page a collection. R1 critical_now/findings/completed_findings expose risks, discoveries and every completed node, including nodes with no registered finding. Pass returned cursor objects unchanged for these collections, review_todos and hints; filters are restored from the cursor and conflicting filters require a fresh page. review_todos supports state/trigger_kind/node_id; hints supports kind (including clerical). Legacy after/upper_id or offset paging remains available when filters are repeated. Use ref to expand full scope, conditions and stored checks. Hints describe current state, not historical replay.',
+      'Read bounded research state, fixed references, or paged collections. A checkpoint normally uses its delivered base automatically; on checkpoint_base_required read collection="checkpoint" for full current-owner state and return base unchanged. review_obligations contains exact current tasks, review_candidates is optional event backlog, review_events is history; filter by scope_owner/generation/target_ref/state/change_id as applicable. adoptions lists explicit and derived uses. critical_now/findings/completed_findings expose risks and discoveries, including completed nodes with no finding. Return cursor objects unchanged; conflicting filters or changed mutable views require explicit refresh. Legacy review_todos/hints remain queryable. Use ref for full scope, conditions and stored checks; offset/limit and expected_digest expand long references. Hints describe current state, not historical replay.',
     parameters: {
       expected_digest: { type: "string" },
+      scope_owner:{type:'string'},generation:{type:'number'},target_ref:{type:'string'},change_id:{type:'string'},obligation_id:{type:'string'},
       state: { type: "string" }, trigger_kind: { type: "string" },
       cursor: { type: "object", additionalProperties: true, properties: {} },
       decision_refs: { type: "array", items: { type: "string" } }, final_ref: { type: "string" },
@@ -85,7 +86,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "consume",
     writes: true,
     description:
-      "Append an idempotent record that the current node work segment adopted a later immutable research reference. This never rewrites the node proposal or its fixed inputs. Only node executors adopt materials.",
+      "Record adoption before a structured citation exists. Evidence/dependency citations already derive adoption, so do not consume them again. Same attempt/ref/relation/exact use is deduplicated; different purposes remain distinct. This never rewrites proposal inputs. Only node executors use this tool.",
     parameters: {
       source_ref: { type: "string", required: true },
       use: { type: "string", required: true },
@@ -146,6 +147,7 @@ export const TOOLS: ToolDefinition[] = [
       change_id: { type: "string" }, affected_version: { type: "string" },
       disposition_kind: { type: "string", enum: ["unresolved", "retained_with_evidence", "revised", "retracted"] },
       replacement_ref: { type: "string" },
+      base: { type: "string", description: "Checkpoint base returned by research_query collection=checkpoint or the last successful checkpoint next_base. Return it unchanged." },
       ref: { type: "string" }, expected_revision: { type: "number" }, reason: { type: "string" },
       changes: { type: "object", additionalProperties: true, properties: {} },
       state: { type: "object", additionalProperties: true, properties: {} },
@@ -236,14 +238,17 @@ export const TOOLS: ToolDefinition[] = [
     method: "relate",
     writes: true,
     description:
-      "Record a research relation between nodes or publications, or a revision rationale. This stores evidence structure and does not judge scientific truth. The reserved knowledge labels grounded_in, answers, supersedes, complements and challenges are refused here when both sides are knowledge versions: write those through research_memory relations[] so they are stored with the revision.",
+      "Record a typed relation. Node source is the successor; a target publication identifies its predecessor and material. depends_on requires material inputs and cannot change dispatched nodes. Knowledge grounded_in/motivated_by/answers/supersedes/complements/challenges creates a new revision using explicit revision scope fields. reviews requires obligation_id, result and complete; it closes only that review task, never scientific risk.",
     parameters: {
       source_ref: { type: "string", required: true },
       target_ref: { type: "string", required: true },
       label: { type: "string", required: true },
       note: { type: "string", required: true },
+      input_refs:{type:'array',items:{type:'string'}},revision:{type:'object',additionalProperties:true,properties:{}},
+      obligation_id:{type:'string'},change_id:{type:'string'},result:{type:'string',enum:['supports','challenges','inconclusive']},
+      complete:{type:'boolean'},evidence_refs:{type:'array',items:{type:'string'}},
     },
-    fields: same,
+    fields: args => ({...args,contract_version:'r2-v1'}),
   },
   {
     name: "research_close_node",
@@ -265,6 +270,28 @@ export const TOOLS: ToolDefinition[] = [
     fields: same,
   },
 ]
+
+const memory = TOOLS.find(tool => tool.name === 'research_memory')!
+function narrow(action:string, description:string, keys:string[], required:string[], extra:Record<string,Spec> = {}): ToolDefinition {
+  const parameters = Object.fromEntries(keys.map(key => [key,{...memory.parameters[key],required:required.includes(key)}]))
+  return {name:`research_${action}`,roles:BOTH,method:'memory_write',writes:true,description,
+    parameters:{...parameters,...extra},fields: args => ({action,fields:args,contract_version:'r2-v1'})}
+}
+TOOLS.push(
+  narrow('record','Record sourced knowledge. Claims, observations and lessons require evidence_refs. Placement defaults to the current node; explicitly choose project visibility for project knowledge. Scope/conditions describe scientific applicability.',
+    ['kind','statement','node_id','visibility','status','scope','conditions','evidence_refs','dependencies','motivated_by','relations','execution_refs','checks'],['kind','statement']),
+  narrow('revise','Revise an exact knowledge version. editorial changes wording/author only; correct_previous corrects only this version; custom requires explicit change_kind and affected scope. preserve_sources and no_new_evidence together retain old sources only when evidence/support/checks are unchanged. Omitted execution_refs otherwise stay empty. Returned field_checks compare declared fields, not scientific truth.',
+    ['ref','changes','reason','change_kind','affected_scope_mode','affected_scope','relations','execution_refs'],['ref','changes','reason'],{
+      preset:{type:'string',required:true,enum:['editorial','correct_previous','custom']},
+      preserve_sources:{type:'boolean'},no_new_evidence:{type:'boolean'},
+    }),
+  narrow('checkpoint','Save current work state using the base delivered to this model request. No current base: read research_query collection=checkpoint first. Return explicit base/next_base unchanged when needed. Project decision_refs optionally replace the project review scope; scope_reason is required for that change.',
+    ['state','base'],['state'],{decision_refs:{type:'array',items:{type:'string'}},scope_reason:{type:'string'}}),
+  narrow('dispose','Append a disposition for exactly one change_id/affected_version. Completing review work does not resolve this risk; provide the scientific reason and evidence explicitly.',
+    ['change_id','affected_version','disposition_kind','reason','evidence_refs','replacement_ref'],['change_id','affected_version','disposition_kind','reason']),
+  narrow('narrow_scope','Narrow a previously unknown affected scope to explicit fixed versions with a reason. This does not itself resolve scientific risk.',
+    ['change_id','affected_scope','reason'],['change_id','affected_scope','reason']),
+)
 
 /** One specialist task; the names follow the DSH plugin's research_delegate. */
 const SPECIALIST_TASK: Record<string, Spec> = {
@@ -393,6 +420,7 @@ export function keepsTool(
   specialistTools: readonly string[] = [],
 ): boolean {
   if (!associated) return !TOOL_NAMES.includes(name)
+  if (name === 'research_memory') return false
   if (role === "specialist") return specialistTools.includes(name)
   if (NATIVE_BLOCKED.has(name)) return false
   const own = TOOLS.find((tool) => tool.name === name)

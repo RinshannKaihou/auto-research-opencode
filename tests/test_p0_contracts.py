@@ -23,6 +23,8 @@ def node(host, index=1):
 
 
 def checkpoint(host, session='ses_main', **fields):
+    if 'expected_revision' not in fields and 'base' not in fields:
+        fields['expected_revision'] = host.call('query', session=session, collection='checkpoint')['snapshot']['head_revision']
     return host.call('memory_write', session=session, model_call=True, action='checkpoint', fields=fields)
 
 
@@ -103,8 +105,9 @@ def test_historical_globals_quarantined_without_rewriting_and_cas_survives(tmp_p
     _, sid, _ = node(host)
     store = NativeStore(host.root)
     bad = store.checkpoint({'node_id': None, 'state': {'node': True},
+                            'expected_revision': 1,
                             'source_identity': {'host_id': 'opencode', 'session_id': sid}}, 'legacy-node')
-    unknown = store.checkpoint({'node_id': None, 'state': {'unknown': True}}, 'legacy-unknown')
+    unknown = store.checkpoint({'node_id': None, 'state': {'unknown': True}, 'expected_revision': 2}, 'legacy-unknown')
     before = state_rows(host)['node_checkpoints']
     memory = view(host)
     assert memory['checkpoint']['checkpoint_id'] == good['checkpoint_id']
@@ -271,10 +274,11 @@ def test_schema9_readonly_and_upgrade_keep_historical_completion(tmp_path):
     assert 'not_recorded' in readonly.context_view('opencode', 'ses_main')['text']
     store = NativeStore(host.root)
     state = store.control_state('opencode', 'ses_main')
-    assert state['schema_version'] == SCHEMA_VERSION == 10
+    assert state['schema_version'] == SCHEMA_VERSION == 11
     assert state['workflow']['run']['state'] == 'complete' and state['workflow']['conclusion'] is None
     with store._read() as db:
         assert [tuple(r) for r in db.execute('SELECT * FROM node_checkpoints')] == original
     with sqlite3.connect(host.root / '.research/schema-9-backup.sqlite3') as db:
         assert db.execute('PRAGMA user_version').fetchone()[0] == 9
-    migrate_schema10(store.db_path)  # idempotent
+    from auto_research.schema11 import migrate_schema11
+    migrate_schema11(store.db_path)  # latest migration is idempotent

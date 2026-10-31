@@ -339,6 +339,9 @@ class WorkflowStore:
                 }:
                     raise ValidationError("Invalid run state")
                 generation = view["run"]["generation"] + (1 if fields.get("new_generation") else 0)
+                if state == 'running':
+                    from .runtime_budget import start
+                    start(self, db, generation, at)
                 db.execute(
                     "UPDATE workflow_project SET state=?,generation=?,updated_at=? WHERE id=1",
                     (state, generation, at),
@@ -405,7 +408,7 @@ class WorkflowStore:
                     (node["node_id"],),
                 ).fetchone()
                 if prior:
-                    if prior["state"] == "finished" and prior["cwd"]:
+                    if prior["state"] == "finished" and prior["cwd"] or prior['state']=='cancelled' and (prior['error'] or '').startswith('wall_clock_budget:'):
                         db.execute(
                             "UPDATE exploration_tasks SET state='queued',parent_session_id=?,"
                             "generation=?,error=NULL,updated_at=? WHERE task_id=?",

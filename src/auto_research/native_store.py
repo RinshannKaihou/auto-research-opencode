@@ -25,11 +25,15 @@ from .schema7 import SCHEMA7_DDL, ensure_schema7_columns, migrate_schema7
 from .schema8 import ensure_schema8_columns, migrate_schema8
 from .schema9 import ensure_schema9, migrate_schema9
 from .schema10 import ensure_schema10, migrate_schema10
+from .schema11 import ensure_schema11, migrate_schema11
 from .conclusion_store import ConclusionStore
+from .review_lifecycle import ReviewStore
+from .runtime_budget import RuntimeStore
+from .adoption import AdoptionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -67,18 +71,19 @@ def _number(value: Any, label: str) -> float:
 from .workflow_store import WorkflowStore, DDL, migrate_schema3
 
 
-class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
+class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
     """Transactional store used only by the native DSH plugin."""
 
     def __init__(self, root: str | Path, *, readonly: bool = False):
         self.root = Path(root).expanduser().resolve()
         self.meta = self.root / ".research"
         self.readonly = readonly
+        self.last_replayed = None
         self.db_path = self.meta / "state.sqlite3"
         if readonly:
             with self._connection() as db:
-                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, SCHEMA_VERSION}:
-                    raise ValidationError(f"Read-only view requires schema 9 or {SCHEMA_VERSION}")
+                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, 10, SCHEMA_VERSION}:
+                    raise ValidationError(f"Read-only view requires schema 9, 10 or {SCHEMA_VERSION}")
             return
         self.meta.mkdir(parents=True, exist_ok=True)
         if self.db_path.exists():
@@ -108,6 +113,9 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             if version == 9 and SCHEMA_VERSION >= 10:
                 migrate_schema10(self.db_path)
                 version = 10
+            if version == 10:
+                migrate_schema11(self.db_path)
+                version = 11
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -241,7 +249,7 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             CREATE TABLE IF NOT EXISTS counters (
                 name TEXT PRIMARY KEY, value INTEGER NOT NULL
             );
-            PRAGMA user_version=10;
+            PRAGMA user_version=11;
             """
         )
         db.executescript(DDL)
@@ -274,7 +282,8 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             if statement.strip():
                 db.execute(statement)
         ensure_schema10(db)
-        db.execute("PRAGMA user_version=10")
+        ensure_schema11(db)
+        db.execute("PRAGMA user_version=11")
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -321,6 +330,7 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
                     (request_id,),
                 ).fetchone()
                 if previous:
+                    self.last_replayed = True
                     if previous["operation"] != operation or previous["payload"] != encoded:
                         raise ConflictError(f"request_id {request_id!r} was reused")
                     result = json.loads(previous["response"])
@@ -328,7 +338,13 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
                     if operation in {"propose", "knowledge.record", "knowledge.revise", "memory.checkpoint", "guidance.register"}:
                         self.rebuild_memory_projection()
                     return result
+                self.last_replayed = False
                 result = work(db)
+                if operation in {'propose','consume','focus','finish','close_node','publish','relate',
+                        'knowledge.record','knowledge.revise','knowledge.dispose','knowledge.narrow_scope',
+                        'memory.checkpoint','workflow','review.scope','review.promote','review.link','review.exception','relate.typed','project.conclude'}:
+                    from .review_lifecycle import reconcile
+                    reconcile(self, db, request_id)
                 db.execute(
                     "INSERT INTO requests VALUES (?,?,?,?,?)",
                     (request_id, operation, encoded, _json(result), _now()),
@@ -572,6 +588,8 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
 
         def work(db: sqlite3.Connection) -> dict:
             self._project(db)
+            from .runtime_budget import check_node
+            check_node(self, db)
             node_id = self._next(db, "node", "X")
             qref = payload["question_ref"]
             if qref:
@@ -712,6 +730,11 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             if not attempt["node_id"]:
                 raise ConflictError("Material consumption requires a node work segment")
             self._require_ref(db, payload["source_ref"])
+            prior = db.execute('''SELECT * FROM material_consumptions WHERE attempt_id=? AND source_ref=?
+                AND relation_type=? AND use_text=? ORDER BY rowid LIMIT 1''',
+                (attempt['attempt_id'],source_ref,relation_type,payload['use'])).fetchone()
+            if prior:
+                return {**dict(prior),'deduplicated':True}
             value = {
                 "consumption_id": self._next(db, "consumption", "C"),
                 "operation_id": request_id,
@@ -1101,7 +1124,7 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
 
     def relate(
         self, source_ref: str, target_ref: str, label: str, note: str, request_id: str,
-        *, asserted_at: dict | None = None
+        *, asserted_at: dict | None = None, contract_version=None
     ) -> dict:
         epistemic.reject_reserved_relate(source_ref, target_ref, label)
         payload = {
@@ -1110,13 +1133,15 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
             "label": _text(label, "label"),
             "note": _text(note, "note"),
         }
+        if contract_version is not None:
+            payload['contract_version'] = contract_version
 
         def work(db: sqlite3.Connection) -> dict:
             self._require_ref(db, source_ref)
             self._require_ref(db, target_ref)
             value = {
                 "relation_id": self._next(db, "relation", "R"),
-                **payload,
+                **{key:payload[key] for key in ('source_ref','target_ref','label','note')},
                 "created_at": _now(),
             }
             db.execute(

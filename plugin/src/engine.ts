@@ -11,6 +11,7 @@
  */
 import type { CommandResult, Research } from "./research"
 import { findProjectRoot, GUIDANCE_LIMIT, guidanceNote } from "./research"
+import { randomUUID } from "node:crypto"
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -62,7 +63,7 @@ const NOTICE_OUTCOME: Record<string, string> = {
   published: "发布了新材料",
 }
 /** Pauses that /research resume clears; wait and closed segments resolve themselves. */
-const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress"])
+const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress",'budget'])
 
 export function oneLine(value: unknown, limit = 60): string {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""
@@ -75,6 +76,7 @@ export class Engine {
   private ours = new Set<string>()
   private wrote = new Map<string, boolean>()
   private idle = new Map<string, number>()
+  private turns = new Map<string, string>()
   private retried = new Set<string>()
   private finishing = new Map<string, { state: string; summary: string }>()
   private queues = new Map<string, Promise<unknown>>()
@@ -123,6 +125,7 @@ export class Engine {
   started(sessionID: string): void {
     if (!this.drives(sessionID)) return
     this.busy.add(sessionID)
+    this.turns.set(sessionID, randomUUID())
     this.wrote.set(sessionID, false)
   }
 
@@ -134,14 +137,25 @@ export class Engine {
     return this.busy.has(sessionID)
   }
 
-  ended(sessionID: string, outcome: Outcome): Promise<void> {
+  expectInterrupt(sessionID:string): void {
+    if (this.busy.has(sessionID)) this.ours.add(sessionID)
+  }
+
+  ended(sessionID: string, outcome: Outcome, eventID?:string): Promise<void> {
     this.busy.delete(sessionID)
     const root = this.research.rootOf(sessionID)
     if (!root || !this.drives(sessionID)) return Promise.resolve()
-    return this.serial(root, () => this.afterTurn(sessionID, root, outcome)).catch(() => {})
+    const turn = eventID ?? this.turns.get(sessionID) ?? randomUUID()
+    return this.serial(root, async () => {
+      const claim = await this.call('runtime_execution_end',sessionID,{turn,outcome},`end:${sessionID}:${turn}`)
+      if (claim.claimed) await this.afterTurn(sessionID, root, outcome,turn)
+    }).catch(async error => {
+      if (error?.code==='runtime_budget_exhausted') await this.say(sessionID,error.message)
+      else process.stderr.write(`Research execution controller: ${error instanceof Error ? error.message : String(error)}\n`)
+    })
   }
 
-  private async afterTurn(sessionID: string, root: string, outcome: Outcome): Promise<void> {
+  private async afterTurn(sessionID: string, root: string, outcome: Outcome, turn:string): Promise<void> {
     if (outcome === "interrupted") {
       if (this.ours.delete(sessionID)) return
       await this.pauseSession(sessionID, "native_stop", "你中断了这一轮，本会话的自动推进已暂停；用 /research resume 继续。")
@@ -161,7 +175,8 @@ export class Engine {
       return
     }
     this.retried.delete(sessionID)
-    const idle = this.wrote.get(sessionID) ? 0 : (this.idle.get(sessionID) ?? 0) + 1
+    const progress = await this.call('runtime_turn_finished', sessionID, { turn }, `turn:${sessionID}:${turn}`)
+    const idle = progress.idle_turns
     this.idle.set(sessionID, idle)
     const finish = this.finishing.get(sessionID)
     if (finish && row.role === "node_core") {
@@ -188,7 +203,7 @@ export class Engine {
       await this.pauseSession(
         sessionID,
         "no_progress",
-        `连续 ${IDLE_LIMIT} 轮没有写入任何研究记录，本会话的自动推进已暂停；用 /research resume 继续。`,
+        `连续 ${IDLE_LIMIT} 轮没有研究推进，本会话的自动推进已暂停；用 /research resume 继续。`,
       )
       return
     }
@@ -328,6 +343,15 @@ export class Engine {
         active++
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        if (error instanceof Error && 'code' in error && error.code==='runtime_budget_exhausted') {
+          const fresh=await this.state(main)
+          await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,
+            state:fresh.workflow?.run?.state==='running'?'queued':'cancelled',
+            error:fresh.workflow?.run?.state==='running'?message:`wall_clock_budget: ${message}`}})
+          await this.say(main,`节点 ${task.node_id} 预算到限，工作已保留。${message}`)
+          if (fresh.workflow?.run?.state!=='running') break
+          continue
+        }
         await this.call("workflow", main, {
           action: "task_state",
           fields: { task_id: task.task_id, state: "failed", error: message },
@@ -376,7 +400,7 @@ export class Engine {
         `固定输入：${inputs.length ? `${inputs.join("、")}（已放在 ${workspace}/inputs/，只读）` : "无"}`,
         `工作目录：${workspace}。先 cd 到这里；在 scratch/ 里做实验，把报告和数据放进 output/。`,
         "发布时 source_path 写相对这个工作目录的路径，例如 output/report.md。",
-        "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_memory 记录引用发布材料的结论并更新检查点；完成或受阻时调用 research_finish。",
+        "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
       ].join("\n"),
       true,
       `开始节点 ${task.node_id}`,
@@ -575,8 +599,11 @@ export class Engine {
         const row = current.workflow?.session
         if (!row || row.detached || !["main", "node_core"].includes(row.role)) continue
         if (row.pause_reason && !RESUMABLE.has(row.pause_reason)) continue
-        const task = (current.workflow?.tasks ?? []).find((item: any) => item.session_id === member && ACTIVE_TASK.has(item.state))
+        const task = (current.workflow?.tasks ?? []).find((item: any) => item.session_id === member && (
+          ACTIVE_TASK.has(item.state) || item.state==='waiting' && item.error?.startsWith('wall_clock_budget:')))
         if (row.role === "node_core" && !task) continue
+        if (task?.state==='unverified') continue
+        if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
         if (row.pause_reason) await this.call("workflow", member, { action: "session", fields: { pause_reason: null } })
         await this.useModel(root, member)
         this.retried.delete(member)

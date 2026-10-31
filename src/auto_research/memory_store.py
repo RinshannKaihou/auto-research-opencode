@@ -6,7 +6,7 @@ read-only projections and can always be rebuilt from these tables.
 
 from __future__ import annotations
 
-from . import frozen_refs, field_checks
+from . import frozen_refs, field_checks, checkpoint_receipts, revision_presets
 
 from datetime import datetime, timezone
 import hashlib
@@ -16,7 +16,8 @@ import re
 import sqlite3
 from typing import Any
 
-from .errors import ConflictError, NotFoundError, ValidationError
+from .errors import (ConflictError, NotFoundError, ValidationError,
+                     CheckpointBaseRequired, CheckpointBaseMismatch, CheckpointConflict)
 
 
 MEMORY_SCHEMA = """
@@ -104,7 +105,11 @@ OPENCODE_AUTO_ROLES = {
         "nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing "
         "else is useful. Full experiments belong to node executors, not to you. When node results "
         "arrive, synthesize them: record project-level knowledge with evidence, revise or retract "
-        "earlier conclusions, and propose follow-up nodes where evidence is missing. When the goal is "
+        "earlier conclusions, and propose follow-up nodes where evidence is missing. When adopting "
+        "materials for current synthesis, set exact decision_refs and scope_reason on the project "
+        "research_checkpoint; omission keeps the prior review scope, [] explicitly clears it. "
+        "Read review_obligations and link exact reports using research_relate label=reviews; review "
+        "task completion does not resolve scientific risk. When the goal is "
         "answered, or further work cannot change the conclusion, publish a final report with "
         "research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with "
         "【Research 自动推进】 come from the research engine; other user messages are guidance from "
@@ -113,10 +118,10 @@ OPENCODE_AUTO_ROLES = {
     "node_core": (
         "You execute one research node for the coordinator. Work inside the workspace directory "
         "given in your task message and keep inputs unchanged. Plan briefly, run the experiments or "
-        "analysis, and keep the node checkpoint current with research_memory action=checkpoint. "
+        "analysis, and keep the node checkpoint current with research_checkpoint. "
         "Publish results with research_publish, attaching the report and data files; record "
-        "observations and claims with research_memory including evidence_refs to your publication; "
-        "record adopted materials with research_consume. When an independent check or a second view "
+        "observations and claims with research_record including evidence_refs to your publication; "
+        "use research_consume only for adoption not already expressed by evidence/dependency citations. When an independent check or a second view "
         "would help, such as auditing an analysis or reading related material, delegate a bounded "
         "read-only specialist with research_delegate, or several at once with "
         "research_delegate_batch; the call returns its report, which you judge on its evidence. "
@@ -148,10 +153,10 @@ OPENCODE_AUTO_CONTROL = (
 OPENCODE_MANUAL_ROLE = (
     "You lead this research project with the user; this host has no autonomous dispatch or "
     "delegation. Plan, propose nodes with research_propose, record sourced "
-    "knowledge with research_memory, publish stage materials with research_publish and link "
+    "knowledge with research_record, publish stage materials with research_publish and link "
     "materials with research_relate. When identity.node_id is set this session is working on "
-    "that node: do the node's work here, keep its checkpoint current (research_memory "
-    "action=checkpoint), publish its results and record adopted materials with research_consume. "
+    "that node: do the node's work here, keep its checkpoint current (research_checkpoint), "
+    "publish its results and record adopted materials with research_consume only when not already cited. "
     "The user starts, switches and ends node work with /research work; suggest a switch when the "
     "work calls for it instead of assuming it. If the user requests plan confirmation, submit the "
     "complete plan and wait; clarification answers alone do not approve it."
@@ -546,6 +551,8 @@ class MemoryStore:
             "INSERT OR IGNORE INTO review_todos VALUES(?,?,?,?,?,?,?)",
             (todo_id, trigger_kind, trigger_ref, node_id, "pending", at, at),
         )
+        from .review_lifecycle import candidate
+        candidate(db, todo_id, trigger_kind, trigger_ref, node_id, at)
 
     @staticmethod
     def _offline_asserted_at(operation_id: str) -> dict:
@@ -581,6 +588,8 @@ class MemoryStore:
         asserted_at: dict | None = None
     ) -> dict:
         self._reject_asserted_at(fields)
+        if {'preset', 'preserve_sources', 'no_new_evidence'} & fields.keys():
+            raise ValidationError('preset and source preservation apply to revise, not record')
         asserted_at = asserted_at or self._offline_asserted_at(request_id)
         kind = fields.get("kind")
         if kind not in KINDS:
@@ -624,8 +633,7 @@ class MemoryStore:
             "source_sequence": fields.get("source_sequence"),
         }
         if "checks" in fields:
-            with self._read() as db:
-                payload["checks"] = field_checks.declare(db, self.root, kind, fields["checks"])
+            payload["checks"] = fields["checks"]
         if "execution_refs" in fields:
             payload["execution_refs"] = fields["execution_refs"]
         if execution_identity is not None:
@@ -654,6 +662,8 @@ class MemoryStore:
                 effective["node_id"] = attempt["node_id"]
             return self._record_knowledge_in_tx(db, effective, asserted_at=asserted_at)
 
+        if '_contract_version' in fields:
+            payload['contract_version'] = fields['_contract_version']
         return self._mutate("knowledge.record", payload, request_id, work)
 
     def _record_knowledge_in_tx(self, db: sqlite3.Connection, payload: dict, *, asserted_at: dict | None = None) -> dict:
@@ -709,21 +719,17 @@ class MemoryStore:
             db, value["ref"], value["created_at"], int(value.get("source_sequence") or 0)
         )
         self._event(db, "knowledge.recorded", {"ref": value["ref"], "node_id": node_id})
-        return value
+        return self._decode_knowledge(self._latest_revision(db, kid), db)
 
     def revise_knowledge(self, fields: dict, request_id: str, *, asserted_at: dict | None = None) -> dict:
         self._reject_asserted_at(fields)
         asserted_at = asserted_at or self._offline_asserted_at(request_id)
         ref = _require_text(fields.get("ref"), "ref")
         kid, referenced_revision = parse_knowledge_ref(ref)
+        if 'preset' in fields and 'expected_revision' in fields and type(fields['expected_revision']) is not int:
+            raise ValidationError('preset expected_revision must be an integer')
         expected = int(fields.get("expected_revision", referenced_revision))
         changes = fields.get("changes")
-        if isinstance(changes, dict) and "checks" in changes:
-            with self._read() as db:
-                current = self._decode_knowledge(self._latest_revision(db, kid))
-                checks = field_checks.declare(db, self.root, current["kind"], changes["checks"],
-                                              current=current["checks"])
-            changes = {**changes, "checks": checks}
         payload = {
             "ref": ref,
             "expected_revision": expected,
@@ -739,6 +745,15 @@ class MemoryStore:
         if "execution_refs" in fields:
             payload["execution_refs"] = fields["execution_refs"]
 
+        for key in ('preset', 'preserve_sources', 'no_new_evidence'):
+            if key in fields:
+                payload[key] = fields[key]
+        if 'preset' in payload:
+            payload['preset_scope_input'] = {key: fields[key] for key in
+                ('change_kind', 'affected_scope_mode', 'affected_scope') if key in fields}
+        if '_append_motivation' in fields:
+            payload['append_motivation'] = fields['_append_motivation']
+
         def work(db: sqlite3.Connection) -> dict:
             current = self._decode_knowledge(self._latest_revision(db, kid))
             if current["revision"] != expected:
@@ -746,6 +761,8 @@ class MemoryStore:
                     f"knowledge revision conflict: expected {expected}, current {current['revision']}"
                 )
             changes = payload["changes"]
+            if 'append_motivation' in payload:
+                changes = {**changes,'motivated_by':sorted(set([*current['motivated_by'],payload['append_motivation']]))}
             allowed = {
                 "statement",
                 "scope",
@@ -759,6 +776,11 @@ class MemoryStore:
             }
             if not isinstance(changes, dict) or set(changes) - allowed:
                 raise ValidationError("Unsupported knowledge revision fields")
+            change_fields = payload
+            if 'preset' in payload:
+                if expected != referenced_revision:
+                    raise ValidationError('preset expected_revision must match the fixed ref')
+                change_fields = revision_presets.expand(payload, current)
             value = {**current, **changes}
             if value["status"] not in STATUSES:
                 raise ValidationError("Invalid knowledge status")
@@ -780,6 +802,8 @@ class MemoryStore:
                 self._validate_evidence(db, [ref for ref in value[key] if ref not in current[key]])
             value["checks"] = field_checks.declare(db, self.root, value["kind"], value["checks"],
                                                   current=current["checks"])
+            preserve = revision_presets.sources(payload, current, value)
+            execution_refs = current['execution_refs'] if preserve else self._execution_refs(db, payload.get('execution_refs', []))
             revision = current["revision"] + 1
             at = _now()
             supersedes = [current["ref"]]
@@ -801,8 +825,8 @@ class MemoryStore:
                     int(db.execute("SELECT COALESCE(MAX(event_id),0)+1 FROM events").fetchone()[0]),
                     _encoded(value["motivated_by"]),
                     _encoded(asserted_at),
-                    # R37: attribution belongs to this write; never inherit it from current.
-                    _encoded(self._execution_refs(db, payload.get("execution_refs", []))),
+                    # Omission stays empty; only explicit no-new-evidence preservation copies prior sources.
+                    _encoded(execution_refs),
                     _encoded(value["checks"]),
                 ),
             )
@@ -813,9 +837,9 @@ class MemoryStore:
             self.sync_support_edges(db, fresh)
             self._write_relations_in_tx(db, fresh["ref"], payload["relations"], at, asserted_at)
             mode, resolved_scope, change_kind = _epistemic().validate_change(
-                mode=payload["affected_scope_mode"],
-                scope=payload["affected_scope"],
-                kind=payload["change_kind"],
+                mode=change_fields["affected_scope_mode"],
+                scope=change_fields["affected_scope"],
+                kind=change_fields["change_kind"],
                 knowledge_id=kid,
                 new_revision=revision,
                 retracts=(
@@ -850,9 +874,25 @@ class MemoryStore:
                 },
             )
             self.queue_review_in_tx(db, "knowledge-revision", fresh["ref"], fresh["node_id"])
+            fresh = self._decode_knowledge(self._latest_revision(db, kid), db)
             fresh["change"] = change
+            if 'preset' in payload or 'preserve_sources' in payload or 'no_new_evidence' in payload:
+                applied = dict(preset=payload.get('preset'), change_kind=change_kind,
+                    affected_scope_mode=mode, affected_scope=resolved_scope,
+                    sources='preserved' if preserve else 'explicit' if 'execution_refs' in payload else 'omitted',
+                    preserved_from=current['ref'] if preserve else None)
+                fresh['applied'] = applied
+                fresh['provenance'] = {
+                    'status': 'unknown' if not execution_refs else
+                              'linked' if all(item['status'] == 'linked' for item in execution_refs) else 'unlinked',
+                    'preserved_from': applied['preserved_from'],
+                    'execution_verified': False,
+                }
+                self._event(db, 'knowledge.revision_applied', {'ref': fresh['ref'], **applied})
             return fresh
 
+        if '_contract_version' in fields:
+            payload['contract_version'] = fields['_contract_version']
         return self._mutate("knowledge.revise", payload, request_id, work)
 
     def dispose_impact(self, fields: dict, request_id: str) -> dict:
@@ -890,6 +930,8 @@ class MemoryStore:
             self._event(db, "knowledge.disposed", value)
             return value
 
+        if '_contract_version' in fields:
+            payload['contract_version'] = fields['_contract_version']
         return self._mutate("knowledge.dispose", payload, request_id, work)
 
     def impact_review_state(
@@ -991,6 +1033,8 @@ class MemoryStore:
             self._event(db, "knowledge.scope_narrowed", value)
             return value
 
+        if '_contract_version' in fields:
+            payload['contract_version'] = fields['_contract_version']
         return self._mutate("knowledge.narrow_scope", payload, request_id, work)
 
     def knowledge_impacts(
@@ -1031,7 +1075,23 @@ class MemoryStore:
             value["result"] = json.loads(value["result"])
             return value
 
-    def checkpoint(self, fields: dict, request_id: str, *, execution_identity=None) -> dict:
+    def checkpoint_read(self, host_id, session_id):
+        with self._read() as db:
+            caller = checkpoint_receipts.identity(self, db, host_id, session_id)
+            return checkpoint_receipts.snapshot(self, db, caller)
+
+    def checkpoint_observed(self, host_id, session_id, descriptor, instance_id, origin, request_id):
+        payload = dict(snapshot=descriptor, plugin_instance_id=instance_id, origin=origin,
+                       host_id=host_id, session_id=session_id)
+        def work(db):
+            caller = checkpoint_receipts.identity(self, db, host_id, session_id)
+            checkpoint_receipts.validate_observation(self, db, caller, descriptor)
+            base = checkpoint_receipts.issue(db, descriptor, instance_id, origin, _now())
+            return {'base': base, 'head_revision': descriptor['head_revision']}
+        return self._mutate('checkpoint.observed', payload, request_id, work)
+
+    def checkpoint(self, fields: dict, request_id: str, *, execution_identity=None,
+                   receipt=None, plugin_instance_id=None) -> dict:
         node_id = fields.get("node_id")
         payload = {
             "node_id": node_id,
@@ -1042,6 +1102,11 @@ class MemoryStore:
 
         if "visibility" in fields:
             payload["visibility"] = fields["visibility"]
+        if 'base' in fields:
+            payload['base'] = fields['base']
+        for key in ('decision_refs','scope_reason'):
+            if key in fields:
+                payload[key] = fields[key]
 
         def work(db: sqlite3.Connection) -> dict:
             effective = dict(payload)
@@ -1050,20 +1115,8 @@ class MemoryStore:
                 identity = {'host_id': host_id, 'session_id': session_id}
                 if payload['source_identity'] not in ({}, identity):
                     raise ValidationError('checkpoint source_identity must match the calling session')
-                association = self._association(db, host_id, session_id)
-                session = db.execute(
-                    'SELECT * FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
-                    execution_identity,
-                ).fetchone()
-                if not session or session['role'] not in {'main', 'node_core', 'exploration'}:
-                    raise ValidationError('checkpoint requires a main or node session')
-                attempt = db.execute('SELECT node_id FROM attempts WHERE association_id=? AND ended_at IS NULL',
-                                     (association['association_id'],)).fetchone()
-                owner = attempt['node_id'] if attempt and attempt['node_id'] else session['node_id']
-                if session['role'] != 'main' and not owner:
-                    raise ValidationError('Node checkpoint has no associated node')
-                if session['node_id'] and owner != session['node_id']:
-                    raise ValidationError('checkpoint attempt and session node disagree')
+                caller = checkpoint_receipts.identity(self, db, host_id, session_id)
+                owner = caller['node_id']
                 if 'node_id' in fields and fields['node_id'] != owner:
                     raise ValidationError('checkpoint node_id must match the current work owner')
                 if fields.get('visibility') == 'project' and owner is not None:
@@ -1082,13 +1135,35 @@ class MemoryStore:
                 "SELECT MAX(revision) revision FROM node_checkpoints WHERE node_id IS ?", (node_id,)
             ).fetchone()
             current = int(row["revision"] or 0)
-            if (
-                payload["expected_revision"] is not None
-                and int(payload["expected_revision"]) != current
-            ):
-                raise ConflictError(
-                    f"checkpoint revision conflict: expected {payload['expected_revision']}, current {current}"
-                )
+            expected = payload['expected_revision']
+            if expected is not None and (type(expected) is not int or expected < 0):
+                raise ValidationError('checkpoint expected_revision must be a nonnegative integer')
+            base = payload.get('base') or receipt
+            if base is not None:
+                if execution_identity is None:
+                    raise CheckpointBaseMismatch('Offline checkpoints require explicit expected_revision')
+                observed = checkpoint_receipts.expected(db, caller, base, plugin_instance_id)
+                if expected is not None and expected != observed:
+                    raise CheckpointBaseMismatch('checkpoint expected_revision and base disagree')
+                expected = observed
+            if expected is None:
+                raise CheckpointBaseRequired('Read research_query collection=checkpoint before writing; checkpoint base required')
+            if payload.get('contract_version') == 'r2-v1' and base is None:
+                raise CheckpointBaseRequired('R2 checkpoint requires the delivered base; read collection=checkpoint')
+            if type(expected) is not int or expected < 0:
+                raise ValidationError('checkpoint expected_revision must be a nonnegative integer')
+            if expected != current:
+                raise CheckpointConflict(f'checkpoint revision conflict: expected {expected}, current {current}',
+                                         current_revision=current)
+            if 'decision_refs' in payload:
+                if execution_identity is None or caller['node_id'] is not None:
+                    raise ValidationError('Only the project owner can declare project decision_refs')
+                from .review_lifecycle import set_scope
+                set_scope(self, db, payload['decision_refs'], payload.get('scope_reason'), request_id,
+                          {'host_id': host_id, 'session_id': session_id})
+            effective['source_identity'] = {**effective['source_identity'],
+                'checkpoint_base': {'head_revision': expected, 'base_id': base,
+                                    'plugin_instance_id': plugin_instance_id}}
             revision = current + 1
             cid = (
                 "CP-" + hashlib.sha256((request_id + ":" + str(revision)).encode()).hexdigest()[:20]
@@ -1118,8 +1193,14 @@ class MemoryStore:
                 "memory.checkpointed",
                 {"checkpoint_id": cid, "node_id": node_id, "revision": revision},
             )
+            if execution_identity is not None and plugin_instance_id:
+                descriptor = checkpoint_receipts.snapshot(self, db, caller)['snapshot']
+                value['next_base'] = checkpoint_receipts.issue(db, descriptor, plugin_instance_id, 'write_result', at)
+                value['next_snapshot'] = descriptor
             return value
 
+        if '_contract_version' in fields:
+            payload['contract_version'] = fields['_contract_version']
         return self._mutate("memory.checkpoint", payload, request_id, work)
 
     def checkpoint_view(self, db, node_id):
@@ -1290,8 +1371,21 @@ class MemoryStore:
             selected = self._project(db)["config"].get("context_policy", "memory-v2") if policy is None else policy
             if selected not in POLICIES:
                 raise ValidationError(f"Unknown context policy: {selected}")
-            return self._context_view(db, host_id, session_id, max_chars, profile,
+            view = self._context_view(db, host_id, session_id, max_chars, profile,
                                       selected, decision_refs, final_ref)
+            role = db.execute('SELECT role FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0', (host_id,session_id)).fetchone()
+            if role and role[0] in {'main','node_core','exploration'}:
+                caller = checkpoint_receipts.identity(self,db,host_id,session_id)
+                read = checkpoint_receipts.snapshot(self,db,caller)
+                view['checkpoint_owner'] = read['snapshot']
+                blocks = {}
+                matches = list(re.finditer(r'(?m)^## ([^\n]+)\n',view['text']))
+                for index, match in enumerate(matches):
+                    end = matches[index+1].start() if index+1<len(matches) else len(view['text'])
+                    blocks[match[1]] = json.loads(view['text'][match.end():end].strip())
+                if blocks.get('checkpoint_recovery') == read['recovery'] and blocks.get('checkpoint') == read['checkpoint']:
+                    view['checkpoint_snapshot'] = read['snapshot']
+            return view
 
     def context_shadow(self, host_id, session_id, max_chars=12000, profile=None,
                        *, decision_refs=None, final_ref=None):
@@ -1336,6 +1430,7 @@ class MemoryStore:
 
     def _context_view(self, db, host_id, session_id, max_chars, profile,
                       policy, decision_refs, final_ref):
+        from .review_lifecycle import summary as review_summary
         project = self._project(db)
         association = db.execute(
             "SELECT * FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL",
@@ -1688,7 +1783,8 @@ class MemoryStore:
             # Queue pressure is control-plane state, not optional background
             # memory.  Put it ahead of the potentially large knowledge blocks
             # so the total and its bounded sample survive context pressure.
-            ("pending_review", review_todos),
+            ("pending_review", review_summary(db,node_id)
+             if db.execute('PRAGMA user_version').fetchone()[0]>=11 else review_todos),
             ("affected_knowledge", affected_knowledge),
             ("structure_hints", hints),
             ("retracted_refs", retracted_refs),
@@ -1736,7 +1832,7 @@ class MemoryStore:
             if (
                 value is None
                 or value == []
-                or (name == "pending_review" and not value["pending_total"])
+                or (name == "pending_review" and not value["pending_total"] and not value.get('candidate_total',0))
                 or (name == "affected_knowledge" and not value["total"])
                 or (name == "retracted_refs" and not value["total"])
                 or (name == "structure_hints" and not value["total"])

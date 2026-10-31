@@ -213,10 +213,11 @@ export function ResearchBoard(props: {
       } else if (target === "review") {
         const collection = reviewCollection()
         const page = await board("page", { collection, limit: 50,
-          ...(reviewNode() ? { node_id: reviewNode() } : {}),
-          ...(reviewKind() ? { kind: reviewKind(), trigger_kind: reviewKind() } : collection === "hints" ? { kind: "clerical" } : {}),
-          ...(collection === "review_todos" && reviewState() ? { state: reviewState() } : {}),
+          ...(reviewNode() ? collection==='review_obligations' ? {scope_owner:`node:${reviewNode()}`} : { node_id: reviewNode() } : {}),
+          ...(reviewKind() ? collection==='review_candidates' ? {trigger_kind:reviewKind()} : { kind: reviewKind(), trigger_kind: reviewKind() } : collection === "hints" ? { kind: "clerical" } : {}),
+          ...(["review_todos",'review_obligations'].includes(collection) && reviewState() ? { state: reviewState() } : {}),
           cursor: pageCursor() })
+        if (page.available===false) throw new Error('该旧项目尚未迁移审阅生命周期；历史记录仍可在历史审阅队列查看。')
         if (run !== generation) return
         setNextCursor(page.cursor)
         setReviewTotal(page.total)
@@ -267,7 +268,7 @@ export function ResearchBoard(props: {
     if (target === "review") {
       setReviewSource(null)
       setReviewLink(0)
-      const ref = row.data.expand?.ref ?? row.data.trigger_ref ?? row.data.ref ?? row.data.node_id
+      const ref = row.data.target_ref ?? row.data.expand?.ref ?? row.data.trigger_ref ?? row.data.ref ?? row.data.node_id
       if (ref) {
         const value = await fullReference(ref)
         if (active()) setReviewSource({ ...value.value, ref })
@@ -477,10 +478,10 @@ export function ResearchBoard(props: {
       },
       {
         bind: "s",
-        enabled: () => !reader() && (tab() === "knowledge" || tab() === "review" && reviewCollection() === "review_todos"),
+        enabled: () => !reader() && (tab() === "knowledge" || tab() === "review" && ['review_todos','review_obligations'].includes(reviewCollection())),
         run: () => {
           if (tab() === "knowledge") cycle(summary()?.knowledge_statuses ?? [], statusFilter(), setStatusFilter)
-          else { const values = ["", "pending", "running", "proposal_ready", "completed"]; setReviewState(values[(values.indexOf(reviewState()) + 1) % values.length]!); resetPage(); void load() }
+          else { const values = reviewCollection()==='review_obligations' ? ['', 'pending','running','completed','out_of_scope','waived'] : ["", "pending", "running", "proposal_ready", "completed"]; setReviewState(values[(values.indexOf(reviewState()) + 1) % values.length]!); resetPage(); void load() }
         },
       },
       { bind: "g", enabled: () => !reader() && tab() === "review", run: () => {

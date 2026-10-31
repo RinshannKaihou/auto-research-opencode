@@ -644,6 +644,18 @@ class NativeService:
             return {"project": None, "project_root": str(root)}
         store = NativeStore(root, readonly=True)
         view = request.get("view")
+        if view == 'page' and request.get('collection') in {'review_candidates','review_obligations','review_events'}:
+            return store.review_page(request['collection'], **{key:request[key] for key in
+                ('cursor','limit','node_id','trigger_kind','generation','scope_owner','state','target_ref','change_id','obligation_id') if key in request})
+        if view == 'page' and request.get('collection')=='adoptions':
+            return store.adoptions(**{key:request[key] for key in ('cursor','limit','node_id') if key in request})
+        if view == 'capabilities':
+            with store._read() as db:
+                version = db.execute('PRAGMA user_version').fetchone()[0]
+            return {'schema_version': version, 'memory_write_contract': 'r2-v1' if version>=11 else 'requires_migration',
+                    'checkpoint_base': 'receipt-cas-v1' if version >= 11 else 'requires_migration',
+                    'review_lifecycle': 'candidate-obligation-v1' if version>=11 else 'requires_migration',
+                    'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered'}
         if view == "context_preview":
             if request.get("model_call"):
                 raise ValueError("Context preview requires the host controller")
@@ -697,19 +709,24 @@ class NativeService:
 
     def handle(self, request: dict) -> dict:
         transport_id = request.get("transport_id", request.get("request_id"))
+        store = None
         if not isinstance(transport_id, str) or not transport_id or len(transport_id) > 128:
             raise ValueError("transport_id must be a nonempty string of at most 128 characters")
         method = request.get("method")
         if method == "capabilities":
             value = {
                 "schema_version": SCHEMA_VERSION,
-                "execution_owner": "dsh",
-                "model_loop": "native-goals",
+                "execution_owner": "opencode",
+                "model_loop": "session-events",
                 "manual_research": True,
                 "autonomous_research": True,
-                "usage_accounting": "observation-only",
+                "usage_accounting": "observed-native-events-subset",
                 "strict_cross_session_read_isolation": False,
                 "knowledge_revisions": True,
+                "checkpoint_base": "receipt-cas-v1",
+                'memory_write_contract':'r2-v1',
+                'review_lifecycle':'candidate-obligation-v1',
+                'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered',
                 "native_specialists": "foreground-one-shot",
             }
         elif method == "project_sessions":
@@ -1015,7 +1032,14 @@ class NativeService:
                     limit=request.get("limit", 32768),
                 )
             elif method == "query":
-                if request.get("ref") and request.get("offset") is not None:
+                if request.get('collection')=='adoptions':
+                    value = store.adoptions(**{key:request[key] for key in ('cursor','limit','node_id') if key in request})
+                elif request.get('collection') in {'review_candidates','review_obligations','review_events'}:
+                    value = store.review_page(request['collection'], **{key:request[key] for key in
+                        ('cursor','limit','node_id','trigger_kind','generation','scope_owner','state','target_ref','change_id','obligation_id') if key in request})
+                elif request.get('collection') == 'checkpoint':
+                    value = store.checkpoint_read(host_id, session_id)
+                elif request.get("ref") and request.get("offset") is not None:
                     value = store.reference_chunk(
                         request["ref"],
                         offset=request.get("offset", 0),
@@ -1108,8 +1132,42 @@ class NativeService:
                     {**request.get("fields", {}), "host_id": host_id, "session_id": session_id,},
                     self._operation(request),
                 )
+            elif method == 'checkpoint_observed':
+                value = store.checkpoint_observed(host_id, session_id, request.get('snapshot'),
+                    request.get('plugin_instance_id'), request.get('origin'), self._operation(request))
+            elif method in {'review_scope_set','review_promote','review_exception'}:
+                if not role or role['role'] != 'main':
+                    raise ValidationError('Review control requires the project main')
+                if method == 'review_scope_set':
+                    value = store.review_scope_set(host_id, session_id, request['refs'], request['reason'], self._operation(request))
+                else:
+                    value = getattr(store, method)(request['fields'], self._operation(request), {'host_id':host_id,'session_id':session_id})
+            elif method == 'runtime_budget_set':
+                if not role or role['role'] != 'main':
+                    raise ValidationError('Runtime budget control requires the project main')
+                value = store.runtime_budget_set(host_id,session_id,request['limits'],request['reason'],self._operation(request))
+            elif method == 'runtime_budget_status':
+                value = store.runtime_budget_status(host_id,session_id)
+            elif method == 'runtime_reserve':
+                value = store.runtime_reserve(host_id,session_id,self._operation(request))
+            elif method == 'runtime_budget_stop':
+                value = store.runtime_budget_stop(host_id,session_id,self._operation(request))
+            elif method == 'runtime_turn_finished':
+                value = store.runtime_turn_finished(host_id,session_id,request['turn'],self._operation(request))
+            elif method == 'runtime_execution_end':
+                value = store.runtime_execution_end(host_id,session_id,request['turn'],request['outcome'],self._operation(request))
+                value = {**value,'claimed':not store.last_replayed}
+            elif method == 'runtime_submitted':
+                value = store.runtime_submitted(host_id,session_id,request['reservation_id'],self._operation(request))
+            elif method == 'runtime_native_event':
+                value = store.runtime_native_event(host_id,session_id,request['fields'],self._operation(request))
+            elif method == 'invocation_context':
+                value = store.invocation_context(host_id,session_id)
             elif method == "memory_write":
                 action = request.get("action")
+                contract = request.get('contract_version','legacy')
+                if contract not in {'legacy','r2-v1'} or '_contract_version' in request.get('fields',{}):
+                    raise ValidationError('Unsupported memory write contract')
                 fields = {
                     **request.get("fields", {}),
                     "source_identity": request.get("fields", {}).get("source_identity", {
@@ -1117,6 +1175,8 @@ class NativeService:
                     }),
                 }
                 store._reject_asserted_at(fields)
+                if contract == 'r2-v1':
+                    fields['_contract_version'] = contract
                 if action == "record":
                     value = store.record_knowledge(
                         fields, self._operation(request), execution_identity=(host_id, session_id),
@@ -1126,7 +1186,8 @@ class NativeService:
                     value = store.revise_knowledge(fields, self._operation(request),
                         asserted_at=self._asserted_at(store, request, host_id, session_id))
                 elif action == "checkpoint":
-                    value = store.checkpoint(fields, self._operation(request), execution_identity=(host_id, session_id))
+                    value = store.checkpoint(fields, self._operation(request), execution_identity=(host_id, session_id),
+                        receipt=request.get('checkpoint_base'), plugin_instance_id=request.get('plugin_instance_id'))
                 elif action == "dispose":
                     value = store.dispose_impact(fields, self._operation(request))
                 elif action == "narrow_scope":
@@ -1335,14 +1396,13 @@ class NativeService:
                     display=request.get("display"),
                 )
             elif method == "relate":
-                value = store.relate(
-                    request.get("source_ref"),
-                    request.get("target_ref"),
-                    request.get("label"),
-                    request.get("note"),
-                    self._operation(request),
-                    asserted_at=self._asserted_at(store, request, host_id, session_id),
-                )
+                if request.get('contract_version') == 'r2-v1':
+                    fields = {key:request[key] for key in ('source_ref','target_ref','label','note','input_refs','revision',
+                        'obligation_id','change_id','result','complete','evidence_refs','contract_version') if key in request}
+                    value = store.relate_typed(fields,self._operation(request),self._asserted_at(store,request,host_id,session_id))
+                else:
+                    value = store.relate(request.get('source_ref'),request.get('target_ref'),request.get('label'),
+                        request.get('note'),self._operation(request),asserted_at=self._asserted_at(store,request,host_id,session_id))
             elif method == "finish":
                 value = store.finish(
                     host_id,
@@ -1507,7 +1567,8 @@ class NativeService:
                 }
             else:
                 raise ValueError(f"Unknown native research method: {method}")
-        return {"request_id": transport_id, "ok": True, "value": redact(value)}
+        return {"request_id": transport_id, "ok": True, "value": redact(value),
+                'replayed': store.last_replayed if store else None}
 
 
 def serve(service, source, output):
@@ -1533,7 +1594,8 @@ def serve(service, source, output):
                 {
                     "request_id": request_id,
                     "ok": False,
-                    "error": {"code": type(exc).__name__, "message": str(exc)},
+                    "error": {"code": getattr(exc, 'code', type(exc).__name__), "message": str(exc),
+                              **({'details': exc.details} if hasattr(exc, 'details') else {})},
                 }
             ).encode()
         output.write(encoded + b"\n")

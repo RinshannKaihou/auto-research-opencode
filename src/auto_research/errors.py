@@ -19,3 +19,21 @@ class ConflictError(ResearchError):
 
 class BudgetError(ConflictError):
     pass
+
+
+class CheckpointBaseRequired(ValidationError):
+    code = "checkpoint_base_required"
+    details = {"read": {"collection": "checkpoint"}}
+
+
+class CheckpointBaseMismatch(ValidationError):
+    code = "checkpoint_base_mismatch"
+    details = {"read": {"collection": "checkpoint"}}
+
+
+class CheckpointConflict(ConflictError):
+    code = "checkpoint_conflict"
+
+    def __init__(self, message, *, current_revision):
+        super().__init__(message)
+        self.details = {"current_revision": current_revision, "read": {"collection": "checkpoint"}}

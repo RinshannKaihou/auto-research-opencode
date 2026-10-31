@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-31",
+  "base_commit": "0c7b6d5",
+  "python_passed": 545,
+  "bun_passed": 79,
+  "independent_package_migration_passed": true,
+  "compatible_project_copies": 8,
+  "bundled_python_matches_source": true,
+  "m4_real_models": "not_run",
+  "shared_opencode_installation": "not_changed"
+}

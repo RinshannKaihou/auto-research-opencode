@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
@@ -58,6 +58,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
     options: { registryPath, python },
     location: { directory },
     tool: {
+      hook: async (name:string,callback:Hook) => { hooks.set(`tool.${name}`,callback); return {dispose:async()=>{}} },
       transform: async (callback: (editor: any) => void) => {
         callback({ add: (tool: any) => tools.set(tool.name, tool) })
         return { dispose: async () => {} }
@@ -172,6 +173,128 @@ async function load(options: { python?: string; directory?: string } = {}) {
   return { ...host, call, command, turn, summary, page, said }
 }
 
+test("R2 dispatch observes local and backend rejection without recording input text", async () => {
+  const host = await load()
+  await host.command("auto", "ses_main", { goal: "fixture" })
+  await expect(host.call("research_note", "ses_main", { body: 42 })).rejects.toThrow()
+  await expect(host.call("research_memory", "ses_main", {
+    action: "record", kind: "claim", statement: "private-claim-text", visibility: "project",
+  })).rejects.toThrow()
+  const directory = join(project, ".research", "observations")
+  const text = readdirSync(directory).map(name => readFileSync(join(directory, name), "utf8")).join("")
+  const rows = text.trim().split("\n").map(line => JSON.parse(line))
+  expect(rows.filter(row => row.phase === "start")).toHaveLength(2)
+  expect(rows.filter(row => row.phase === "end").map(row => row.outcome)).toEqual(["failed", "failed"])
+  expect(rows.some(row => row.phase === "transport" && row.attempt === 1)).toBe(true)
+  expect(text).not.toContain("private-claim-text")
+})
+
+test("checkpoint query returns a bound base and stale writes are never refreshed automatically", async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'checkpoint fixture' })
+  const read = await host.call('research_query', 'ses_main', { collection: 'checkpoint' })
+  expect(read.snapshot.head_revision).toBe(0)
+  const first = await host.call('research_memory', 'ses_main', { action: 'checkpoint', base: read.base, state: { step: 1 } })
+  expect(first.revision).toBe(1)
+  await expect(host.call('research_memory', 'ses_main', {
+    action: 'checkpoint', base: read.base, state: { step: 'stale' },
+  })).rejects.toMatchObject({ code: 'checkpoint_conflict', details: { current_revision: 1, read: { collection: 'checkpoint' } } })
+  await expect(host.call('research_memory', 'ses_main', {
+    action: 'checkpoint', state: { step: 'unread' },
+  })).rejects.toMatchObject({ code: 'checkpoint_base_required' })
+  const next = await host.call('research_memory', 'ses_main', {
+    action: 'checkpoint', base: first.next_base, state: { step: 2 },
+  })
+  expect(next.revision).toBe(2)
+  expect(next.source_identity.checkpoint_base.head_revision).toBe(1)
+})
+
+test('R2 exposes one narrow family and automatically freezes the base from the delivered model request', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'R2 integrated checkpoint'})
+  host.events.push({id:'step-a',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'assistant-a',model:{id:'actual',providerID:'mock',variant:'v'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items.length===1,'native step registration')
+  const request=modelRequest('ses_main')
+  await host.hooks.get('context')!(request)
+  expect(Object.keys(request.tools)).not.toContain('research_memory')
+  for (const name of ['research_record','research_revise','research_checkpoint','research_dispose','research_narrow_scope']) expect(Object.keys(request.tools)).toContain(name)
+  const execute=(id:string) => host.tools.get('research_checkpoint').execute({state:{next:id}},
+    {sessionID:'ses_main',messageID:'assistant-a',id,agent:'build'})
+  const results=await Promise.allSettled([execute('one'),execute('parallel')])
+  expect(results.filter(row=>row.status==='fulfilled')).toHaveLength(1)
+  expect(results.filter(row=>row.status==='rejected')).toHaveLength(1)
+  const fulfilled=results.find(row=>row.status==='fulfilled') as PromiseFulfilledResult<any>
+  const value=JSON.parse(fulfilled.value.content)
+  expect(value.revision).toBe(1)
+  const next=modelRequest('ses_main')
+  next.messages=[{role:'tool',content:[{type:'tool-result',id:results[0].status==='fulfilled'?'one':'parallel',name:'research_checkpoint',result:{type:'text',value:fulfilled.value.content}}]}] as any
+  host.events.push({id:'step-b',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'assistant-b',model:{id:'actual',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items.length===2,'next native step')
+  await host.hooks.get('context')!(next)
+  const saved=await host.tools.get('research_checkpoint').execute({state:{next:'two'}},
+    {sessionID:'ses_main',messageID:'assistant-b',id:'second',agent:'build'})
+  expect(JSON.parse(saved.content).revision).toBe(2)
+})
+
+test('autonomous turns stop at the durable cap; duplicate end events and restart cannot bypass it', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'budget fixture'})
+  await host.command('budget','ses_main',{limit:'turns',value:'1',reason:'test cap'})
+  host.turn.start('ses_main')
+  const terminal={id:'terminal-budget',type:'session.execution.succeeded',data:{sessionID:'ses_main'}}
+  host.events.push(terminal); host.events.push(terminal)
+  await until(async () => (await host.rpc().session({sessionID:'ses_main'})).pauseReason==='budget','budget pause')
+  expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
+  const before=host.said('ses_main').length
+  const refused=await host.command('resume','ses_main')
+  expect(refused.error).toContain('预算已到限')
+  expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
+  await host.command('budget','ses_main',{limit:'turns',value:'2',reason:'explicit increase'})
+  await host.command('resume','ses_main')
+  expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(2)
+  expect(host.said('ses_main').length).toBeGreaterThan(before)
+  const restarted=await load()
+  await until(async () => (await restarted.summary()).run.state==='paused','cold recovery')
+  expect((await restarted.command('resume','ses_main')).error).toContain('预算已到限')
+  expect(restarted.said('ses_main').filter(row=>row.resume)).toHaveLength(0)
+})
+
+test('native usage records actual variant once and external observations omit command content', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'usage fixture'})
+  await host.hooks.get('model.request')!({sessionID:'ses_main',kind:'compaction',model:{id:'actual-model',providerID:'actual-provider',variant:'high'}})
+  const tokens={input:4,output:2,reasoning:1,cache:{read:2,write:1}}
+  const event={id:'native-aux',type:'session.usage.recorded',data:{sessionID:'ses_main',source:'compaction',tokens,cost:0.25}}
+  host.events.push(event); host.events.push(event)
+  host.events.push({id:'aggregate',type:'session.usage.updated',data:{sessionID:'ses_main',tokens,cost:99}})
+  let page:any
+  await until(async () => {
+    page=await host.call('research_query','ses_main',{collection:'usage'})
+    return page.items.length===1 && page.items[0].amount===10
+  },'usage reconciliation')
+  expect(page.items[0].provider).toBe('actual-provider')
+  expect(page.items[0].model).toBe('actual-model')
+  expect(page.items[0].details.variant).toBe('high')
+  await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:'ses_main',id:'external',input:{command:'PRIVATE_COMMAND_BODY'}})
+  await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:'ses_main',id:'external',status:'completed'})
+  const directory=join(project,'.research','observations')
+  const text=readdirSync(directory).map(name=>readFileSync(join(directory,name),'utf8')).join('')
+  expect(text).not.toContain('PRIVATE_COMMAND_BODY')
+  expect(text).toContain('external_execution')
+  expect(text).toContain('actual-model')
+  if (process.env.R2_CAPTURE_TRACE) writeFileSync(new URL('../../docs/evidence/r2-runtime/native-invocations.jsonl',import.meta.url),text)
+})
+
+test('wall deadline interrupts an active native session without waiting for a model end event',async()=>{
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'deadline fixture'})
+  await host.command('budget','ses_main',{limit:'seconds',value:'1',reason:'bounded fixture'})
+  await until(async()=> (await host.summary()).run.state==='paused','wall-clock monitor pause')
+  expect(host.interrupted).toContain('ses_main')
+  expect((await host.rpc().session({sessionID:'ses_main'})).pauseReason).toBe('budget')
+  expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
+})
+
 describe("sessions outside a project", () => {
   test("see an unchanged request apart from this plugin's tools", async () => {
     const host = await load()
@@ -270,7 +393,8 @@ describe("autonomous research", () => {
     await host.call("research_memory", "ses_node_1", {
       action: "record", kind: "observation", statement: "X holds under A", evidence_refs: [`pub/${pub.publication_id}#report`],
     })
-    const checkpoint = await host.call("research_memory", "ses_node_1", { action: "checkpoint", state: { next: "finish" } })
+    const seen = await host.call("research_query", "ses_node_1", { collection: "checkpoint" })
+    const checkpoint = await host.call("research_memory", "ses_node_1", { action: "checkpoint", base: seen.base, state: { next: "finish" } })
     expect(checkpoint.node_id).toBe("X-001")
     await host.call("research_finish", "ses_node_1", { state: "finished", summary: "X holds under A" })
     host.turn.end("ses_node_1")
@@ -407,7 +531,7 @@ describe("autonomous research", () => {
       host.turn.end("ses_main")
       await Bun.sleep(60)
     }
-    await until(() => host.said("ses_main").some((item) => item.text.includes("连续 3 轮没有写入")), "no-progress pause")
+    await until(() => host.said("ses_main").some((item) => item.text.includes("连续 3 轮没有研究推进")), "no-progress pause")
     const continued = host.said("ses_main").filter((item) => item.resume && item.text.includes("继续推进研究"))
     expect(continued).toHaveLength(2)
     const state = await host.rpc().session({ sessionID: "ses_main" })

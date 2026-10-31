@@ -21,6 +21,11 @@ def digest(value):
 
 
 def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
+    if decision_refs is None:
+        declared = store._project(db)['config'].get('r2_review_scope')
+        run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+        if declared is not None and run and declared['generation']==run[0]:
+            decision_refs = declared['refs']
     if decision_refs is not None and (not isinstance(decision_refs, list) or
             any(not isinstance(ref, str) or not ref.strip() for ref in decision_refs)):
         raise ValidationError("decision_refs must be a list of nonempty references")
@@ -211,6 +216,15 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
         if status != 'no impact found' or not check['targets_complete']:
             risk('publication', ref, {'status': status, 'versions': check['result']['versions'],
                                      'targets_complete': check['targets_complete']}, {'ref': ref})
+    if db.execute('PRAGMA user_version').fetchone()[0]>=11:
+        for review in db.execute('''SELECT o.target_ref,o.obligation_id,e.event_id,e.evidence_refs
+            FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id)
+            WHERE o.generation=(SELECT generation FROM workflow_project WHERE id=1)
+            AND o.state!='out_of_scope' AND e.action='completed'
+            AND json_extract(e.scope_snapshot,'$.result')='challenges' ORDER BY e.event_id'''):
+            risk('review_challenge',review['target_ref'],{'review_event':review['event_id'],
+                'obligation_id':review['obligation_id'],'review_ref':json.loads(review['evidence_refs'])[0],
+                'status':'unresolved'}, {'ref':review['target_ref']})
     for row in selected.values():
         row['current_ref'] = latest[row['knowledge_id']]['ref']
         row['version_notices'] = epistemic.version_notices(db, row['ref'], bound)
@@ -322,6 +336,9 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
             del views['review_backlog']['by_trigger_kind'][kind]
             break
         views['review_backlog']['categories_omitted'] -= 1
+    if db.execute('PRAGMA user_version').fetchone()[0]>=11:
+        from .review_lifecycle import summary
+        views['review_backlog'] = summary(db,node_id)
     views['clerical_index'] = {'by_class': dict(clerical),
                                'expand': {'collection': 'hints', 'kind': 'clerical',
                                           **({'node_id': node_id} if node_id else {})}}
@@ -361,7 +378,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         for item in model['critical_now']:
             index = {'kind': item['kind'], 'target': item['target'], 'ref': item['expand']['ref'],
                      'risk': {key: item['risk'][key] for key in
-                              ('status', 'result', 'check_index', 'retracted_ref', 'scope_unconfirmed')
+                              ('status', 'result', 'check_index', 'retracted_ref', 'scope_unconfirmed','review_event')
                               if key in item['risk']}}
             entries = views['critical_now']['risk_index']
             entries.append(index)
