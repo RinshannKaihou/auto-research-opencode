@@ -1,6 +1,7 @@
 """R1 regressions: ordinary discoveries, critical risks, complete reads and budgets."""
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -353,3 +354,166 @@ def test_recorded_scalar_conditions_are_not_relabelled_missing(completed,conditi
     view=host.call('memory_context',policy='memory-r1-v1')
     item=next(v for v in sections(view)['findings']['items'] if v['ref']==revision['ref'])
     assert item['conditions']==condition
+
+
+@pytest.mark.parametrize('method', ['query', 'history_page', 'workbench_page', 'project_read'])
+def test_filtered_todo_cursor_restores_scope_across_all_read_routes(completed, method):
+    host, store, nid, *_ = completed
+    for i in range(12):
+        with store._connection() as db:
+            store.queue_review_in_tx(db, 'wanted' if i % 2 == 0 else 'other', f'page-{i}', nid)
+    request = {'collection': 'review_todos', 'limit': 2}
+    if method == 'project_read':
+        request.update(root=str(host.root), view='page')
+    first = host.call(method, **request, node_id=nid, state='pending', trigger_kind='wanted')
+    assert first['total'] == 6
+    cursor = first['cursor']
+    found = list(first['items'])
+    while cursor:
+        following = host.call(method, **request, cursor=cursor)
+        found.extend(following['items'])
+        cursor = following['cursor']
+    assert [v['trigger_ref'] for v in found] == [f'page-{i}' for i in range(0, 12, 2)]
+    assert 'read_view_changed' in host.error(method, **request, cursor=first['cursor'], state='completed')
+    assert 'read_view_changed' in host.error(method, **request,
+        cursor={**first['cursor'], 'project_id': 'another-project'})
+    legacy = host.call(method, **{**request, **first['cursor']})
+    assert legacy['items'][0]['trigger_ref'] == 'page-4'
+
+
+@pytest.mark.parametrize('method', ['query', 'history_page', 'workbench_page', 'project_read'])
+def test_clerical_cursor_restores_class_and_position(completed, method):
+    host, store, nid, sid, claim, *_ = completed
+    for i in range(11):
+        store.record_knowledge({'kind': 'hypothesis', 'statement': f'mentions K-999@1 ({i})'}, f'page-hint-{i}')
+    store.revise_knowledge({'ref': claim['ref'], 'expected_revision': 1, 'changes': {'status': 'retracted'},
+        'reason': 'withdrawn', 'change_kind': 'retract', 'affected_scope_mode': 'versions',
+        'affected_scope': [claim['ref']]}, 'withdraw-for-page')
+    request = {'collection': 'hints', 'limit': 3}
+    if method == 'project_read':
+        request.update(root=str(host.root), view='page')
+    first = host.call(method, **request, kind='clerical')
+    assert first['total'] == 11
+    found = list(first['items'])
+    cursor = first['cursor']
+    while cursor:
+        following = host.call(method, **request, cursor=cursor)
+        found.extend(following['items'])
+        cursor = following['cursor']
+    assert len(found) == len({(v['class'], v['target']) for v in found}) == 11
+    assert all(v['class'] != 'complete_publication_cites_risk' for v in found)
+    assert 'read_view_changed' in host.error(method, **request, cursor=first['cursor'], kind='complete_publication_cites_risk')
+
+
+def test_decision_scope_rejects_unknown_refs_but_accepts_registered_snapshots(completed):
+    host, store, *_ = completed
+    for ref in ('X-999', 'not-a-reference', 'S-999', 'pub/P-999'):
+        assert host.raw('query', collection='findings', decision_refs=[ref])['ok'] is False
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    (host.root / 'input.txt').write_text('registered input')
+    snapshot = host.call('snapshot', paths=['input.txt'])
+    for ref in (snapshot['snapshot_id'], snapshot['snapshot_id'] + '#input.txt'):
+        before = rows(store)
+        assert host.raw('query', collection='findings', decision_refs=[ref])['ok'] is True
+        assert rows(store) == before
+
+
+def test_active_attempt_is_rendered_without_spurious_truncation(completed):
+    host, store, *_ = completed
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    attempt = host.call('status')['attempt']
+    view = host.call('memory_context', policy='memory-r1-v1', profile='opencode-auto')
+    assert sections(view)['attempt']['attempt_id'] == attempt['attempt_id']
+    assert 'attempt' not in view['omitted']
+    assert all(view['coverage'][key]['details_complete'] for key in ('critical_now', 'findings'))
+    assert view['truncated'] is False
+
+
+def test_small_budget_expansion_keeps_scope_or_rejects_unrepresentable_budget(completed):
+    host, store, nid, sid, claim, pub = completed
+    ref = f"pub/{pub['publication_id']}#report"
+    view = host.call('memory_context', policy='memory-r1-v1', max_chars=500, decision_refs=[ref])
+    assert len(view['text']) <= 500
+    expansion = sections(view)['critical_now']['expand']
+    assert expansion['decision_refs'] == [ref]
+    assert host.call('query', **expansion)['total'] == view['coverage']['critical_now']['total']
+    refs = [store.record_knowledge({'kind': 'hypothesis', 'statement': f'input {i}'}, f'scope-{i}')['ref'] for i in range(30)]
+    before = rows(store)
+    assert 'Context budget too small for decision scope' in host.error(
+        'memory_context', policy='memory-r1-v1', max_chars=500, decision_refs=refs)
+    assert rows(store) == before
+
+
+def test_priority_finding_is_not_replaced_by_cheaper_background(completed):
+    host, store, nid, sid, claim, *_ = completed
+    revised = store.revise_knowledge({'ref': claim['ref'], 'expected_revision': 1,
+        'changes': {'statement': 'ORDINARY ' + 'X' * 1000, 'scope': {'long': 'S' * 1000}, 'conditions': {'long': 'C' * 1000}},
+        'reason': 'long finding', 'change_kind': 'reword', 'affected_scope_mode': 'none'}, 'long-priority')
+    tiny = store.record_knowledge({'kind': 'hypothesis', 'status': 'disputed', 'statement': 'tiny'}, 'tiny-background')
+    view = sections(host.call('memory_context', policy='memory-r1-v1', max_chars=2150, profile='opencode-auto'))['findings']
+    shown = {v['ref'] for v in view.get('items', [])}
+    assert revised['ref'] in shown or revised['ref'] in view.get('deferred_refs', [])
+    if revised['ref'] not in shown:
+        assert tiny['ref'] not in shown
+        assert view['expand_required']
+
+
+@pytest.mark.parametrize('retained_by', ['publication', 'support', 'explicit'])
+def test_obsolete_field_failures_are_historical_unless_still_referenced(completed, retained_by):
+    host, store, nid, sid, claim, *_ = completed
+    old = store.record_knowledge({'kind': 'claim', 'statement': 'old value', 'evidence_refs': ['pub/P-001#data']}, 'old-value')
+    current = store.revise_knowledge({'ref': old['ref'], 'expected_revision': 1, 'changes': {'statement': 'corrected value'},
+        'reason': 'fix', 'change_kind': 'reword', 'affected_scope_mode': 'none'}, 'correct-value')
+    with sqlite3.connect(store.db_path) as db:
+        for ref, result in ((old['ref'], 'inconsistent'), (current['ref'], 'consistent')):
+            db.execute('INSERT INTO field_checks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (ref, 0, '{}', 'pub/P-001#data', None, None, None, None, 'fixture', result,
+                 'value_mismatch' if result == 'inconsistent' else None, '2026-10-31', 0))
+    query = {'collection': 'critical_now', 'kind': 'field_check'}
+    assert host.call('query', **query)['items'] == []
+    assert store.reference_query(old['ref'])['value']['field_checks'][0]['result'] == 'inconsistent'
+    if retained_by == 'publication':
+        host.call('focus', node_id=None, role='planner', mode='manual')
+        host.call('publish', status='complete', summary='pins old value', gaps=[], knowledge_refs=[old['ref']],
+            items=[{'item_id': 'report', 'kind': 'text', 'content': {'text': 'Old basis retained'}}])
+    elif retained_by == 'support':
+        store.record_knowledge({'kind': 'claim', 'statement': 'uses old value', 'evidence_refs': [old['ref']]}, 'old-support')
+    else:
+        query['decision_refs'] = [old['ref']]
+    before = rows(store)
+    assert old['ref'] in {v['target'] for v in host.call('query', **query)['items']}
+    assert rows(store) == before
+
+
+def test_same_policy_does_not_emit_events_or_break_derived_cursor(completed):
+    host, store, *_ = completed
+    for i in range(2):
+        store.record_knowledge({'kind': 'hypothesis', 'statement': f'page {i}'}, f'policy-page-{i}')
+    first = host.call('query', collection='findings', limit=1)
+    host.call('context_policy', policy='memory-v2')
+    following = host.call('query', collection='findings', cursor=first['cursor'], limit=1)
+    assert following['source_sequence'] == first['source_sequence']
+    assert following['items'][0]['ref'] != first['items'][0]['ref']
+
+
+def test_reference_digest_is_stable_across_support_edge_scan_orders(completed, monkeypatch):
+    host, store, *_ = completed
+    bases = [store.record_knowledge({'kind': 'claim', 'statement': f'basis {i}',
+        'evidence_refs': ['pub/P-001#data']}, f'basis-{i}') for i in range(2)]
+    user = store.record_knowledge({'kind': 'claim', 'statement': 'uses both bases',
+        'evidence_refs': [v['ref'] for v in bases]}, 'both-bases')
+    for i, base in enumerate(bases):
+        store.revise_knowledge({'ref': base['ref'], 'expected_revision': 1, 'changes': {'statement': 'new wording'},
+            'reason': 'reword', 'change_kind': 'reword', 'affected_scope_mode': 'none'}, f'reword-basis-{i}')
+    first = store.reference_chunk(user['ref'], limit=64)
+    original = store._connection
+
+    @contextmanager
+    def reverse_unordered_scans():
+        with original() as db:
+            db.execute('PRAGMA reverse_unordered_selects=ON')
+            yield db
+
+    monkeypatch.setattr(store, '_connection', reverse_unordered_scans)
+    following = store.reference_chunk(user['ref'], offset=64, limit=64, expected_digest=first['content_sha256'])
+    assert following['content_sha256'] == first['content_sha256']

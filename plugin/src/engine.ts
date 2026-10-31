@@ -257,10 +257,13 @@ export class Engine {
     let finding = ""
     if (policy.policy_version === "memory-r1-v1" && payload.kind === "finished") {
       const page: any = await this.research.storage.request("project_read", {
-        root, view: "page", collection: "findings", node_id: payload.node_id, limit: 1,
+        root, view: "page", collection: "completed_findings", node_id: payload.node_id, limit: 1,
       })
-      const value = page.items[0]
-      finding = value ? `发现：${value.ref} ${oneLine(value.statement, 120)}；scope/conditions 用 research_query ref 展开。` : "发现：未登记发现"
+      const ref = page.items[0].selected_refs[0]
+      if (ref) {
+        const record: any = await this.research.storage.request("project_read", { root, view: "reference_get", ref })
+        finding = `发现：${ref} ${oneLine(record.value.statement, 120)}；scope/conditions 用 research_query ref 展开。`
+      } else finding = "发现：未登记发现（claim/observation）"
     }
     const outcome = NOTICE_OUTCOME[payload.kind] ?? payload.kind
     return [

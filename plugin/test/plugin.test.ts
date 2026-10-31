@@ -299,6 +299,10 @@ describe("autonomous research", () => {
     host.turn.end("ses_main")
     await until(() => host.created.length === 2, "second node session")
     host.turn.start("ses_node_2")
+    let tentative: any
+    if (policy === "r1") tentative = await host.call("research_memory", "ses_node_2", {
+      action: "record", kind: "hypothesis", statement: "Tentative explanation only",
+    })
     await host.call("research_publish", "ses_node_2", {
       status: "complete", summary: "node 2 result", items: [{ item_id: "note", kind: "text", content: { text: "Q2 answered" } }],
     })
@@ -306,7 +310,10 @@ describe("autonomous research", () => {
     host.turn.end("ses_node_2")
     await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-002 已完成")), "second wake-up")
 
-    if (policy === "r1") expect(host.said("ses_main").some((value) => value.text.includes("未登记发现"))).toBe(true)
+    if (policy === "r1") {
+      expect(host.said("ses_main").some((value) => value.text.includes("未登记发现"))).toBe(true)
+      expect(host.said("ses_main").some((value) => value.text.includes(`发现：${tentative.ref}`))).toBe(false)
+    }
     // Synthesis and conclusion stop the loop.
     host.turn.start("ses_main")
     const final = await host.call("research_publish", "ses_main", {

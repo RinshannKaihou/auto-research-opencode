@@ -262,11 +262,11 @@ make test-plugin   # 只跑插件测试（假宿主 + 真实 Python）
 
 主会话执行 `/research context-policy r1`，后续模型请求使用四块上下文：当前风险、研究发现、审阅队列摘要、文书索引。`/research context-policy legacy` 切回旧策略，省略参数查看当前策略和主会话最近一次保存的注入策略。切换立即清除上下文缓存；已有回答和最终报告不会重算，已结束的项目不会重新开始。新旧项目的缺省策略仍为 legacy；默认切换须另经 M4 效果对照。
 
-看板 `3 成果 → v 切换至依据检查` 提供可读的风险说明、适用条件和材料入口，`f` 切换当前风险／历史审阅／文书提示，`g/o/s` 筛选类型／节点／审阅状态，`[` / `]` 翻页，`l` 选择依据、Enter 展开。原始 JSON 仅在按 `x` 时显示。知识详情显示固定版本、当前版本、完整 scope/conditions 与已存字段检查。
+看板 `3 成果 → v 切换至依据检查` 提供可读的风险说明、适用条件和材料入口，`f` 切换当前风险／历史审阅／文书提示，`g/o/s` 选择类型／范围或节点／审阅状态，`[` / `]` 翻页，`l` 选择依据、Enter 展开。原始 JSON 仅在按 `x` 时显示。知识详情显示固定版本、当前版本、完整 scope/conditions 与已存字段检查。
 
 看板不提供独立的上下文检查入口。`/research context-policy` 区分当前配置与最近一次保存的注入策略；完整预览、同快照对照和进程观测仅用于开发排障。保存记录不等于模型执行成功或读懂了内容。
 
-`research_query` 的 `critical_now`、`findings`、`completed_findings` 集合可分页展开，后续请求原样传回 `cursor`。结果变化提示刷新，仅 usage 事件不影响续页。固定 `ref` 可读取完整记录；超长记录使用 `offset/limit` 分段，携带首段的 `content_sha256` 作为 `expected_digest`，避免混合不同读取状态。
+`research_query` 的 `critical_now`、`findings`、`completed_findings` 集合可分页展开，后续请求原样传回 `cursor`。`review_todos` 和 `hints` 也支持原样传回游标，自动恢复筛选；续页时改变筛选会要求刷新。结果变化提示刷新，仅 usage 事件不影响续页。固定 `ref` 可读取完整记录；超长记录使用 `offset/limit` 分段，携带首段的 `content_sha256` 作为 `expected_digest`，避免混合不同读取状态。
 
 此版本保持 schema 10 和研究写入语义；R1 读取与浏览不关闭 todo、不重新计算字段检查。回放与开发验证见 [R1 实施记录](docs/evidence/r1-context/README.md)。
 

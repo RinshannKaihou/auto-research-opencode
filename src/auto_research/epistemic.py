@@ -399,7 +399,7 @@ def _support_used(db: sqlite3.Connection, version: str) -> list[tuple[str, int, 
         (row[0], row[1], row[2])
         for row in db.execute(
             "SELECT used_ref,from_dependencies,from_evidence"
-            " FROM knowledge_support_edges WHERE user_ref=?",
+            " FROM knowledge_support_edges WHERE user_ref=? ORDER BY used_ref",
             (version,),
         )
     ]

@@ -32,7 +32,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read a bounded research summary, retrieve a fixed reference, search knowledge, or page a collection. R1 collections critical_now, findings and completed_findings expose risks, discoveries and every completed node (including nodes with no registered finding); pass the returned cursor object unchanged. Use ref to expand full scope, conditions and stored checks. review_todos supports state/trigger_kind/node_id filters. Use the returned cursor to continue. collection="hints" lists current-state structural candidates; use offset/limit to page and kind to filter the hint class. It does not replay historical boundaries.',
+      'Read a bounded research summary, retrieve a fixed reference, search knowledge, or page a collection. R1 critical_now/findings/completed_findings expose risks, discoveries and every completed node, including nodes with no registered finding. Pass returned cursor objects unchanged for these collections, review_todos and hints; filters are restored from the cursor and conflicting filters require a fresh page. review_todos supports state/trigger_kind/node_id; hints supports kind (including clerical). Legacy after/upper_id or offset paging remains available when filters are repeated. Use ref to expand full scope, conditions and stored checks. Hints describe current state, not historical replay.',
     parameters: {
       expected_digest: { type: "string" },
       state: { type: "string" }, trigger_kind: { type: "string" },

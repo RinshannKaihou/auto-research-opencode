@@ -49,6 +49,20 @@ def _bounded_text(value: str, expand_ref: str, maximum: int = 8192) -> dict | st
     return {"preview": preview, "truncated": True, "expand_ref": expand_ref}
 
 
+def _resume_cursor(cursor, collection, project_id, **fields):
+    """Bind a continuation to its collection, project and original filters."""
+    if cursor is None:
+        return fields
+    if not isinstance(cursor, dict) or not {"project_id", "collection", *fields}.issubset(cursor):
+        raise ValidationError("Invalid collection cursor")
+    if cursor["project_id"] != project_id or cursor["collection"] != collection:
+        raise ValidationError("read_view_changed: cursor belongs to another project or collection")
+    for name, value in fields.items():
+        if value is not None and value != cursor[name]:
+            raise ValidationError("read_view_changed: cursor filters changed; refresh the collection")
+    return {name: cursor[name] for name in fields}
+
+
 class QueryStore:
     def context_page(self, collection, **fields):
         from .context_policy import page
@@ -199,39 +213,47 @@ class QueryStore:
         value["cursor"] = cursor
         return value
 
-    def hints_query(self, *, limit: int = 8, offset: int = 0, node_id=None, klass=None) -> dict:
+    def hints_query(self, *, limit: int = 8, offset=None, node_id=None, klass=None, cursor=None) -> dict:
         from .hints import structure_hints
         with self._read() as db:
+            project = self._project(db)["project_id"]
+            scope = _resume_cursor(cursor, "hints", project, offset=offset, node_id=node_id, kind=klass)
             page = structure_hints(db, limit=max(1, min(int(limit), 200)),
-                                   offset=offset, node_id=node_id, klass=klass)
-        return {"collection": "hints", **page,
-                "cursor": {"offset": page["next_offset"]} if page["next_offset"] is not None else None}
+                                   offset=scope["offset"] or 0, node_id=scope["node_id"], klass=scope["kind"])
+            return {"collection": "hints", **page,
+                    "cursor": {"project_id": project, "collection": "hints", **scope,
+                               "offset": page["next_offset"]} if page["next_offset"] is not None else None}
 
     def history_page(
         self,
         collection: str,
         *,
-        after: int = 0,
+        after: int | None = None,
         upper_id: int | None = None,
         limit: int = 50,
         project_id: str | None = None,
         order: str | None = None,
         offset: int = 0,
-        node_id=None, state=None, trigger_kind=None,
+        node_id=None, state=None, trigger_kind=None, kind=None, cursor=None,
     ) -> dict:
         if collection == "hints":
-            return self.hints_query(limit=limit, offset=offset)
+            return self.hints_query(limit=limit, offset=offset or None, node_id=node_id, klass=kind, cursor=cursor)
         if collection not in COLLECTIONS:
             raise ValidationError(f"Unsupported history collection: {collection}")
         table, key = COLLECTIONS[collection]
-        after = max(0, int(after or 0))
         limit = max(1, min(int(limit or 50), 200))
         with self._read() as db:
             actual_project = self._project(db)["project_id"]
             if project_id is not None and project_id != actual_project:
                 raise ValidationError("Cursor belongs to another research project")
-            if order is not None and order != "rowid-asc":
+            scope = _resume_cursor(cursor, collection, actual_project,
+                                   after=after, upper_id=upper_id, order=order,
+                                   node_id=node_id, state=state, trigger_kind=trigger_kind)
+            if scope["order"] is not None and scope["order"] != "rowid-asc":
                 raise ValidationError("Cursor order does not match this collection")
+            after = max(0, int(scope["after"] or 0))
+            upper_id = scope["upper_id"]
+            node_id, state, trigger_kind = (scope[k] for k in ("node_id", "state", "trigger_kind"))
             if upper_id is None:
                 upper_id = int(
                     db.execute(f"SELECT COALESCE(MAX({key}),0) FROM {table}").fetchone()[0]
@@ -259,11 +281,15 @@ class QueryStore:
                     "after": next_after,
                     "upper_id": upper_id,
                     "order": "rowid-asc",
+                    "node_id": node_id, "state": state, "trigger_kind": trigger_kind,
                 }
                 if next_after is not None
                 else None,
                 "upper_id": upper_id,
                 "has_more": len(rows) > limit,
+                **({"total": db.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {key}<=?{clause}", (upper_id, *filters)
+                ).fetchone()[0]} if collection == "review_todos" else {}),
             }
 
     def usage_page(self, *, after: int = 0, upper_id: int | None = None, limit: int = 50) -> dict:

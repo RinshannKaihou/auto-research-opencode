@@ -174,6 +174,7 @@ export function ProcessDetail(props: {
   const colors = palette(props.context)
   const current = () => props.view.nodes[props.selected]
   // The full record arrives after the selection moves; never mix in the previous node's.
+  const ordinaryCount = () => current()!.knowledge.filter((item) => item.kind === "claim" || item.kind === "observation").length
   const record = () => ({
     ...(current()?.node ?? {}),
     ...(props.node?.node_id === current()?.id ? props.node : {}),
@@ -222,6 +223,7 @@ export function ProcessDetail(props: {
             </For>
           </Section>
           <Section context={props.context} title="知识" count={node().knowledge.length}>
+            <text fg={colors.muted}>{ordinaryCount() ? `普通发现：${ordinaryCount()} 项主张/观察` : "未登记发现（主张/观察）"}</text>
             <For each={node().knowledge.slice(0, KNOWLEDGE_SHOWN)} fallback={<text fg={colors.muted}>暂无</text>}>
               {(item) => {
                 const tag = `[${kindName(item.kind)}]`
@@ -238,7 +240,7 @@ export function ProcessDetail(props: {
               }}
             </For>
             <Show when={node().knowledge.length > KNOWLEDGE_SHOWN}>
-              <text fg={colors.muted}>{`还有 ${node().knowledge.length - KNOWLEDGE_SHOWN} 条，见「成果与知识」`}</text>
+              <text fg={colors.muted}>{`还有 ${node().knowledge.length - KNOWLEDGE_SHOWN} 条，见「成果 → 研究发现」`}</text>
             </Show>
           </Section>
 

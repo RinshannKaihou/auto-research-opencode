@@ -392,9 +392,11 @@ class NativeStore(ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
 
         def work(db):
             config = self._project(db)["config"]
+            value = {"policy_version": policy}
+            if config.get("context_policy", "memory-v2") == policy:
+                return value
             config["context_policy"] = policy
             db.execute("UPDATE project SET config=?", (_json(config),))
-            value = {"policy_version": policy}
             self._event(db, "context.policy_changed", value)
             return value
 

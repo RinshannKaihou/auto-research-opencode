@@ -13,11 +13,12 @@ const file = { ref: target, publication_id: "P-007", item_id: "final_report_v2",
 const knowledge = (i: number) => ({ ref: `knowledge/K-${String(i).padStart(3, "0")}@1`, kind: "claim", status: "working", node_id: "X-001", statement: `发现 ${i} under controlled conditions`, scope: { dataset: "fixture-v1" }, conditions: { boundary: "完整条件。".repeat(80) }, evidence_refs: [target], dependencies: [], supersedes: [], field_checks: [] })
 
 type Command = { bind: string; enabled?: () => boolean; run(): void }
-async function mounted(width = 132, folder = false) {
+async function mounted(width = 132, folder = false, beforeRead?: (view: string, fields: any) => Promise<void>) {
   let layer!: () => { commands: Command[] }
   const calls: any[] = []
   const opened: string[] = []
   let closed = false
+  let changed!: () => void
   const color = RGBA.fromHex("#cad3df")
   const scale = Object.fromEntries(Array.from({ length: 11 }, (_, i) => [i * 100, color]))
   const theme = {
@@ -29,6 +30,7 @@ async function mounted(width = 132, folder = false) {
   }
   const fakeBoard = async ({ view, fields: f = {} }: any) => {
     calls.push({ view, ...f })
+    await beforeRead?.(view, f)
     if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 } }
     if (view === "presentation") return { status: "missing" }
     if (view === "reference_chunk") {
@@ -63,7 +65,7 @@ async function mounted(width = 132, folder = false) {
     }
     throw new Error(`Unexpected board view ${view}`)
   }
-  const context = { theme, themeMode: "dark", renderer: {}, location: { directory: "/fixture" }, keymap: { layer: (value: any) => { layer = value } }, client: { rpc: () => ({ board: fakeBoard, events: { on: () => () => {} } }) } } as unknown as Context
+  const context = { theme, themeMode: "dark", renderer: {}, location: { directory: "/fixture" }, keymap: { layer: (value: any) => { layer = value } }, client: { rpc: () => ({ board: fakeBoard, events: { on: (_name: string, handler: () => void) => { changed = handler; return () => {} } } }) } } as unknown as Context
   const screen = await testRender(() => <ResearchBoard context={context} onClose={() => { closed = true }} openSession={(id) => opened.push(id)} />, { width, height: 40 })
   const flush = async () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -76,7 +78,7 @@ async function mounted(width = 132, folder = false) {
     cmd.run(); await flush()
   }
   await flush()
-  return { screen, press, flush, calls, opened, closed: () => closed, keys: () => layer().commands.map((v) => v.bind), frame: () => screen.captureCharFrame() }
+  return { screen, press, flush, calls, opened, changed: () => changed(), closed: () => closed, keys: () => layer().commands.map((v) => v.bind), frame: () => screen.captureCharFrame() }
 }
 
 test.each([80, 132])("risk view at %i columns explains unknown coverage and opens original report", async (width) => {
@@ -90,6 +92,7 @@ test.each([80, 132])("risk view at %i columns explains unknown coverage and open
     expect(frame).toContain("结构化知识引用")
     expect(frame).not.toContain('"targets_complete"')
     expect(frame).toContain("101 条")
+    expect(frame).toContain("o 决策范围")
     if (process.env.R1_CAPTURE_TUI) {
       const dir = new URL("../../docs/evidence/r1-context/ui/", import.meta.url)
       mkdirSync(dir, { recursive: true }); writeFileSync(new URL(`review-${width}.txt`, dir), frame.replace(/[ \t]+$/gm, "").trimEnd() + "\n")
@@ -101,6 +104,9 @@ test.each([80, 132])("risk view at %i columns explains unknown coverage and open
     for (let i = 0; i < 30 && !ui.frame().includes("SECOND_CHUNK"); i++) { await new Promise((r) => setTimeout(r, 10)); await ui.flush() }
     expect(ui.frame()).toContain("SECOND_CHUNK")
     await ui.press("escape")
+    await ui.press("o")
+    expect(ui.frame()).toContain("决策范围 X-001")
+    expect(ui.frame()).toContain("保留相关性未知项")
     await ui.press("]")
     expect(ui.frame()).toContain("第 2 页")
     await ui.press("]")
@@ -214,5 +220,77 @@ test.each([80, 132])("three primary destinations retain results, checks and sess
     if (process.env.R1_CAPTURE_TUI) writeFileSync(new URL(`../../docs/evidence/r1-context/ui/navigation-${width}.txt`, import.meta.url), ui.frame().replace(/[ \t]+$/gm, "").trimEnd() + "\n")
     await ui.press("escape")
     expect(ui.closed()).toBe(true)
+  } finally { ui.screen.renderer.destroy() }
+})
+
+test.each(["j", "2"])("late evidence responses cannot overwrite a new selection or view (%s)", async (key) => {
+  let block = false
+  let release!: () => void
+  const ui = await mounted(132, false, async (view, fields) => {
+    if (block && view === "reference_chunk" && fields.ref === "knowledge/K-001@1") {
+      await new Promise<void>((resolve) => { release = resolve })
+    }
+  })
+  const right = () => ui.frame().split("\n").map((line) => line.split("│")[3] ?? "").join("\n")
+  try {
+    await ui.press("3")
+    block = true
+    await ui.press("return")
+    block = false
+    await ui.press(key)
+    const before = right()
+    if (key === "j") expect(before).toContain("发现 2 under controlled conditions")
+    release()
+    await ui.flush()
+    expect(right()).toBe(before)
+  } finally { ui.screen.renderer.destroy() }
+})
+
+test("closing a file discards its pending continuation", async () => {
+  let block = false
+  let release!: () => void
+  const ui = await mounted(132, false, async (view, fields) => {
+    if (block && view === "reference_content" && fields.offset) {
+      await new Promise<void>((resolve) => { release = resolve })
+    }
+  })
+  try {
+    await ui.press("3"); await ui.press("v"); await ui.press("v"); await ui.press("return")
+    for (let i = 0; i < 30 && !ui.frame().includes("REPORT_OPENED"); i++) { await new Promise((r) => setTimeout(r, 10)); await ui.flush() }
+    expect(ui.frame()).toContain("REPORT_OPENED")
+    block = true
+    await ui.press("n")
+    await ui.press("escape")
+    release()
+    await ui.flush()
+    expect(ui.frame()).not.toContain("SECOND_CHUNK")
+    expect(ui.frame()).not.toContain("REPORT_OPENED")
+    expect(ui.frame()).toContain("当前风险")
+  } finally { ui.screen.renderer.destroy() }
+})
+
+test("changed risk pages ask for explicit refresh without retaining stale rows or retrying", async () => {
+  let changed = false
+  const ui = await mounted(132, false, async (view, fields) => {
+    if (changed && view === "page" && fields.collection === "critical_now" && fields.cursor) {
+      throw new Error("read_view_changed: refresh the collection")
+    }
+  })
+  try {
+    await ui.press("3"); await ui.press("v"); await ui.press("v"); await ui.press("]")
+    expect(ui.frame()).toContain("第 2 页")
+    changed = true
+    ui.changed()
+    await ui.flush()
+    expect(ui.frame()).toContain("当前分页已失效")
+    expect(ui.frame()).toContain("按 r 从第一页刷新")
+    expect(ui.frame()).not.toContain("报告的检查覆盖未知")
+    const calls = ui.calls.length
+    await ui.flush()
+    expect(ui.calls.length).toBe(calls)
+    await ui.press("r")
+    expect(ui.frame()).toContain("第 1 页")
+    expect(ui.frame()).toContain("报告的检查覆盖未知")
+    expect(ui.frame()).not.toContain("当前分页已失效")
   } finally { ui.screen.renderer.destroy() }
 })

@@ -90,22 +90,26 @@ _PAGE_TABLES = {
 }
 
 
-def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
+def page(store, collection: str, *, after: int | None = None, upper_id: int | None = None,
          limit: int = 20, node_id: str | None = None, kind: str | None = None,
-         state=None, trigger_kind=None) -> dict:
+         state=None, trigger_kind=None, cursor=None) -> dict:
+    from .query_store import _resume_cursor
     if collection == "hints":
         with store._read() as db:
             from .hints import structure_hints, CLASSES
-            result = structure_hints(db, limit=_page_size(limit), offset=max(0, int(after or 0)), node_id=node_id, klass=kind)
-        return {"collection": collection, "items": result["items"], "total": result["total"],
-                "kinds": list(CLASSES[:3]),
-                "cursor": {"after": result["next_offset"]} if result["next_offset"] is not None else None}
+            project = store._project(db)["project_id"]
+            scope = _resume_cursor(cursor, collection, project, after=after, node_id=node_id, kind=kind)
+            result = structure_hints(db, limit=_page_size(limit), offset=max(0, int(scope["after"] or 0)),
+                                     node_id=scope["node_id"], klass=scope["kind"])
+            return {"collection": collection, "items": result["items"], "total": result["total"],
+                    "kinds": list(CLASSES[:3]),
+                    "cursor": {"project_id": project, "collection": collection, **scope,
+                               "after": result["next_offset"]} if result["next_offset"] is not None else None}
     spec = _PAGE_TABLES.get(collection)
     if spec is None:
         raise ValidationError("Unsupported workbench collection")
     table, _, fields = spec
     limit = _page_size(limit)
-    after = max(0, int(after or 0))
     if node_id is not None and collection in {"nodes", "publications", "attempts", "sessions", "tasks", "review_todos", "checkpoints", "specialists"}:
         if not isinstance(node_id, str) or len(node_id) > 128:
             raise ValidationError("Invalid node filter")
@@ -113,6 +117,13 @@ def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
         node_id = None
     columns = ",".join(fields)
     with store._read() as db:
+        project = store._project(db)["project_id"]
+        if collection == "review_todos":
+            scope = _resume_cursor(cursor, collection, project, after=after, upper_id=upper_id,
+                                   node_id=node_id, state=state, trigger_kind=trigger_kind)
+            after, upper_id, node_id, state, trigger_kind = (
+                scope[k] for k in ("after", "upper_id", "node_id", "state", "trigger_kind"))
+        after = max(0, int(after or 0))
         if upper_id is None:
             upper_id = int(db.execute(f"SELECT COALESCE(MAX(rowid),0) FROM {table}").fetchone()[0])
         else:
@@ -158,7 +169,9 @@ def page(store, collection: str, *, after: int = 0, upper_id: int | None = None,
             if key in item:
                 item[key] = _short(item[key], 240)
     return {"collection": collection, "items": visible, "total": total, "trigger_types": trigger_types, "upper_id": upper_id,
-            "cursor": {"after": visible[-1]["cursor"], "upper_id": upper_id}
+            "cursor": {"after": visible[-1]["cursor"], "upper_id": upper_id,
+                       **({"project_id": project, "collection": collection, "node_id": node_id,
+                           "state": state, "trigger_kind": trigger_kind} if collection == "review_todos" else {})}
             if len(rows) > limit and visible else None}
 
 

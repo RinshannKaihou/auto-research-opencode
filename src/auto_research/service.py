@@ -661,10 +661,10 @@ class NativeService:
                 key: request[key] for key in ("cursor", "limit", "node_id", "kind", "query", "decision_refs", "final_ref") if key in request})
         if view == "page":
             return workbench_read.page(
-                store, request.get("collection"), after=request.get("after", 0),
+                store, request.get("collection"), after=request.get("after"),
                 upper_id=request.get("upper_id"), limit=request.get("limit", 20),
                 node_id=request.get("node_id"), kind=request.get("kind"),
-                state=request.get("state"), trigger_kind=request.get("trigger_kind"),
+                state=request.get("state"), trigger_kind=request.get("trigger_kind"), cursor=request.get("cursor"),
             )
         if view == "knowledge":
             return workbench_read.knowledge_page(
@@ -989,9 +989,10 @@ class NativeService:
                 value = workbench_read.summary(store, host_id, session_id)
             elif method == "workbench_page":
                 value = workbench_read.page(
-                    store, request.get("collection"), after=request.get("after", 0),
+                    store, request.get("collection"), after=request.get("after"),
                     upper_id=request.get("upper_id"), limit=request.get("limit", 20),
                     node_id=request.get("node_id"), kind=request.get("kind"),
+                    state=request.get("state"), trigger_kind=request.get("trigger_kind"), cursor=request.get("cursor"),
                 )
             elif method == "knowledge_page":
                 value = workbench_read.knowledge_page(
@@ -1026,11 +1027,11 @@ class NativeService:
                     value = store.context_page(request["collection"], **{
                         key: request[key] for key in ("cursor", "limit", "node_id", "kind", "query", "decision_refs", "final_ref") if key in request})
                 elif request.get("collection") == "hints":
-                    value = store.hints_query(limit=request.get("limit", 8), offset=request.get("offset", 0),
-                                              node_id=request.get("node_id"), klass=request.get("kind"))
+                    value = store.hints_query(limit=request.get("limit", 8), offset=request.get("offset"),
+                                              node_id=request.get("node_id"), klass=request.get("kind"), cursor=request.get("cursor"))
                 elif request.get("collection") == "review_todos":
                     value = store.history_page("review_todos", **{
-                        key: request[key] for key in ("after", "upper_id", "limit", "node_id", "state", "trigger_kind") if key in request})
+                        key: request[key] for key in ("after", "upper_id", "limit", "node_id", "state", "trigger_kind", "project_id", "order", "cursor") if key in request})
                 elif any(
                     request.get(key) is not None
                     for key in ("query", "kind", "node_id", "status", "revision", "conditions")
@@ -1057,23 +1058,14 @@ class NativeService:
                             after=request.get("after", 0), limit=request.get("limit", 50)
                         )
                     else:
-                        value = store.history_page(
-                            request["collection"],
-                            after=request.get("after", 0),
-                            upper_id=request.get("upper_id"),
-                            limit=request.get("limit", 50),
-                        )
+                        value = store.history_page(request["collection"], **{
+                            key: request[key] for key in ("after", "upper_id", "limit", "project_id", "order", "cursor") if key in request})
                 else:
                     value = store.control_state(host_id, session_id)
                     value["project_root"] = str(root)
             elif method == "history_page":
-                value = store.history_page(
-                    request.get("collection"),
-                    offset=request.get("offset", 0),
-                    after=request.get("after", 0),
-                    upper_id=request.get("upper_id"),
-                    limit=request.get("limit", 50),
-                )
+                value = store.history_page(request.get("collection"), **{
+                    key: request[key] for key in ("offset", "after", "upper_id", "limit", "node_id", "state", "trigger_kind", "kind", "project_id", "order", "cursor") if key in request})
             elif method == "usage_page":
                 value = store.usage_page(
                     after=request.get("after", 0),

@@ -55,6 +55,12 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
                     add(entry['ref'], 'declared_node_input')
             return
         parsed = frozen_refs.parse(ref)
+        if frozen_refs.is_frozen(ref):
+            resolution = frozen_refs.resolve(db, store.root, ref)
+            if resolution['outcome'] == 'not_found':
+                raise NotFoundError(resolution['message'])
+            if resolution['outcome'] in ('unsupported', 'ambiguous'):
+                raise ValidationError(resolution['message'])
         pid = parsed.get('publication_id')
         if pid:
             if not db.execute('SELECT 1 FROM publications WHERE publication_id=?', (pid,)).fetchone():
@@ -71,6 +77,10 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
             pub_scopes[ref] = (pid, pinned)
             for fixed in pinned:
                 add(fixed, reason)
+            return
+        if parsed.get('snapshot_id'):
+            return
+        store._require_ref(db, ref)
 
     for ref in decision_refs or []:
         add(ref, 'decision_input')
@@ -168,6 +178,15 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
                            "JOIN knowledge_revisions u ON ('knowledge/'||u.knowledge_id||'@'||u.revision)=e.user_ref "
                            "WHERE r.status='retracted' AND u.status<>'retracted' ORDER BY e.user_ref,e.used_ref"):
         risk('retracted_basis', edge[0], {'retracted_ref': edge[1]}, {'ref': edge[0]})
+    # Field failures on obsolete, unreferenced revisions remain in history.
+    # Explicit inputs, pins and their support ancestors remain current concerns.
+    check_refs = epistemic.anchor_set(db) | set(scope)
+    queue = list(check_refs)
+    while queue:
+        for edge in db.execute('SELECT used_ref FROM knowledge_support_edges WHERE user_ref=?', (queue.pop(),)):
+            if edge[0] not in check_refs:
+                check_refs.add(edge[0])
+                queue.append(edge[0])
     for row in records:
         if row['ref'] in scope:
             reasons = epistemic.publication_reference_risk(db, row['ref'], bound)
@@ -180,7 +199,7 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
                     if value['reason'] == 'disposed_old_ref']
         if residual:
             risk('residual_use', row['ref'], {'reasons': residual}, {'ref': row['ref']})
-        for check in row['field_checks']:
+        for check in row['field_checks'] if row['ref'] in check_refs else []:
             if check['result'] != 'consistent':
                 risk('field_check', row['ref'], {key: check[key] for key in ('check_index','result','reason','input_ref')}, {'ref': row['ref']})
     publications = [(f"pub/{r[0]}", r[0], None) for r in db.execute("SELECT publication_id FROM publications WHERE status='complete' ORDER BY publication_id")
@@ -311,7 +330,6 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         return '\n\n'.join(f'## {key}\n{encoded(value)}' for key, value in views.items())
 
     # Shrink optional indexes first; never trim a fixed reference in place.
-    scope_params_omitted = False
     if len(body()) > max_chars:
         views['findings']['completed_nodes']['items'] = []
         views['findings']['completed_nodes']['shown'] = 0
@@ -322,16 +340,15 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         for name in ('critical_now', 'findings'):
             views[name] = {'total': len(model[name]), 'details_complete': False,
                            'expand_required': True, 'expand': {'collection': name,
-                            **({'node_id': node_id} if node_id else {})}}
-        scope_params_omitted = bool(decision_refs or final_ref)
-        if scope_params_omitted:
-            views['critical_now']['scope_note'] = '展开时须携带原 decision_refs/final_ref；本摘要未显示完整范围。'
+                            **expand_scope}}
         views['findings']['completed_nodes'] = {'total': len(completed),
                                                'expand': {'collection': 'completed_findings'}}
     if len(body()) > max_chars:
         del views['identity']
+    if len(body()) > max_chars:
+        raise ValidationError(f'Context budget too small for decision scope; requires at least {len(body())} characters')
     # Role/control and current task are preserved before filling optional prose.
-    for key in ('role_instructions', 'control_instructions', 'task', 'project'):
+    for key in ('role_instructions', 'control_instructions', 'attempt', 'task', 'project'):
         if block_map[key] is not None:
             views[key] = block_map[key]
             if len(body()) > max_chars:
@@ -374,6 +391,12 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         for item in candidates:
             value = compact_finding(item) if name == 'findings' else compact_risk(item)
             if len(encoded(views[name]['items'] + [value])) > budget:
+                if name == 'findings' and any(reason in item['selection_reasons'] for reason in ('explicit_input', 'completed_node')):
+                    # Keep the first deferred priority ref; do not replace it with cheaper background.
+                    views[name]['deferred_refs'] = [item['ref']]
+                    if len(body()) > max_chars:
+                        del views[name]['deferred_refs']
+                    break
                 continue
             views[name]['items'].append(value)
             if len(body()) > max_chars:
@@ -393,6 +416,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     risk_shown = views['critical_now'].get('items', [])
     risk_index = views['critical_now'].get('risk_index', [])
     dependencies = {value['ref'] for value in shown}
+    dependencies.update(views['findings'].get('deferred_refs', []))
     dependencies.update(value['target'] for value in risk_shown + risk_index)
     dependencies.update(value['risk']['retracted_ref'] for value in risk_shown if 'retracted_ref' in value['risk'])
     if 'checkpoint' in views:
@@ -417,7 +441,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
             'source_sequence': model['source_sequence'], 'dependencies': sorted(dependencies),
             'selection': {value['ref']: {'reasons': value['selection_reasons'], 'scope_origins': value['scope_origins']} for value in shown},
             'truncation': {'fields': {value['ref']: value['truncated_fields'] for value in shown if value['truncated_fields']},
-                           'scope_params_omitted': scope_params_omitted, 'project_goal': bool(project.get('goal_truncated')),
+                           'scope_params_omitted': False, 'project_goal': bool(project.get('goal_truncated')),
                            'unshown': {name: len(model[name]) - len(views[name].get('items', [])) for name in ('critical_now', 'findings')}},
             'coverage': coverage,
             'block_chars': {name: len(f'## {name}\n{encoded(value)}') for name, value in views.items()},
