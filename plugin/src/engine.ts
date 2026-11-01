@@ -14,6 +14,7 @@ import { findProjectRoot, GUIDANCE_LIMIT, guidanceNote } from "./research"
 import { randomUUID } from "node:crypto"
 import type { SourceSnapshot } from './workspace-probe'
 import type { RuntimeState } from './controller-lifecycle'
+import { wasNotSent } from './host-submission'
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -84,6 +85,7 @@ export class Engine {
   private startedEvents: Map<string, string>
   private pendingInbox: Map<string, { id: string; seq?: number }[]>
   private inferredStart: Set<string>
+  private pendingStarts: RuntimeState['pendingStarts']
   private retried: Set<string>
   private queues: Map<string, Promise<unknown>>
   /** Per project: the model the user chose in the TUI when starting or resuming. */
@@ -93,7 +95,7 @@ export class Engine {
     private readonly research: Research,
     private readonly host: SessionHost,
     private readonly concurrency = 1,
-    runtime: RuntimeState,
+    private readonly runtime: RuntimeState,
     private readonly current: () => boolean,
     private readonly ensureController: (root: string, main: string) => Promise<void>,
     private readonly interruptSpecialists: (root: string) => Promise<void>,
@@ -102,6 +104,7 @@ export class Engine {
     this.idle = runtime.idle; this.turns = runtime.turns; this.startedAt = runtime.startedAt; this.startedEvents = runtime.startedEvents
     this.pendingInbox = runtime.pendingInbox
     this.inferredStart = runtime.inferredStart
+    this.pendingStarts = runtime.pendingStarts
     this.retried = runtime.retried; this.queues = runtime.queues; this.models = runtime.models
   }
 
@@ -166,7 +169,18 @@ export class Engine {
 
   async started(sessionID: string, eventID?: string, eventSeq?: number, inferred = false): Promise<void> {
     if (!this.current() || !this.drives(sessionID)) return
-    if (eventID && this.startedEvents.get(sessionID) === eventID) return
+    const pending = this.pendingStarts.get(sessionID)
+    if (eventID && this.startedEvents.get(sessionID) === eventID && !pending) return
+    if (pending && pending.eventID === eventID) {
+      await this.call('runtime_execution_start', sessionID, { execution_token: pending.execution,
+        event_seq: pending.eventSeq, ambiguous: pending.ambiguous }, `start:${sessionID}:${pending.execution}`)
+      this.pendingStarts.delete(sessionID)
+      for (const item of this.pendingInbox.get(sessionID) ?? []) {
+        await this.call('runtime_execution_bind', sessionID, { execution_token: pending.execution, message_id: item.id, event_seq: item.seq })
+      }
+      this.pendingInbox.delete(sessionID)
+      return
+    }
     if (!inferred && this.busy.has(sessionID) && this.inferredStart.has(sessionID)) {
       this.inferredStart.delete(sessionID)
       if (eventID) this.startedEvents.set(sessionID, eventID)
@@ -181,7 +195,9 @@ export class Engine {
     this.turns.set(sessionID, execution)
     this.startedAt.set(sessionID, Date.now())
     this.wrote.set(sessionID, false)
+    this.pendingStarts.set(sessionID, { execution, eventID, eventSeq, ambiguous })
     await this.call('runtime_execution_start', sessionID, { execution_token: execution, event_seq: eventSeq, ambiguous }, `start:${sessionID}:${execution}`)
+    this.pendingStarts.delete(sessionID)
     for (const item of this.pendingInbox.get(sessionID) ?? []) {
       await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: item.id, event_seq: item.seq })
     }
@@ -190,6 +206,8 @@ export class Engine {
 
   async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number): Promise<void> {
     if (!this.current() || !this.drives(sessionID) || !messageID) return
+    const pending = this.pendingStarts.get(sessionID)
+    if (pending) await this.started(sessionID, pending.eventID, pending.eventSeq)
     if (!this.busy.has(sessionID)) await this.started(sessionID, `inbox:${messageID}`, eventSeq, true)
     const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
     if (execution) await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: messageID, event_seq: eventSeq })
@@ -215,25 +233,47 @@ export class Engine {
 
   ended(sessionID: string, outcome: Outcome, eventID?:string, eventSeq?: number): Promise<void> {
     if (!this.current()) return Promise.resolve()
-    this.busy.delete(sessionID)
-    this.inferredStart.delete(sessionID)
+    if (eventID && this.runtime.endedEvents.get(sessionID)?.includes(eventID)) return Promise.resolve()
     const root = this.research.rootOf(sessionID)
     if (!root || !this.drives(sessionID)) return Promise.resolve()
-    const execution = this.turns.get(sessionID)
-    const turn = eventID ?? execution ?? randomUUID()
+    const pending = this.runtime.pendingEnds.get(sessionID) ?? {
+      execution: this.turns.get(sessionID), turn: eventID ?? this.turns.get(sessionID) ?? randomUUID(), uncertain: false,
+    }
+    this.runtime.pendingEnds.set(sessionID, pending)
+    const { execution, turn } = pending
     return this.serial(root, async () => {
-      const claim = await this.call('runtime_execution_end',sessionID,{turn,outcome,event_seq:eventSeq,...(execution ? { execution_token: execution } : {})},`end:${sessionID}:${turn}`)
-      if (claim.claimed) await this.afterTurn(sessionID, root, outcome,turn,execution)
-    }).catch(async error => {
-      // A controller can be detached while a budget notification is being
-      // delivered. Its rejection must not escape the terminal event handler.
-      if (!this.current()) return
-      if (error?.code==='runtime_budget_exhausted') {
-        try { await this.say(sessionID,error.message) }
-        catch (deliveryError) {
-          if (this.current()) process.stderr.write(`Research budget notification: ${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}\n`)
+      this.busy.delete(sessionID)
+      this.inferredStart.delete(sessionID)
+      if (!pending.error) {
+        let claim: any
+        try {
+          claim = await this.call('runtime_execution_end',sessionID,{turn,outcome,event_seq:eventSeq,...(execution ? { execution_token: execution } : {})},`end:${sessionID}:${turn}`)
+        } catch (error) {
+          pending.uncertain = true
+          throw error // The event queue retries the same token and operation.
         }
-      } else process.stderr.write(`Research execution controller: ${error instanceof Error ? error.message : String(error)}\n`)
+        try {
+          if (claim.claimed || pending.uncertain) await this.afterTurn(sessionID, root, outcome,turn,execution)
+        } catch (error) {
+          if (!this.current()) return
+          if ((error as any)?.code === 'runtime_budget_exhausted') {
+            await this.say(sessionID, (error as Error).message).catch(() => {})
+          } else pending.error = error
+        }
+      }
+      if (pending.error) {
+        // A follow-up may already have reached the host. Do not repeat it;
+        // retain an actionable paused/unverified state instead of losing it.
+        const state = await this.state(sessionID)
+        const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID && ACTIVE_TASK.has(item.state))
+        const main = this.mainIn(root)
+        if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
+          task_id: task.task_id, state: 'unverified', error: 'terminal follow-up failed: execution needs reconciliation' } })
+        await this.call('workflow', sessionID, { action: 'session', fields: { pause_reason: 'fault' } })
+        process.stderr.write(`Research execution follow-up paused: ${pending.error instanceof Error ? pending.error.message : String(pending.error)}\n`)
+      }
+      this.runtime.pendingEnds.delete(sessionID)
+      if (eventID) this.runtime.endedEvents.set(sessionID, [...(this.runtime.endedEvents.get(sessionID) ?? []), eventID].slice(-32))
     })
   }
 
@@ -251,6 +291,10 @@ export class Engine {
       const finish = await this.call("node_finish_pending", sessionID)
       if (finish) {
         if (!execution || finish.turn_token !== execution) {
+          const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID)
+          const main = this.mainIn(root)
+          if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
+            task_id: task.task_id, state: 'unverified', error: 'finish execution mismatch: reconciliation required' } })
           await this.say(sessionID, "节点结束请求已保存，但当前轮的结束事件无法对应；请先核对执行状态。")
           return
         }
@@ -394,7 +438,10 @@ export class Engine {
         await this.call("notification_confirm", main, { intent_id: delivery.intent_id, message_id: delivery.message_id },
           `notification-confirm:${notice.notification_id}`)
         delivered.push(notice)
-      } catch {
+      } catch (error) {
+        if (wasNotSent(error, 'synthetic')) await this.call('runtime_outbound_not_sent', main, {
+          intent_id: delivery.intent_id, stage: 'synthetic', reason: String(error),
+        }).catch(() => {})
         // Keep the report queryable and the intent unconfirmed when delivery is uncertain.
       }
     }
@@ -406,11 +453,18 @@ export class Engine {
     if (canWake) {
       const intent = await this.call("notification_wake_begin", main, { notification_id: wakeNotice.notification_id })
       if (intent.send) {
-        await this.say(main, `等待的节点有了结果。继续推进研究。${this.progressLine(state)}`, true,
-          delivered.length ? `收到 ${delivered.length} 条节点消息，继续` : "等待结束，继续", intent.message_id, intent.intent_id)
-        await this.call("notification_wake_confirm", main, { intent_id: intent.intent_id, message_id: intent.message_id },
-          `notification-wake-confirm:${wakeNotice.notification_id}`)
-        this.idle.delete(main)
+        try {
+          await this.say(main, `等待的节点有了结果。继续推进研究。${this.progressLine(state)}`, true,
+            delivered.length ? `收到 ${delivered.length} 条节点消息，继续` : "等待结束，继续", intent.message_id, intent.intent_id)
+          await this.call("notification_wake_confirm", main, { intent_id: intent.intent_id, message_id: intent.message_id },
+            `notification-wake-confirm:${wakeNotice.notification_id}`)
+          this.idle.delete(main)
+        } catch (error) {
+          if (wasNotSent(error, 'synthetic')) await this.call('runtime_outbound_not_sent', main, {
+            intent_id: intent.intent_id, stage: 'synthetic', reason: String(error),
+          }).catch(() => {})
+          throw error
+        }
       }
     }
   }
@@ -428,6 +482,10 @@ export class Engine {
         if (await this.startTask(root, main, task)) active++
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        if ((error as any)?.unsent_rolled_back) {
+          await this.say(main, `节点 ${task.node_id} 尚未提交宿主，任务已保留在队列。${message}`).catch(() => {})
+          continue
+        }
         if (error instanceof Error && 'code' in error && error.code==='runtime_budget_exhausted') {
           const fresh=await this.state(main)
           // A wall-clock stop has already marked in-flight work unverified.
@@ -465,53 +523,71 @@ export class Engine {
     }
     const launch = await this.call("node_launch_claim", main, { task_id: task.task_id, concurrency: this.concurrency })
     if (!launch.claimed) return false
-    const context = await this.call("task_context", main, { task_id: task.task_id })
-    const sessionID: string = launch.session_id
-    if (launch.reuse && this.research.isAssociated(sessionID)) {
-      await this.call("workflow", sessionID, { action: "session", fields: { pause_reason: null } })
-      await this.useModel(root, sessionID)
-      await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "created" }, `${launch.intent_id}:created`)
-    } else {
-      if (launch.reuse) throw new Error("已绑定的节点会话尚未关联，无法安全恢复")
-      await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "creating" }, `${launch.intent_id}:creating`)
-      const created = await this.host.create(`${task.node_id} · ${oneLine(context.question, 50)}`, root, this.models.get(root), undefined, sessionID)
-      if (created !== sessionID) throw new Error("宿主没有确认预定的节点会话 ID")
-      await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "created" }, `${launch.intent_id}:created`)
-      await this.call(
-        "open",
+    let createAttempted = false
+    let createConfirmed = !!launch.reuse
+    let kickoffAttempted = false
+    try {
+      const context = await this.call("task_context", main, { task_id: task.task_id })
+      const sessionID: string = launch.session_id
+      if (launch.reuse && this.research.isAssociated(sessionID)) {
+        await this.call("workflow", sessionID, { action: "session", fields: { pause_reason: null } })
+        await this.useModel(root, sessionID)
+        await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "created" }, `${launch.intent_id}:created`)
+      } else {
+        if (launch.reuse) throw new Error("已绑定的节点会话尚未关联，无法安全恢复")
+        await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "creating" }, `${launch.intent_id}:creating`)
+        createAttempted = true
+        const created = await this.host.create(`${task.node_id} · ${oneLine(context.question, 50)}`, root, this.models.get(root), undefined, sessionID)
+        if (created !== sessionID) throw new Error("宿主没有确认预定的节点会话 ID")
+        createConfirmed = true
+        await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "created" }, `${launch.intent_id}:created`)
+        await this.call(
+          "open",
+          sessionID,
+          { root, cwd: workspace, session_role: "node_core", node_id: task.node_id, context },
+          `${launch.intent_id}:open`,
+        )
+        this.research.register(sessionID, root, "node_core")
+      }
+      await this.call("focus", sessionID, { node_id: task.node_id, role: "core", mode: "auto" }, `${launch.intent_id}:focus`)
+      await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "ready" }, `${launch.intent_id}:ready`)
+      this.idle.delete(sessionID)
+      const inputs = (context.inputs ?? []) as string[]
+      kickoffAttempted = true
+      await this.say(
         sessionID,
-        { root, cwd: workspace, session_role: "node_core", node_id: task.node_id, context },
-        `${launch.intent_id}:open`,
+        [
+          `你是节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`,
+          `问题：${context.question}`,
+          `计划：${context.plan}`,
+          `固定输入：${inputs.length ? `${inputs.join("、")}（已放在 ${workspace}/inputs/，只读）` : "无"}`,
+          `工作目录：${workspace}。先 cd 到这里；在 scratch/ 里做实验，把报告和数据放进 output/。`,
+          "发布时 source_path 写相对这个工作目录的路径，例如 output/report.md。",
+          "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
+        ].join("\n"),
+        true,
+        `开始节点 ${task.node_id}`,
+        launch.message_id,
+        undefined,
+        launch.intent_id,
       )
-      this.research.register(sessionID, root, "node_core")
+      await this.call("node_launch_submitted", main,
+        { intent_id: launch.intent_id, message_id: launch.message_id, cwd: workspace }, `${launch.intent_id}:submitted`)
+      // Inside the coordinator's own dispatch call the tool result already says this.
+      if (!this.busy.has(main)) await this.say(main, `已启动节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`).catch(() => {})
+      this.research.notifyChanged(root)
+      return true
+    } catch (error) {
+      const stage = !createConfirmed && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
+        : createConfirmed && (!kickoffAttempted || wasNotSent(error, 'synthetic')) ? 'synthetic' : undefined
+      if (stage && this.current()) {
+        const undone = await this.call('runtime_outbound_not_sent', main, {
+          intent_id: launch.intent_id, stage, reason: String(error),
+        }).catch(() => null)
+        if (undone?.rolled_back) Object.assign(error instanceof Error ? error : {}, { unsent_rolled_back: true })
+      }
+      throw error
     }
-    await this.call("focus", sessionID, { node_id: task.node_id, role: "core", mode: "auto" }, `${launch.intent_id}:focus`)
-    await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "ready" }, `${launch.intent_id}:ready`)
-    this.idle.delete(sessionID)
-    const inputs = (context.inputs ?? []) as string[]
-    await this.say(
-      sessionID,
-      [
-        `你是节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`,
-        `问题：${context.question}`,
-        `计划：${context.plan}`,
-        `固定输入：${inputs.length ? `${inputs.join("、")}（已放在 ${workspace}/inputs/，只读）` : "无"}`,
-        `工作目录：${workspace}。先 cd 到这里；在 scratch/ 里做实验，把报告和数据放进 output/。`,
-        "发布时 source_path 写相对这个工作目录的路径，例如 output/report.md。",
-        "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
-      ].join("\n"),
-      true,
-      `开始节点 ${task.node_id}`,
-      launch.message_id,
-      undefined,
-      launch.intent_id,
-    )
-    await this.call("node_launch_submitted", main,
-      { intent_id: launch.intent_id, message_id: launch.message_id, cwd: workspace }, `${launch.intent_id}:submitted`)
-    // Inside the coordinator's own dispatch call the tool result already says this.
-    if (!this.busy.has(main)) await this.say(main, `已启动节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`).catch(() => {})
-    this.research.notifyChanged(root)
-    return true
   }
 
   // ── Engine tools called by models ────────────────────────────────────────
@@ -624,32 +700,92 @@ export class Engine {
       const main = this.mainIn(root)
       if (!main) continue
       const state = await this.state(main)
+      const coordinator = await this.call('runtime_execution_view', main, { execution_token: this.turns.get(main) })
+      if (coordinator?.state === 'open' && coordinator.message_id) {
+        this.turns.set(main, coordinator.execution_token)
+        this.busy.add(main)
+        setTimeout(() => { if (this.current()) void this.watchRecoveredCoordinator(root, main, coordinator.message_id, coordinator.execution_token) }, 0)
+      }
       const tasks = await this.allTasks(main, state.workflow)
       for (const task of tasks.filter((item: any) => ['starting', 'running'].includes(item.state))) {
         const launch = await this.call('node_launch_get', main, { task_id: task.task_id })
-        const execution = this.turns.get(task.session_id)
-        if (task.state !== 'running' || launch?.state !== 'submitted' || !execution || !this.busy.has(task.session_id)) {
+        if (task.state !== 'running' || launch?.state !== 'submitted' || !this.research.isAssociated(task.session_id)) {
+          await this.call('workflow', main, { action: 'task_state', fields: { task_id: task.task_id,
+            state: 'unverified', error: 'reload: launch state not verified' } })
+          continue
+        }
+        const current = await this.call('runtime_execution_view', task.session_id,
+          { execution_token: this.turns.get(task.session_id) })
+        const execution = current?.execution_token
+        if (current?.state === 'ended' && !current.has_unbound_turn && !this.busy.has(task.session_id)) {
+          this.runtime.pendingEnds.delete(task.session_id)
+          const finish = await this.call('node_finish_pending', task.session_id)
+          if (finish) {
+            if (finish.turn_token !== execution || current.terminal?.outcome !== 'succeeded') {
+              await this.call('workflow', main, { action: 'task_state', fields: { task_id: task.task_id,
+                state: 'unverified', error: 'reload: pending finish does not match terminal execution' } })
+            } else setTimeout(() => {
+              if (this.current()) void this.ensureController(root, main)
+                .then(() => this.serial(root, () => this.completeNode(task.session_id, root, finish, current.terminal.turn, execution)))
+                .catch(async () => {
+                  const fresh = await this.state(main)
+                  if ((await this.allTasks(main, fresh.workflow)).some((item: any) => item.task_id === task.task_id && ACTIVE_TASK.has(item.state))) {
+                    await this.call('workflow', main, { action: 'task_state', fields: {
+                      task_id: task.task_id, state: 'unverified', error: 'reload: pending finish settlement failed' } })
+                  }
+                }).catch(() => {})
+            }, 0)
+          }
+          continue
+        }
+        if (!execution || !current?.message_id || current.state !== 'open') {
           await this.call('workflow', main, { action: 'task_state', fields: { task_id: task.task_id,
             state: 'unverified', error: 'reload: launch or execution state not verified' } })
           continue
         }
-        setTimeout(() => { if (this.current()) void this.watchRecoveredNode(root, main, task, launch, execution) }, 0)
+        this.turns.set(task.session_id, execution)
+        this.busy.add(task.session_id)
+        setTimeout(() => { if (this.current()) void this.watchRecoveredNode(root, main, task, current.message_id, execution) }, 0)
       }
     }
   }
 
-  private async watchRecoveredNode(root: string, main: string, task: any, launch: any, execution: string): Promise<void> {
+  private async watchRecoveredCoordinator(root: string, main: string, messageID: string, execution: string): Promise<void> {
+    try {
+      await this.host.wait(main)
+      if (!this.current() || !this.busy.has(main) || this.turns.get(main) !== execution) return
+      const messages = await this.host.messages(main)
+      const start = messages.findIndex(item => item?.id === messageID || item?.info?.id === messageID)
+      const later = start >= 0 ? messages.slice(start + 1) : []
+      const last = later.at(-1)
+      if (start >= 0 && !later.some(item => item?.type === 'user' || item?.type === 'synthetic') &&
+          last?.type === 'idle' && ['succeeded', 'failed', 'interrupted'].includes(last.outcome)) {
+        await this.ended(main, last.outcome, `recovered:${messageID}:${execution}`)
+        return
+      }
+    } catch { if (!this.current()) return }
+    if (!this.current() || this.turns.get(main) !== execution) return
+    this.busy.delete(main)
+    await this.call('workflow', main, { action: 'session', fields: { pause_reason: 'fault' } }).catch(() => {})
+    const state = await this.state(main).catch(() => null)
+    if (state?.workflow?.run?.state === 'running') {
+      await this.call('workflow', main, { action: 'run', fields: { state: 'paused' } }).catch(() => {})
+    }
+    this.research.notifyChanged(root)
+  }
+
+  private async watchRecoveredNode(root: string, main: string, task: any, messageID: string, execution: string): Promise<void> {
     try {
       await this.host.wait(task.session_id)
       if (!this.current() || !this.busy.has(task.session_id) || this.turns.get(task.session_id) !== execution) return
       const messages = await this.host.messages(task.session_id)
-      const start = messages.findIndex(item => item?.id === launch.message_id || item?.info?.id === launch.message_id)
+      const start = messages.findIndex(item => item?.id === messageID || item?.info?.id === messageID)
       const later = start >= 0 ? messages.slice(start + 1) : []
       const last = later.at(-1)
       const correlated = start >= 0 && !later.some(item => item?.type === 'user' || item?.type === 'synthetic') &&
         last?.type === 'idle' && ['succeeded', 'failed', 'interrupted'].includes(last.outcome)
       if (correlated) {
-        await this.ended(task.session_id, last.outcome, `recovered:${launch.message_id}:${execution}`)
+        await this.ended(task.session_id, last.outcome, `recovered:${messageID}:${execution}`)
       } else {
         await this.call('workflow', main, { action: 'task_state', fields: { task_id: task.task_id,
           state: 'unverified', error: 'reload: native terminal event could not be correlated' } })
@@ -822,14 +958,15 @@ export class Engine {
       await this.call("workflow", main, { action: "run", fields: { state: "stopping" } })
       const stoppingState = await this.state(main)
       const stoppingTasks = await this.allTasks(main, stoppingState.workflow)
+      const interruptFailures: string[] = []
       // Request interruption, but do not claim that an external execution exited
       // merely because an interrupt RPC returned or an old idle record exists.
       for (const member of this.research.sessionsIn(root).filter((sessionID) => this.drives(sessionID))) {
         const current = await this.state(member).catch(() => null)
         const active = stoppingTasks.some((item: any) => item.session_id === member && item.state === 'unverified')
-        if (this.busy.has(member) || active) {
+        if (this.busy.has(member) || active || this.runtime.pendingEnds.has(member) || this.pendingStarts.has(member)) {
           this.ours.add(member)
-          await this.host.interrupt(member).catch(() => this.ours.delete(member))
+          await this.host.interrupt(member).catch(() => { this.ours.delete(member); interruptFailures.push(member) })
         }
       }
       let specialistWarning = ''
@@ -842,8 +979,9 @@ export class Engine {
       await this.call("workflow", main, { action: "session", fields: { pause_reason: null, waiting: [] } })
       await this.call("workflow", main, { action: "run", fields: { state: "stopped" } })
       this.research.notifyChanged(root)
-      await this.say(main, "自主研究已停止；排队任务已取消，进行中的执行已请求中断，退出状态需核实。")
-      return { message: `已停止。排队任务已取消；进行中的执行已请求中断，退出状态需核实。记录都保留。${specialistWarning}` }
+      const warning = interruptFailures.length ? ` 中断请求失败：${interruptFailures.join('、')}；请检查宿主连接并核对执行。` : ''
+      await this.say(main, `自主研究已停止；排队任务已取消，已尝试中断进行中的执行，退出状态需核实。${warning}`).catch(() => {})
+      return { message: `已停止。排队任务已取消；已尝试中断进行中的执行，退出状态需核实。记录都保留。${warning}${specialistWarning}` }
     })
   }
 

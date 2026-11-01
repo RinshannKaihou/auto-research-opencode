@@ -106,7 +106,7 @@ def view(store, db, host, session):
     stored = db.execute('SELECT * FROM runtime_budgets WHERE generation=?', (gen,)).fetchone()
     limits = json.loads(stored['limits']) if stored else store._project(db)['config'].get('runtime_budget', {})
     scope_owner = owner(db,host,session)
-    turns = db.execute("SELECT COUNT(*) FROM runtime_budget_reservations WHERE generation=? AND kind='turn' AND owner=?", (gen,scope_owner)).fetchone()[0]
+    turns = db.execute("SELECT COUNT(*) FROM runtime_budget_reservations WHERE generation=? AND kind='turn' AND owner=? AND state!='not_sent'", (gen,scope_owner)).fetchone()[0]
     unconfirmed = db.execute("SELECT COUNT(*) FROM runtime_budget_reservations WHERE generation=? AND kind='turn' AND owner=? AND state='reserved'", (gen,scope_owner)).fetchone()[0]
     nodes = db.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
     usage = list(db.execute("SELECT amount,details FROM usage_observations WHERE json_extract(details,'$.generation')=?", (gen,)))
@@ -138,6 +138,58 @@ def publication_materials(db, publication):
 
 
 class RuntimeStore:
+    def runtime_outbound_not_sent(self, host, session, intent_id, stage, reason, operation):
+        """Host-only proof that its API was never invoked; never infer from an RPC error."""
+        if stage not in {'create', 'synthetic'} or not isinstance(reason, str) or not reason.strip():
+            raise ValidationError('A pre-submission stage and reason are required')
+        payload = dict(host=host, session=session, intent_id=intent_id, stage=stage, reason=reason[:2000])
+
+        def work(db):
+            self._association(db, host, session)
+            row = db.execute('SELECT * FROM workflow_intents WHERE intent_id=? AND session_id=?', (intent_id, session)).fetchone()
+            if not row or row['kind'] not in {'node_launch', 'specialist_launch', 'notification_delivery', 'notification_wake'}:
+                raise ConflictError('Outbound intent does not belong to this session')
+            details = json.loads(row['details'])
+            if (row['kind'] != 'specialist_launch' and details.get('host') != host
+                    or row['kind'] == 'specialist_launch' and details.get('parent') != session):
+                raise ConflictError('Outbound host does not match')
+            allowed = {'claimed', 'creating', 'prepared'} if stage == 'create' else {'claimed', 'created', 'ready', 'bound', 'sending', 'submitting'}
+            if row['state'] not in allowed:
+                raise ConflictError('Outbound stage changed; cannot declare it unsent')
+            if stage == 'synthetic' and row['state'] == 'claimed' and not details.get('reuse'):
+                raise ConflictError('A new session has not been confirmed')
+            if row['kind'] in {'notification_delivery', 'notification_wake'} and stage != 'synthetic':
+                raise ConflictError('Notifications do not create sessions')
+            rid = details.get('reservation_id')
+            if row['kind'] == 'notification_wake':
+                auth = db.execute("SELECT details FROM workflow_intents WHERE kind='turn_authorization' AND json_extract(details,'$.message_id')=? ORDER BY rowid DESC LIMIT 1",
+                                  (details['message_id'],)).fetchone()
+                rid = json.loads(auth['details'])['reservation_id'] if auth else None
+            if rid:
+                auth = db.execute('SELECT state FROM workflow_intents WHERE intent_id=?', ('turn-authorization:' + rid,)).fetchone()
+                reservation = db.execute('SELECT state FROM runtime_budget_reservations WHERE reservation_id=?', (rid,)).fetchone()
+                if not auth or auth['state'] != 'issued' or not reservation or reservation['state'] != 'reserved':
+                    raise ConflictError('Execution may have started; cannot refund this submission')
+            if row['kind'] == 'node_launch':
+                task = db.execute('SELECT * FROM exploration_tasks WHERE task_id=?', (details['task_id'],)).fetchone()
+                latest = db.execute("SELECT intent_id FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? ORDER BY rowid DESC LIMIT 1", (details['task_id'],)).fetchone()
+                if not task or task['state'] != 'starting' or task['session_id'] != details['session_id'] or latest['intent_id'] != intent_id:
+                    raise ConflictError('Task changed; preserve the current recovery state')
+                db.execute("UPDATE exploration_tasks SET state='queued',error=?,updated_at=? WHERE task_id=?", (reason[:2000], timestamp(), details['task_id']))
+            elif row['kind'] == 'specialist_launch':
+                task = db.execute('SELECT state FROM specialist_tasks WHERE task_id=?', (details['task_id'],)).fetchone()
+                if not task or task['state'] not in {'starting', 'running'}:
+                    raise ConflictError('Specialist changed; preserve its recovery state')
+                db.execute("UPDATE specialist_tasks SET state='incomplete',exit_verified=1,error=?,updated_at=? WHERE task_id=?", (reason[:2000], timestamp(), details['task_id']))
+            if rid:
+                db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE intent_id=?", (timestamp(), 'turn-authorization:' + rid))
+                db.execute("UPDATE runtime_budget_reservations SET state='not_sent' WHERE reservation_id=?", (rid,))
+            state = 'retryable' if row['kind'] in {'notification_delivery', 'notification_wake'} else 'not_sent'
+            db.execute('UPDATE workflow_intents SET state=?,updated_at=? WHERE intent_id=?', (state, timestamp(), intent_id))
+            self._event(db, 'runtime.outbound_not_sent', {**payload, 'reservation_id': rid})
+            return {'rolled_back': True, 'state': state}
+        return self._mutate('runtime.outbound_not_sent', payload, operation, work)
+
     def runtime_unverified(self, host, session):
         with self._read() as db:
             self._association(db, host, session)
@@ -204,6 +256,23 @@ class RuntimeStore:
         with self._read() as db:
             require_model_drain(db, host, session, execution_token)
             return {'allowed': True}
+
+    def runtime_execution_view(self, host, session, execution_token=None):
+        with self._read() as db:
+            self._association(db, host, session)
+            row = db.execute("SELECT state,details FROM workflow_intents WHERE kind='execution_start' AND session_id=? "
+                             "AND (? IS NULL OR intent_id=?) ORDER BY rowid DESC LIMIT 1",
+                             (session, execution_token, 'execution-start:' + execution_token if execution_token else None)).fetchone()
+            if not row:
+                return None
+            details = json.loads(row['details'])
+            if details.get('host') != host:
+                return None
+            pending = db.execute("SELECT 1 FROM workflow_intents WHERE kind='turn_authorization' AND session_id=? AND state='issued' LIMIT 1", (session,)).fetchone()
+            terminal = db.execute("SELECT details FROM workflow_intents WHERE kind='execution_terminal' AND session_id=? "
+                                  "AND json_extract(details,'$.execution_token')=? LIMIT 1", (session, details['execution_token'])).fetchone()
+            return {'state': row['state'], 'has_unbound_turn': bool(pending),
+                    'terminal': json.loads(terminal['details']) if terminal else None, **details}
 
     def node_launch_get(self, host, session, task_id):
         with self._read() as db:
@@ -554,14 +623,27 @@ class RuntimeStore:
             task = db.execute("SELECT task_id,generation FROM exploration_tasks WHERE session_id=? AND state IN ('starting','running','waiting')", (session,)).fetchone()
             if not task or attempt['node_id'] is None:
                 raise ConflictError('No active node task belongs to this execution')
-            intent_id = 'node-finish:' + attempt['attempt_id']
+            intent_id = 'node-finish:' + attempt['attempt_id'] + ':' + hashlib.sha256(turn_token.encode()).hexdigest()[:24]
             details = {**payload, 'attempt_id': attempt['attempt_id'], 'node_id': attempt['node_id'],
                        'task_id': task['task_id'], 'generation': task['generation']}
-            previous = db.execute('SELECT * FROM workflow_intents WHERE intent_id=?', (intent_id,)).fetchone()
+            previous = db.execute("SELECT * FROM workflow_intents WHERE kind='node_finish' AND session_id=? "
+                                  "AND state='pending' AND json_extract(details,'$.attempt_id')=? LIMIT 1",
+                                  (session, attempt['attempt_id'])).fetchone()
+            if previous:
+                old = json.loads(previous['details'])
+                failed = db.execute("SELECT 1 FROM workflow_intents WHERE kind='execution_terminal' AND session_id=? "
+                                    "AND json_extract(details,'$.execution_token')=? AND json_extract(details,'$.outcome') IN ('failed','interrupted')",
+                                    (session, old.get('turn_token'))).fetchone()
+                if failed:
+                    db.execute("UPDATE workflow_intents SET state='cancelled',updated_at=? WHERE intent_id=?", (timestamp(), previous['intent_id']))
+                    previous = None
             if previous:
                 if previous['kind'] != 'node_finish' or json.loads(previous['details']) != details:
                     raise ConflictError('This node already has a different pending finish request')
-                return {'intent_id': intent_id, 'state': previous['state'], **details}
+                return {'intent_id': previous['intent_id'], 'state': previous['state'], **details}
+            if db.execute("SELECT 1 FROM workflow_intents WHERE kind='execution_terminal' AND session_id=? "
+                          "AND json_extract(details,'$.execution_token')=?", (session, turn_token)).fetchone():
+                raise ConflictError('The finish execution has already ended')
             db.execute('INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)',
                        (intent_id, 'node_finish', session, 'pending', json.dumps(details, sort_keys=True), timestamp()))
             self._event(db, 'runtime.node_finish_requested', {'intent_id': intent_id, 'task_id': task['task_id']})
@@ -896,7 +978,10 @@ class RuntimeStore:
                             'execution_token': execution_token, 'turn': turn, 'outcome': outcome, 'event_seq': event_seq}, sort_keys=True), timestamp()))
                 db.execute("UPDATE workflow_intents SET state='ended',updated_at=? WHERE intent_id=? AND kind='execution_start' AND state='open'",
                            (timestamp(), 'execution-start:' + execution_token))
-            db.execute("UPDATE exploration_tasks SET state='waiting',error='wall_clock_budget: session exit verified; paused work',updated_at=? WHERE session_id=? AND state='unverified' AND error LIKE 'wall_clock_budget:%'",(timestamp(),session))
+                if outcome != 'succeeded':
+                    db.execute("UPDATE workflow_intents SET state='cancelled',updated_at=? WHERE kind='node_finish' "
+                               "AND session_id=? AND state='pending' AND json_extract(details,'$.turn_token')=?",
+                               (timestamp(), session, execution_token))
             return {'turn':turn, 'claimed':True}
         payload = dict(host=host,session=session,turn=turn,outcome=outcome)
         if execution_token:
@@ -907,9 +992,11 @@ class RuntimeStore:
 
     def runtime_submitted(self, host, session, reservation, operation):
         def work(db):
-            row=db.execute('SELECT session_id FROM runtime_budget_reservations WHERE reservation_id=?',(reservation,)).fetchone()
+            row=db.execute('SELECT session_id,state FROM runtime_budget_reservations WHERE reservation_id=?',(reservation,)).fetchone()
             if not row or row[0]!=session:
                 raise ValidationError('Reservation belongs to another session')
+            if row['state'] == 'not_sent':
+                raise ConflictError('Reservation was proven unsent and revoked')
             db.execute("UPDATE runtime_budget_reservations SET state='submitted' WHERE reservation_id=?",(reservation,))
             return {'submitted':True}
         return self._mutate('runtime.submitted',dict(host=host,session=session,reservation=reservation),operation,work)

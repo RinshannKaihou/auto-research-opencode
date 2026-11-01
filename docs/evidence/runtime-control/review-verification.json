@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-01",
+  "scope": "PR 9 review fixes; PR 10 boundary tests are recorded after stacking",
+  "environment": {"host": "OpenCode 2.2.5", "plugin_sdk": "2.0.18", "python": "3.11", "bun": "1.3.10"},
+  "local_not_ci": true,
+  "python": {"command": "python3 -m pytest -q", "passed": 610, "failed": 0},
+  "bun": {"command": "bun test", "working_directory": "plugin", "full_suite_passed": 126, "failed": 0, "additional_held_event_regression": {"focused_passed": 1, "failed": 0}},
+  "typescript": {"command": "node_modules/.bin/tsc --noEmit", "working_directory": "plugin", "exit_code": 0},
+  "isolated_host": {
+    "scripted_provider_only": true,
+    "shared_service_modified": false,
+    "real_research_migrated": false,
+    "pause_node_and_explicit_resume": {"exit_code": 0, "launch_count": 1, "node_finished": true, "extra_reservations_while_paused": 0},
+    "warm_specialist_rebind": {"exit_code": 0, "same_host_process": true, "controller_fence_advanced": true, "scope_and_deadline_preserved": true, "specialist_launches": 1, "state": "completed"},
+    "cold_node_restart": {"exit_code": 0, "host_process_changed": true, "state_after_restart": "paused", "task_after_resume": "unverified", "launch_count": 1, "extra_node_reservations": 0},
+    "execution_probe": {"exit_code": 0, "durable_sequence_before_restart": 21, "first_sequence_after_restart": 24, "model_calls": 3, "resume_true_same_id_status": 200, "resume_true_same_id_extra_model_calls": 0, "resume_true_same_id_extra_execution_pairs": 1}
+  },
+  "retained_limits": ["Unknown external process exit needs an explicit operator check", "Same-ID resume:true is not assumed to be a side-effect-free retry", "Linux/macOS process identity probing; unknown identity keeps the explicit takeover path", "Long-term full session-cache reclamation remains follow-up work"]
+}
