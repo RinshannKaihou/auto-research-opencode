@@ -41,6 +41,8 @@ export interface SessionHost {
   wait(sessionID: string): Promise<void>
   /** The session's messages; the record of a finished turn ends with `{ type: "idle", outcome }`. */
   messages(sessionID: string): Promise<any[]>
+  /** Read-only context during controller reconciliation, before it becomes ready. */
+  recoveryMessages?(sessionID: string): Promise<any[]>
 }
 
 export interface ConclusionInput {
@@ -66,6 +68,7 @@ const NOTICE_OUTCOME: Record<string, string> = {
   failed: "失败",
   unknown: "结束（状态未核实）",
   published: "发布了新材料",
+  paused: "已暂停，等待处理",
 }
 /** Pauses that /research resume clears; wait and closed segments resolve themselves. */
 const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress",'budget'])
@@ -114,6 +117,8 @@ export class Engine {
   private queues: Map<string, Promise<unknown>>
   /** Per project: the model the user chose in the TUI when starting or resuming. */
   private models: Map<string, ModelRef>
+  private shellInboxes: NonNullable<RuntimeState['shellInboxes']>
+  private shellWake: NonNullable<RuntimeState['shellWake']>
 
   constructor(
     private readonly research: Research,
@@ -131,6 +136,8 @@ export class Engine {
     this.inferredStart = runtime.inferredStart
     this.pendingStarts = runtime.pendingStarts
     this.retried = runtime.retried; this.queues = runtime.queues; this.models = runtime.models
+    this.shellInboxes = runtime.shellInboxes ??= new Map()
+    this.shellWake = runtime.shellWake ??= new Map()
   }
 
   private serial<T>(root: string, work: () => Promise<T>): Promise<T> {
@@ -231,6 +238,12 @@ export class Engine {
 
   async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number): Promise<void> {
     if (!this.current() || !this.drives(sessionID) || !messageID) return
+    const shell = this.shellInboxes.get(messageID)
+    if (shell?.sessionID === sessionID) {
+      this.shellInboxes.delete(messageID)
+      this.shellWake.set(sessionID, { matched: shell.matched })
+      if (shell.inline) return
+    }
     const pending = this.pendingStarts.get(sessionID)
     if (pending) await this.started(sessionID, pending.eventID, pending.eventSeq)
     if (!this.busy.has(sessionID)) await this.started(sessionID, `inbox:${messageID}`, eventSeq, true)
@@ -240,8 +253,42 @@ export class Engine {
   }
 
   async nodeTurnAllowed(sessionID: string): Promise<boolean> {
+    if (this.shellWake.get(sessionID)?.matched === false) return false
     try { await this.call('runtime_drain_check', sessionID, { execution_token: this.turns.get(sessionID) }); return true }
     catch { return false }
+  }
+
+  isShellWake(sessionID: string): boolean {
+    return this.shellWake.has(sessionID)
+  }
+
+  /** A host-generated shell completion wakes the model itself; never send a second wake. */
+  async shellNotice(sessionID: string, messageID: string, metadata: any): Promise<void> {
+    if (!this.current() || !this.drives(sessionID) || this.research.roleOf(sessionID) !== 'node_core') return
+    if (typeof metadata?.shellID !== 'string' || typeof messageID !== 'string') return
+    const inline = this.busy.has(sessionID)
+    const result = await this.call('runtime_shell_notice', sessionID, {
+      shell_id: metadata.shellID, message_id: messageID, outcome: metadata.state,
+      exit_code: metadata.exit ?? null,
+    }, `shell-notice:${sessionID}:${messageID}`)
+    this.shellInboxes.set(messageID, { sessionID, inline, matched: !!result.matched })
+    if (!result.matched || inline) return
+    let authorized = false
+    try {
+      const source_snapshot = await this.host.source?.(sessionID)
+      const reservation = await this.call('runtime_reserve', sessionID, { message_id: messageID, source_snapshot },
+        `shell-wake:${sessionID}:${messageID}`)
+      if (reservation.allowed) {
+        await this.call('runtime_submitted', sessionID,
+          { reservation_id: reservation.reservation_id }, `shell-wake-submitted:${sessionID}:${messageID}`)
+        authorized = true
+      }
+    } catch {
+      // A pause, changed controller or missing budget must never authorize a wake.
+    }
+    this.shellInboxes.set(messageID, { sessionID, inline, matched: authorized })
+    const root = this.research.rootOf(sessionID)
+    if (root) this.research.notifyChanged(root)
   }
 
   wroteLedger(sessionID: string): void {
@@ -301,6 +348,7 @@ export class Engine {
         process.stderr.write(`Research execution follow-up paused: ${pending.error instanceof Error ? pending.error.message : String(pending.error)}\n`)
       }
       this.runtime.pendingEnds.delete(sessionID)
+      this.shellWake.delete(sessionID)
       if (eventID) this.runtime.endedEvents.set(sessionID, [...(this.runtime.endedEvents.get(sessionID) ?? []), eventID].slice(-32))
     })
   }
@@ -313,6 +361,16 @@ export class Engine {
     }
     const state = await this.state(sessionID)
     const row = state.workflow?.session
+    if (row?.role === 'node_core' && this.shellWake.get(sessionID)?.matched === false) {
+      if (state.workflow?.run?.state === 'running' && !row.pause_reason) {
+        const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID && ACTIVE_TASK.has(item.state))
+        const main = this.mainIn(root)
+        if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
+          task_id: task.task_id, state: 'unverified', error: 'background wake could not be authorized' } })
+        await this.pauseSession(sessionID, 'fault', '后台任务完成通知无法与当前执行核对；请检查任务状态后恢复。')
+      }
+      return
+    }
     if (row?.role === 'node_core' && (await this.allTasks(sessionID, state.workflow))
       .some((task: any) => task.session_id === sessionID && task.state === 'unverified')) return
     if (outcome === "succeeded" && row?.role === "node_core") {
@@ -351,6 +409,17 @@ export class Engine {
       return
     }
     if (row.pause_reason) return
+    if (progress.external_unverified) {
+      const shells = await this.call('runtime_shell_status', sessionID)
+      for (const job of shells.jobs.filter((item: any) => item.state !== 'running'))
+        await this.call('runtime_shell_unverified', sessionID, { call_id: job.call_id }, `shell-unknown:${sessionID}:${job.call_id}`)
+      await this.pauseSession(sessionID, 'fault', '后台执行状态未核实；请先核对任务及外部进程。')
+      return
+    }
+    if (progress.waiting_external) {
+      this.research.notifyChanged(root)
+      return
+    }
     // A coordinator with nothing to do while its nodes run waits for them rather
     // than being nudged, or paused as idle, turn after turn.
     const running = row.role === "main" ? this.runningTasks({ workflow: { tasks: await this.allTasks(sessionID, state.workflow) } }, sessionID) : []
@@ -397,7 +466,15 @@ export class Engine {
     await this.call("workflow", sessionID, { action: "session", fields: { pause_reason: reason } })
     await this.say(sessionID, note)
     const root = this.research.rootOf(sessionID)
-    if (root) this.research.notifyChanged(root)
+    if (root) {
+      if (this.research.roleOf(sessionID) === 'node_core') {
+        await this.call('workflow', sessionID, { action: 'notify', fields: {
+          kind: 'paused', key: `paused:${reason}:${this.turns.get(sessionID) ?? 'unknown'}`, summary: note,
+        } })
+        await this.deliver(root)
+      }
+      this.research.notifyChanged(root)
+    }
   }
 
   // ── Node lifecycle ───────────────────────────────────────────────────────
@@ -846,7 +923,40 @@ export class Engine {
         }
         const current = await this.call('runtime_execution_view', task.session_id,
           { execution_token: this.turns.get(task.session_id) })
+        const shells = await this.call('runtime_shell_status', task.session_id)
+        if (shells.jobs.length) {
+          const messages = await (this.host.recoveryMessages?.(task.session_id) ?? Promise.resolve([])).catch(() => [])
+          let uncertain = false
+          for (const job of shells.jobs) {
+            const notice = messages.find((item: any) => item?.type === 'synthetic' &&
+              item.metadata?.source === 'shell' && item.metadata?.shellID === job.shell_id)
+            if (notice?.id) {
+              // The shell is known to have exited, but a host wake delivered
+              // while detached may have run without a tracked authorization.
+              // Preserve that uncertainty unless the currently open execution
+              // is explicitly bound to this exact notice.
+              if (current?.state !== 'open' || current?.message_id !== notice.id) {
+                await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id },
+                  `shell-unknown:${task.session_id}:${job.call_id}`)
+                uncertain = true
+              }
+              await this.call('runtime_shell_notice', task.session_id, { shell_id: job.shell_id,
+                message_id: notice.id, outcome: notice.metadata.state, exit_code: notice.metadata.exit ?? null },
+                `shell-notice:${task.session_id}:${notice.id}`)
+            } else {
+              await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id },
+                `shell-unknown:${task.session_id}:${job.call_id}`)
+              uncertain = true
+            }
+          }
+          if (uncertain) continue
+        }
         const execution = current?.execution_token
+        // A disallowed wake can still reach a native terminal while the
+        // project is paused. Its revoked authorization stays revoked; the
+        // terminal is enough to preserve the paused task without replaying it.
+        if (state.workflow?.run?.state === 'paused' && current?.state === 'revoked' &&
+            current.terminal && !current.has_unbound_turn && !this.busy.has(task.session_id)) continue
         if (current?.state === 'ended' && !current.has_unbound_turn && !this.busy.has(task.session_id)) {
           this.runtime.pendingEnds.delete(task.session_id)
           const finish = await this.call('node_finish_pending', task.session_id)
@@ -1066,11 +1176,23 @@ export class Engine {
         if (row.role === "node_core" && !task) continue
         if (task?.state==='unverified') continue
         if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
-        if (row.pause_reason) await this.call("workflow", member, { action: "session", fields: { pause_reason: null } })
+        let waitingExternal = false
+        if (row.pause_reason) {
+          const fresh = await this.state(member)
+          const result = await this.call('runtime_resume_session', main, {
+            target_session: member, expected_revision: fresh.workflow.run.control_revision,
+          })
+          if (!result.resumed) continue
+          waitingExternal = !!result.waiting_external
+        } else if (row.role === 'node_core') {
+          const shells = await this.call('runtime_shell_status', member)
+          if (shells.unverified) continue
+          waitingExternal = !!shells.running
+        }
         await this.useModel(root, member)
         this.retried.delete(member)
         this.idle.delete(member)
-        if (!this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
+        if (!waitingExternal && !this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
         resumed.push(member)
       }
       await this.deliver(root)

@@ -23,6 +23,8 @@ export interface RuntimeState {
   models: Map<string, ModelRef>
   specialistTools: Map<string, readonly string[]>
   specialistResearch: Set<string>
+  shellInboxes?: Map<string, { sessionID: string; inline: boolean; matched: boolean }>
+  shellWake?: Map<string, { matched: boolean }>
 }
 
 interface Entry {

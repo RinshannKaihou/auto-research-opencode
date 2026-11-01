@@ -10,6 +10,18 @@ from .errors import ValidationError, BudgetError, ConflictError, ResearchControl
 LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost',
           'shared_work_budget', 'resource_capacities'}
 SOURCE_ALGORITHM = 'source-worker-v1'
+RESUMABLE_SESSION_PAUSES = {'project', 'project_wait', 'cold', 'native_stop', 'fault', 'no_progress', 'budget'}
+
+
+def shell_intent_id(host, session, call_id):
+    return 'native-shell:' + hashlib.sha256(json.dumps([host, session, call_id]).encode()).hexdigest()
+
+
+def pending_shells(db, host, session, generation):
+    return list(db.execute("SELECT * FROM workflow_intents WHERE kind='native_shell' AND session_id=? "
+                           "AND state IN ('starting','running','unverified') "
+                           "AND json_extract(details,'$.host')=? AND json_extract(details,'$.generation')=? "
+                           "ORDER BY rowid", (session, host, generation)))
 
 
 def controller_phase(db):
@@ -582,6 +594,9 @@ class RuntimeStore:
                        ('operator verified exit: ' + reason.strip(), timestamp(), task_id))
             db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE session_id=? AND kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')",
                        (timestamp(), task['session_id']))
+            db.execute("UPDATE workflow_intents SET state='verified_exit',updated_at=? WHERE session_id=? "
+                       "AND kind='native_shell' AND state IN ('starting','running','unverified') "
+                       "AND json_extract(details,'$.task_id')=?", (timestamp(), task['session_id'], task_id))
             details = {'task_id': task_id, 'launch_id': launch['intent_id'] if launch else None,
                        'session_id': task['session_id'], 'reason': reason.strip(), 'verified_by': 'user'}
             self._event(db, 'runtime.task_exit_confirmed', details)
@@ -900,6 +915,8 @@ class RuntimeStore:
             task = db.execute("SELECT task_id,generation FROM exploration_tasks WHERE session_id=? AND state IN ('starting','running','waiting')", (session,)).fetchone()
             if not task or attempt['node_id'] is None:
                 raise ConflictError('No active node task belongs to this execution')
+            if pending_shells(db, host, session, task['generation']):
+                raise ConflictError('Background shell execution is still running or unverified')
             intent_id = 'node-finish:' + attempt['attempt_id'] + ':' + hashlib.sha256(turn_token.encode()).hexdigest()[:24]
             details = {**payload, 'attempt_id': attempt['attempt_id'], 'node_id': attempt['node_id'],
                        'task_id': task['task_id'], 'generation': task['generation']}
@@ -949,6 +966,8 @@ class RuntimeStore:
                 raise ConflictError('Node completion cannot be confirmed in this control state')
             if run['generation'] != details['generation']:
                 raise ConflictError('Node finish belongs to an earlier generation')
+            if pending_shells(db, host, session, run['generation']):
+                raise ConflictError('Background shell execution is still running or unverified')
             event = db.execute("SELECT payload FROM requests WHERE request_id=? AND operation='runtime.execution_end'", (f'end:{session}:{terminal}',)).fetchone()
             if not event:
                 raise ConflictError('A native terminal event is required')
@@ -1104,6 +1123,175 @@ class RuntimeStore:
                 LEFT JOIN runtime_budgets b ON b.generation=p.generation WHERE p.id=1''').fetchone()
             return dict(row) if row else {'state':None,'deadline_at':None}
 
+    def runtime_shell_begin(self, host, session, call_id, operation, execution_token=None):
+        if not isinstance(call_id, str) or not call_id or len(call_id) > 256:
+            raise ValidationError('A shell call ID is required')
+        payload = dict(host=host, session=session, call_id=call_id, execution_token=execution_token)
+
+        def work(db):
+            self._association(db, host, session)
+            actor = db.execute('SELECT role,node_id,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                               (host, session)).fetchone()
+            if not actor or actor['role'] != 'node_core' or actor['detached']:
+                raise ValidationError('Only an attached node may start a research shell')
+            require_model_drain(db, host, session, execution_token)
+            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+            attempt = db.execute('SELECT t.attempt_id FROM attempts t JOIN associations a USING(association_id) '
+                                 'WHERE a.host_id=? AND a.session_id=? AND a.ended_at IS NULL AND t.ended_at IS NULL',
+                                 (host, session)).fetchone()
+            if not attempt:
+                raise ConflictError('A shell requires an open node attempt')
+            intent_id = shell_intent_id(host, session, call_id)
+            existing = db.execute('SELECT * FROM workflow_intents WHERE intent_id=?', (intent_id,)).fetchone()
+            if existing:
+                details = json.loads(existing['details'])
+                if details['generation'] != run['generation'] or details['attempt_id'] != attempt['attempt_id']:
+                    raise ConflictError('Shell call ID belongs to an earlier attempt')
+                return {'state': existing['state'], **details}
+            task = db.execute('SELECT task_id FROM exploration_tasks WHERE session_id=? AND generation=? '
+                              "AND state IN ('starting','running','waiting') ORDER BY rowid DESC LIMIT 1",
+                              (session, run['generation'])).fetchone()
+            details = dict(host=host, session=session, generation=run['generation'], node_id=actor['node_id'],
+                           attempt_id=attempt['attempt_id'], task_id=task['task_id'] if task else None,
+                           call_id=call_id, shell_id=None)
+            db.execute('INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)',
+                       (intent_id, 'native_shell', session, 'starting', json.dumps(details, sort_keys=True), timestamp()))
+            return {'state': 'starting', **details}
+        return self._mutate('runtime.shell_begin', payload, operation, work)
+
+    def runtime_shell_result(self, host, session, call_id, state, shell_id, operation):
+        if state not in {'running', 'finished', 'unverified'}:
+            raise ValidationError('Invalid shell result state')
+        if state == 'running' and (not isinstance(shell_id, str) or not shell_id.startswith('sh_') or len(shell_id) > 256):
+            raise ValidationError('A background shell ID is required')
+        payload = dict(host=host, session=session, call_id=call_id, state=state, shell_id=shell_id)
+
+        def work(db):
+            self._association(db, host, session)
+            row = db.execute("SELECT * FROM workflow_intents WHERE intent_id=? AND kind='native_shell'",
+                             (shell_intent_id(host, session, call_id),)).fetchone()
+            if not row:
+                raise ConflictError('Shell call was not recorded before execution')
+            details = json.loads(row['details'])
+            if row['state'] != 'starting':
+                if row['state'] == state and details.get('shell_id') == shell_id:
+                    return {'state': state, **details}
+                raise ConflictError('Shell result already settled')
+            if state == 'running' and db.execute("SELECT 1 FROM workflow_intents WHERE kind='native_shell' "
+                    "AND intent_id!=? AND json_extract(details,'$.host')=? AND json_extract(details,'$.shell_id')=? LIMIT 1",
+                    (row['intent_id'], host, shell_id)).fetchone():
+                raise ConflictError('Shell ID belongs to a different call')
+            details['shell_id'] = shell_id
+            db.execute('UPDATE workflow_intents SET state=?,details=?,updated_at=? WHERE intent_id=?',
+                       (state, json.dumps(details, sort_keys=True), timestamp(), row['intent_id']))
+            self._event(db, 'runtime.shell_result', {'session_id': session, 'call_id': call_id,
+                                                    'shell_id': shell_id, 'state': state})
+            return {'state': state, **details}
+        return self._mutate('runtime.shell_result', payload, operation, work)
+
+    def runtime_shell_notice(self, host, session, shell_id, message_id, outcome, exit_code, operation):
+        if (not isinstance(shell_id, str) or not shell_id.startswith('sh_') or len(shell_id) > 256
+                or not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256
+                or outcome not in {'completed', 'failed', 'timeout', 'killed', 'cancelled'}
+                or exit_code is not None and (not isinstance(exit_code, int) or isinstance(exit_code, bool))):
+            raise ValidationError('Invalid shell terminal notice')
+        payload = dict(host=host, session=session, shell_id=shell_id, message_id=message_id,
+                       outcome=outcome, exit_code=exit_code)
+
+        def work(db):
+            self._association(db, host, session)
+            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+            row = db.execute("SELECT * FROM workflow_intents WHERE kind='native_shell' AND session_id=? "
+                             "AND json_extract(details,'$.host')=? AND json_extract(details,'$.generation')=? "
+                             "AND json_extract(details,'$.shell_id')=? ORDER BY rowid DESC LIMIT 1",
+                             (session, host, run['generation'], shell_id)).fetchone()
+            if not row:
+                return {'matched': False, 'first': False}
+            details = json.loads(row['details'])
+            if row['state'] in {'completed', 'failed'}:
+                if (details.get('message_id') != message_id or details.get('outcome') != outcome
+                        or details.get('exit_code') != exit_code):
+                    raise ConflictError('Shell already has a different terminal notice')
+                return {'matched': True, 'first': False, 'state': row['state']}
+            if row['state'] not in {'running', 'unverified'}:
+                raise ConflictError('Shell is not awaiting a terminal notice')
+            state = 'completed' if outcome == 'completed' and exit_code in {None, 0} else 'failed'
+            details.update(message_id=message_id, outcome=outcome, exit_code=exit_code)
+            db.execute('UPDATE workflow_intents SET state=?,details=?,updated_at=? WHERE intent_id=?',
+                       (state, json.dumps(details, sort_keys=True), timestamp(), row['intent_id']))
+            self._event(db, 'runtime.shell_terminal', {'session_id': session, 'shell_id': shell_id,
+                                                      'message_id': message_id, 'state': state})
+            return {'matched': True, 'first': True, 'state': state}
+        return self._mutate('runtime.shell_notice', payload, operation, work)
+
+    def runtime_shell_status(self, host, session):
+        with self._read() as db:
+            self._association(db, host, session)
+            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+            rows = pending_shells(db, host, session, run['generation'])
+            return {'running': sum(row['state'] == 'running' for row in rows),
+                    'unverified': sum(row['state'] in {'starting', 'unverified'} for row in rows),
+                    'jobs': [{'state': row['state'], **json.loads(row['details'])} for row in rows[:100]]}
+
+    def runtime_shell_unverified(self, host, session, call_id, operation):
+        payload = dict(host=host, session=session, call_id=call_id)
+
+        def work(db):
+            self._association(db, host, session)
+            row = db.execute("SELECT * FROM workflow_intents WHERE intent_id=? AND kind='native_shell'",
+                             (shell_intent_id(host, session, call_id),)).fetchone()
+            if not row:
+                raise ConflictError('Shell call was not recorded')
+            if row['state'] not in {'starting', 'running', 'unverified'}:
+                return {'state': row['state']}
+            if row['state'] == 'unverified':
+                return {'state': 'unverified'}
+            details = json.loads(row['details'])
+            db.execute("UPDATE workflow_intents SET state='unverified',updated_at=? WHERE intent_id=?",
+                       (timestamp(), row['intent_id']))
+            if details.get('task_id'):
+                db.execute("UPDATE exploration_tasks SET state='unverified',error=?,updated_at=? "
+                           "WHERE task_id=? AND state IN ('starting','running','waiting')",
+                           ('background shell exit not verified', timestamp(), details['task_id']))
+            self._event(db, 'runtime.shell_unverified', {'session_id': session, 'call_id': call_id,
+                                                        'task_id': details.get('task_id')})
+            self.notify_in_transaction(db, session, {'kind': 'unknown', 'key': 'shell-unverified:' + call_id,
+                'summary': '后台执行的退出状态未核实；请检查外部进程并使用恢复入口。'})
+            return {'state': 'unverified'}
+        return self._mutate('runtime.shell_unverified', payload, operation, work)
+
+    def runtime_resume_session(self, host, session, target_session, expected_revision, operation):
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise ValidationError('A control revision is required')
+        payload = dict(host=host, session=session, target_session=target_session, expected_revision=expected_revision)
+
+        def work(db):
+            self._association(db, host, session)
+            run = db.execute('SELECT * FROM workflow_project WHERE id=1').fetchone()
+            actor = db.execute('SELECT role,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                               (host, session)).fetchone()
+            target = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                                (host, target_session)).fetchone()
+            if not actor or actor['role'] != 'main' or actor['detached'] or run['main_session_id'] != session:
+                raise ValidationError('Only the project main may resume sessions')
+            if run['control_revision'] != expected_revision:
+                raise ConflictError('Control revision changed during resume')
+            if run['state'] != 'running' or not target or target['detached'] or target['role'] not in {'main', 'node_core'}:
+                raise ConflictError('Session is not eligible to resume')
+            if target['pause_reason'] not in RESUMABLE_SESSION_PAUSES:
+                return {'resumed': False, 'reason': 'not_paused'}
+            unknown = db.execute("SELECT 1 FROM exploration_tasks WHERE session_id=? AND state='unverified'", (target_session,)).fetchone()
+            shells = pending_shells(db, host, target_session, run['generation'])
+            if unknown or any(row['state'] != 'running' for row in shells):
+                return {'resumed': False, 'reason': 'execution_unverified'}
+            db.execute('UPDATE workflow_sessions SET pause_reason=NULL WHERE host_id=? AND session_id=?',
+                       (host, target_session))
+            db.execute('UPDATE runtime_progress SET idle_turns=0 WHERE generation=? AND host_id=? AND session_id=?',
+                       (run['generation'], host, target_session))
+            self._event(db, 'runtime.session_resumed', {'session_id': target_session, 'prior_reason': target['pause_reason']})
+            return {'resumed': True, 'waiting_external': bool(shells)}
+        return self._mutate('runtime.resume_session', payload, operation, work)
+
     def runtime_reserve(self, host, session, operation, source_snapshot=None, wake_intent_id=None, launch_intent_id=None, specialist_launch_id=None, message_id=None):
         if message_id is not None and (not isinstance(message_id, str) or not message_id.startswith('msg_')):
             raise ValidationError('A valid host message ID is required')
@@ -1216,8 +1404,12 @@ class RuntimeStore:
             from .review_lifecycle import generation
             gen = generation(db)
             previous = db.execute('SELECT * FROM runtime_progress WHERE generation=? AND host_id=? AND session_id=?',(gen,host,session)).fetchone()
+            shells = pending_shells(db, host, session, gen)
+            waiting_external = any(row['state'] == 'running' for row in shells)
+            external_unverified = any(row['state'] in {'starting', 'unverified'} for row in shells)
             if previous and previous['last_finished_turn']==turn:
-                return {'idle_turns':previous['idle_turns'],'meaningful':False,'duplicate':True}
+                return {'idle_turns':previous['idle_turns'],'meaningful':False,'duplicate':True,
+                        'waiting_external':waiting_external,'external_unverified':external_unverified}
             lower = previous['last_event_sequence'] if previous else 0
             upper = db.execute('SELECT COALESCE(MAX(event_id),0) FROM events').fetchone()[0]
             associated = db.execute('SELECT association_id FROM associations WHERE host_id=? AND session_id=? AND ended_at IS NULL',(host,session)).fetchone()
@@ -1280,10 +1472,11 @@ class RuntimeStore:
             workspace=source_digest(db,host,session,source_snapshot)
             source_changed=baseline!=workspace if baseline is not None and workspace is not None and baseline_identity==source_identity(source_snapshot) else None
             meaningful |= source_changed is True
-            idle = 0 if meaningful else (previous['idle_turns'] if previous else 0)+1
+            idle = 0 if meaningful else (previous['idle_turns'] if previous else 0) + (0 if shells else 1)
             db.execute('INSERT INTO runtime_progress VALUES(?,?,?,?,?,?) ON CONFLICT(generation,host_id,session_id) DO UPDATE SET last_event_sequence=excluded.last_event_sequence,idle_turns=excluded.idle_turns,last_finished_turn=excluded.last_finished_turn',
                        (gen,host,session,upper,idle,turn))
-            return {'idle_turns':idle,'meaningful':bool(meaningful),'source_workspace_changed':source_changed}
+            return {'idle_turns':idle,'meaningful':bool(meaningful),'source_workspace_changed':source_changed,
+                    'waiting_external':waiting_external,'external_unverified':external_unverified}
         return self._mutate('runtime.turn_finished',dict(host=host,session=session,turn=turn),operation,work)
 
     def runtime_execution_end(self, host, session, turn, outcome, operation, execution_token=None, event_seq=None):

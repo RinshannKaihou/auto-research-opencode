@@ -59,6 +59,8 @@ export interface SessionResearch {
   role?: string
   runState?: string
   pauseReason?: string | null
+  externalRunning?: number
+  externalUnverified?: number
   eventRecovery?: { state: string; held: number; unresolved: number; message?: string }
   nodeID?: string | null
   tasks?: { queued: number; running: number; finished: number }
@@ -469,6 +471,8 @@ export class Research {
     }
     const state = await this.call("status", sessionID)
     const counts = state.counts ?? {}
+    const external = state.workflow?.session?.role === 'node_core'
+      ? await this.call<any>('runtime_shell_status', sessionID) : null
     // Ended tasks leave the control view; count the project's task list instead.
     const root = this.rootOf(sessionID)!
     const page = await this.storage
@@ -481,6 +485,8 @@ export class Research {
       role: state.workflow?.session?.role,
       runState: state.workflow?.run?.state,
       pauseReason: state.workflow?.session?.pause_reason ?? null,
+      externalRunning: external?.running ?? 0,
+      externalUnverified: external?.unverified ?? 0,
       nodeID: state.attempt?.node_id ?? state.workflow?.session?.node_id ?? null,
       tasks: {
         queued: mine.filter((task) => task.state === "queued").length,

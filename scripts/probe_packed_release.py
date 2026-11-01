@@ -20,6 +20,7 @@ def main():
     parser.add_argument('--cold-restart-node', action='store_true')
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
+    parser.add_argument('--background-node', action='store_true', help='exercise a native background shell in the packed plugin')
     parser.add_argument('--e1e2', action='store_true', help='run E1/E2 instead of the basic node lifecycle')
     parser.add_argument('--e3', action='store_true', help='run the multi-route lifecycle from an independent package')
     parser.add_argument('--e3-output', type=Path, help='retain the E3 host summary and synthetic tool trace')
@@ -27,6 +28,8 @@ def main():
     args = parser.parse_args()
     if args.e3 and args.e1e2:
         parser.error('Choose --e3 or --e1e2')
+    if args.background_node and (args.e3 or args.e1e2):
+        parser.error('--background-node uses the basic node lifecycle')
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
     root = Path(__file__).resolve().parents[1]
@@ -94,6 +97,8 @@ def main():
             command.append('--cold-restart-specialist')
         if args.warm_reload_specialist:
             command.append('--warm-reload-specialist')
+        if args.background_node:
+            command.append('--background-node')
         result = subprocess.run(command, capture_output=True, text=True, timeout=240 if args.e3 else 120 if args.e1e2 else 45)
         if result.returncode:
             sys.stderr.write(result.stdout + result.stderr)

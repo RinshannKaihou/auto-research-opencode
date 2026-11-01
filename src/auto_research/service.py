@@ -1363,6 +1363,20 @@ class NativeService:
                 value = store.runtime_source_owner(host_id,session_id)
             elif method == 'runtime_deadline':
                 value = store.runtime_deadline()
+            elif method == 'runtime_shell_begin':
+                value = store.runtime_shell_begin(host_id, session_id, request['call_id'], self._operation(request), request.get('execution_token'))
+            elif method == 'runtime_shell_result':
+                value = store.runtime_shell_result(host_id, session_id, request['call_id'], request['state'], request.get('shell_id'), self._operation(request))
+            elif method == 'runtime_shell_notice':
+                value = store.runtime_shell_notice(host_id, session_id, request['shell_id'], request['message_id'],
+                                                   request['outcome'], request.get('exit_code'), self._operation(request))
+            elif method == 'runtime_shell_status':
+                value = store.runtime_shell_status(host_id, session_id)
+            elif method == 'runtime_shell_unverified':
+                value = store.runtime_shell_unverified(host_id, session_id, request['call_id'], self._operation(request))
+            elif method == 'runtime_resume_session':
+                value = store.runtime_resume_session(host_id, session_id, request['target_session'],
+                                                     request['expected_revision'], self._operation(request))
             elif method == 'runtime_reserve':
                 value = store.runtime_reserve(host_id,session_id,self._operation(request),request.get('source_snapshot'),
                                               request.get('wake_intent_id'), request.get('launch_intent_id'), request.get('specialist_launch_id'), request.get('message_id'))

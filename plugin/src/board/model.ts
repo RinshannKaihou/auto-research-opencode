@@ -262,6 +262,9 @@ const SPECIALIST_STATES: Record<string, string> = {
 /** A specialist session shows its task; other sessions their pause state. */
 export function sessionActivity(session: any): string {
   if (session.task_id) return `${session.label} · ${SPECIALIST_STATES[session.specialist_state] ?? session.specialist_state}`
+  if (session.pause_reason && session.pause_reason !== 'wait') return pauseReason(session.pause_reason)
+  if (session.external_unverified) return '后台执行待核实'
+  if (session.external_running) return `等待后台执行（${session.external_running}）`
   return pauseReason(session.pause_reason) || "活动"
 }
 

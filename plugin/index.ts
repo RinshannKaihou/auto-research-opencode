@@ -70,11 +70,14 @@ export default Plugin.define({
     const failedEvents = new Map<string, any[]>()
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
-      'session.inbox.delivered', 'session.execution.interrupted'])
+      'session.inbox.enqueued', 'session.inbox.delivered', 'session.execution.interrupted'])
     let notifyEventState = () => {}
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
     const queueEvent = (event: any) => {
+      if (event?.type === 'session.inbox.enqueued' && event.data?.item?.payload?.metadata?.source !== 'shell') {
+        telemetryHandler?.(event); return
+      }
       if (!relevantEvents.has(event?.type)) { telemetryHandler?.(event); return }
       const sessionID = event.data?.sessionID
       if (!sessionID) return
@@ -255,6 +258,12 @@ export default Plugin.define({
         await verifyController(sessionID, true)
         return (await ctx.session.context({ sessionID })) as any[]
       },
+      recoveryMessages: async (sessionID) => {
+        requireCurrent()
+        const messages = await ctx.session.context({ sessionID })
+        requireCurrent()
+        return messages as any[]
+      },
     }
     const nativeObservations = new NativeObservations(research,observations)
     await ctx.session.hook('model.request',request => { if (lifecycle.current()) nativeObservations.modelRequest(request) })
@@ -264,6 +273,9 @@ export default Plugin.define({
         attempt:request.attempt,model:request.model,will_retry:request.decision.retry})
     })
     const externalStarts = new Map<string,number>()
+    // The host may enqueue a very fast shell's terminal notice while the
+    // execute.after hook is still persisting its shell ID.
+    const pendingShellResults = new Map<string,Promise<void>>()
     let specialists!: Specialists
     const beforeTool = async (request: any) => {
       if (!lifecycle.current() && !RESEARCH_READS.has(request.tool)) {
@@ -318,6 +330,10 @@ export default Plugin.define({
         throw new ToolError({ message: '当前节点执行轮没有暂停期间的收尾授权；请先核对状态。',
           metadata: { code: 'research_control_paused', retryable: false, allow_fallback: false } })
       }
+      if (role === 'node_core' && request.tool === 'shell') {
+        await research.call('runtime_shell_begin', request.sessionID, { call_id: request.id },
+          `shell-begin:${request.sessionID}:${request.id}`)
+      }
       if (TOOLS.some(tool => tool.name === request.tool)) return
       externalStarts.set(`${request.sessionID}:${request.id}`,performance.now())
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
@@ -330,6 +346,21 @@ export default Plugin.define({
       if (started===undefined) return
       externalStarts.delete(key)
       const root = research.rootOf(request.sessionID)!
+      if (request.tool === 'shell' && research.roleOf(request.sessionID) === 'node_core') {
+        const metadata = request.status === 'completed' ? request.result?.metadata : undefined
+        const running = metadata?.status === 'running'
+        const shellID = typeof metadata?.shellID === 'string' ? metadata.shellID : null
+        const state = request.status !== 'completed' || running && !shellID ? 'unverified' : running ? 'running' : 'finished'
+        const pending = research.call('runtime_shell_result', request.sessionID,
+          { call_id: request.id, state, shell_id: state === 'running' ? shellID : null },
+          `shell-result:${request.sessionID}:${request.id}`).then(() => {}).catch(error => {
+          observations.append(root,{phase:'coverage_gap',source:'shell_result',session_id:request.sessionID,
+            error_code:error.code ?? 'storage_unavailable'})
+        })
+        if (state === 'running' && shellID) pendingShellResults.set(shellID, pending)
+        try { await pending }
+        finally { if (shellID && pendingShellResults.get(shellID) === pending) pendingShellResults.delete(shellID) }
+      }
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
         status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
       if (request.status === 'completed' && research.roleOf(request.sessionID) === 'node_core' &&
@@ -628,10 +659,18 @@ export default Plugin.define({
         if (role === 'node_core') {
           await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
-            for (const name of Object.keys(request.tools)) {
-              if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            let shellWake = engine.isShellWake(request.sessionID)
+            if (!shellWake) {
+              const transcript = await within(host.messages(request.sessionID).catch(() => undefined), 1000)
+              const lastInput = transcript?.findLast((item: any) => item?.type === 'user' || item?.type === 'synthetic')
+              shellWake = !transcript || lastInput?.type === 'synthetic' && lastInput.metadata?.source === 'shell'
             }
-            request.system.push({ type: 'text', text: 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
+            for (const name of Object.keys(request.tools)) {
+              if (shellWake || !COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            }
+            request.system.push({ type: 'text', text: shellWake
+              ? 'A background completion arrived while execution is paused or unverified. Stop this response and report that explicit recovery is required.'
+              : 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
           }
         }
         const deadline=performance.now()+2000
@@ -725,6 +764,12 @@ export default Plugin.define({
       if (main && research.inScope(root)) await ensureController(root, main)
       const sequence = typeof event.durable?.seq === 'number' ? event.durable.seq : undefined
       if (type === "session.execution.started") await engine.started(sessionID, event.id, sequence)
+      else if (type === 'session.inbox.enqueued') {
+        const metadata = (data as any)?.item?.payload?.metadata
+        const pending = pendingShellResults.get(metadata?.shellID)
+        if (pending) await pending
+        await engine.shellNotice(sessionID, String((data as any)?.inboxID ?? ''), metadata)
+      }
       else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'

@@ -256,6 +256,8 @@ typed relate 的知识关系追加新 revision，须明确 revision 的变更／
 
 未配置的维度显示未配置；没有隐藏默认科研预算。turns 按同一 generation／工作 owner 的受管自动请求预留，含节点与专家 kickoff，只有确定尚未提交宿主的预留可退还，交付未核实的预留不退还；nodes 限制项目累计节点数；seconds 是包含暂停和重启时间的持久截止时间。resume 不清零，提额须显式给原因。到时取消排队任务并请求中断；原生轮次结束不能证明外部进程退出，不能据此清除执行核对要求。
 
+节点的 OpenCode 原生 shell 返回后台执行状态时，研究会等待宿主提供该 shell 的完成通知；等待期间不累计空转轮次，也不重复催促节点。完成通知按 shell ID 与节点执行关联；项目已暂停时仍须显式恢复。`/research resume` 会清除该会话的空转计数，不改变研究预算。插件重载后无法核实后台执行及其续轮时，任务保持待核实，操作员确认进程退出后使用现有 `/research recover task`。自行脱离 shell 的子进程不属于这一跟踪范围。
+
 停止／结项之后 `/research auto` 创建新 generation，开始新的轮次／时限统计；项目累计 nodes 不清零。预算暂停状态不能用 auto 绕过，仍须显式改额后 resume。cost 接受正小数，例如 `/research budget cost 0.25 本次上限`。
 
 节点在受管轮次前后若源码／实验配置的实际内容改变，可计作开发推进；仅调用 shell、touch、note、checkpoint 或改 Markdown 文书不计。检测由宿主 worker 执行，Python 后端不遍历／读取工作区，RPC 重放不触发扫描。只检测节点 cwd 下代码及 yaml／toml，排除隐藏目录、inputs、node_modules、venv、workspaces、缓存、site-packages／dist-packages、符号链接，以及带 pyvenv.cfg／conda-meta 的环境目录。
