@@ -324,7 +324,7 @@ export default Plugin.define({
         status:'started',execution_ref:`session:${request.sessionID}`,resource_usage:'unknown'})
     }
     await ctx.tool.hook('execute.before',beforeTool)
-    await ctx.tool.hook('execute.after',request => {
+    await ctx.tool.hook('execute.after',async request => {
       const key = `${request.sessionID}:${request.id}`
       const started = externalStarts.get(key)
       if (started===undefined) return
@@ -332,6 +332,14 @@ export default Plugin.define({
       const root = research.rootOf(request.sessionID)!
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
         status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
+      if (request.status === 'completed' && research.roleOf(request.sessionID) === 'node_core' &&
+          ['bash','shell','python','terminal'].includes(request.tool)) {
+        await within(research.call('runtime_tool_observed', request.sessionID,
+          {tool:request.tool,call_id:request.id}, `tool-observed:${request.sessionID}:${request.id}`).catch(error => {
+            observations.append(root,{phase:'coverage_gap',source:'execution_observation',session_id:request.sessionID,
+              error_code:error.code ?? 'storage_unavailable'})
+          }), 2000)
+      }
     })
     const count = (value: unknown, fallback: number) => Math.max(1, Math.floor(Number(value ?? fallback)) || fallback)
     const engine = new Engine(research, host, count(options.concurrency, 1), lifecycle.state, lifecycle.current,
@@ -473,7 +481,10 @@ export default Plugin.define({
         case "finish":
           return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
         case "conclude":
-          return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID)
+          return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID,
+            research.evidenceDelivery.forCall(sessionID,call.messageID,call.id))
+        case "exploration_decide":
+          return engine.explorationDecide(sessionID, args, operationID)
         case "delegate":
           return specialists.delegate(sessionID, args as unknown as SpecialistTask, call.signal, operationID)
         case "delegate_batch":
@@ -573,8 +584,22 @@ export default Plugin.define({
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
           const pause = state.workflow?.session?.pause_reason
+          if (state.project?.config?.exploration_policy !== 'exploration-v1') {
+            for (const name of ['research_scope', 'research_route', 'research_decide']) delete request.tools[name]
+          }
+          const evidenceContract = state.project?.config?.conclusion_contract === 'evidence-v1'
+          if (!evidenceContract) delete request.tools.research_prepare_conclusion
+          const conclude = request.tools.research_conclude
+          if (conclude) {
+            const spec = TOOLS.find(tool => tool.name === 'research_conclude')!.parameters
+            const keys = evidenceContract ? ['summary', 'final_ref', 'draft_id'] : ['summary', 'final_ref', 'outcome', 'gaps', 'review']
+            conclude.input = parameters(Object.fromEntries(keys.map(key => [key, {...spec[key], required:true}]))) as typeof conclude.input
+            conclude.description = evidenceContract
+              ? 'Conclude using the prepared draft and its published final report after the complete draft was delivered in this model request.'
+              : 'Conclude with a complete final report, the outcome, remaining gaps and an explicitly declared review.'
+          }
           if (controlInstructions(run, pause)) {
-            for (const name of ["research_propose", "research_dispatch", "research_conclude"]) delete request.tools[name]
+            for (const name of ["research_propose", "research_dispatch", "research_conclude", 'research_scope', 'research_route', 'research_decide', 'research_prepare_conclusion']) delete request.tools[name]
           }
         }
         if (role === 'node_core') {
@@ -770,6 +795,10 @@ export default Plugin.define({
           return research.detach(needsSession(sessionID, action))
         case "context-policy":
           return research.contextPolicy(needsSession(sessionID, action), args.policy)
+        case "exploration":
+          return research.explorationPolicy(needsSession(sessionID, action), args.mode)
+        case "conclusion-contract":
+          return research.conclusionContract(needsSession(sessionID, action), args.contract)
         case "guidance":
           return research.guidance(needsSession(sessionID, action), directory, args.path, args.version)
         default:

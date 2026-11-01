@@ -38,7 +38,10 @@ export class NativeObservations {
     const session = data?.sessionID
     if (!session || !this.research.isAssociated(session)) return
     const root = this.research.rootOf(session)!
-    if (type==='session.step.started') this.research.checkpoints.stepStarted(session,data.assistantMessageID)
+    if (type==='session.step.started') {
+      this.research.checkpoints.stepStarted(session,data.assistantMessageID)
+      this.research.evidenceDelivery.stepStarted(session,data.assistantMessageID)
+    }
     if (!event.id) return
     if (type==='session.step.started') {
       void this.save(session,{phase:'started',source_key:`step:${session}:${data.assistantMessageID}`,model:data.model},event.id)

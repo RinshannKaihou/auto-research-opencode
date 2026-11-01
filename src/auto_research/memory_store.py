@@ -873,6 +873,8 @@ class MemoryStore:
                     "change_id": change["change_id"],
                 },
             )
+            self.exploration_record_change(db, current['ref'], 'knowledge-change:' + change['change_id'],
+                                           'knowledge_changed', fresh['ref'])
             self.queue_review_in_tx(db, "knowledge-revision", fresh["ref"], fresh["node_id"])
             fresh = self._decode_knowledge(self._latest_revision(db, kid), db)
             fresh["change"] = change
@@ -1835,14 +1837,21 @@ class MemoryStore:
             if decision_refs is not None and not isinstance(decision_refs, list):
                 raise ValidationError("decision_refs must be a list of nonempty references")
             read_refs = list(dict.fromkeys((decision_refs if decision_refs is not None else []) + inputs))
+            if decision_refs is None and node_id is None:
+                declared = project['config'].get('r2_review_scope')
+                generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+                if declared and generation and declared['generation'] == generation[0]:
+                    read_refs = list(dict.fromkeys([*read_refs, *declared['refs']]))
             if frozen_context:
                 for pid in frozen_context.get("publication_ids", []):
                     ref = pid if pid.startswith("pub/") else f"pub/{pid}"
                     if ref not in read_refs:
                         read_refs.append(ref)
-            return render_context(self, db, blocks, node_id, max_chars,
-                                  decision_refs=read_refs,
-                                  final_ref=final_ref)
+            view = render_context(self, db, blocks, node_id, max_chars,
+                                  decision_refs=read_refs, final_ref=final_ref)
+            view['exploration_policy'] = project['config'].get('exploration_policy', 'off')
+            view['conclusion_contract'] = project['config'].get('conclusion_contract', 'legacy-v1')
+            return view
         from .review_lifecycle import unresolved_challenges
         challenges=unresolved_challenges(db) if db.execute('PRAGMA user_version').fetchone()[0]>=11 else []
         if challenges:
@@ -2004,6 +2013,8 @@ class MemoryStore:
             )
         return {
             "policy_version": "memory-v2",
+            "exploration_policy": project['config'].get('exploration_policy', 'off'),
+            "conclusion_contract": project['config'].get('conclusion_contract', 'legacy-v1'),
             "text": body,
             "context_mode": specialist["context_mode"] if specialist else None,
             "source_digest": digest,

@@ -113,7 +113,11 @@ export interface OverviewModel {
     gaps: string[]
     limitations: string[]
     refs: string[]
+    closure?: string
+    stopReason?: string
+    appendixRef?: string
   }
+  exploration?: { objective: string; routesTotal: number; pendingTotal: number; routes: {ref:string;title:string;disposition:string}[] }
   counts: { label: string; value: number }[]
   /** The publication the conclusion names. */
   final?: PublicationCard
@@ -149,13 +153,23 @@ export function overviewModel(summary: any, presentation: any): OverviewModel | 
           outcome: conclusion.outcome,
           outcomeLabel: OUTCOMES[conclusion.outcome] ?? conclusion.outcome,
           finalRef: conclusion.final_ref,
-          reviewLabel: REVIEWS[conclusion.review?.status] ?? conclusion.review?.status,
-          reviewNote: REVIEW_NOTE,
+          reviewLabel: REVIEWS[conclusion.evidence?.review_coverage?.status ?? conclusion.review?.status] ??
+            (conclusion.evidence?.review_coverage?.status === 'unknown' ? '未知' : conclusion.review?.status),
+          reviewNote: conclusion.evidence ? '按版本与类型计算' : REVIEW_NOTE,
           gaps: conclusion.gaps ?? [],
           limitations: conclusion.review?.limitations ?? [],
           refs: conclusion.review?.refs ?? [],
+          closure: conclusion.evidence?.evidence_closure?.status
+            ? ({resolved:'已处理',qualified:'带限定',unresolved:'未解决',unknown:'未知'} as Record<string,string>)[conclusion.evidence.evidence_closure.status]
+            : undefined,
+          stopReason: conclusion.evidence?.exploration_stop?.reason,
+          appendixRef: conclusion.evidence?.appendix_ref,
         }
       : undefined,
+    exploration: summary.exploration ? {
+      objective: summary.exploration.objective, routesTotal: summary.exploration.routes_total,
+      pendingTotal: summary.exploration.pending_results_total, routes: summary.exploration.routes ?? [],
+    } : undefined,
     counts: [
       { label: "节点", value: counts.nodes ?? 0 },
       { label: "发布", value: counts.publications ?? 0 },

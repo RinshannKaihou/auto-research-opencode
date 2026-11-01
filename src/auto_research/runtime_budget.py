@@ -451,6 +451,10 @@ class RuntimeStore:
                 raise ValidationError('The task does not belong to this coordinator')
             if task['state'] != 'queued':
                 return {'claimed': False, 'reason': 'already_claimed', 'state': task['state']}
+            from .exploration_store import check_exploration_task
+            check = check_exploration_task(self, db, task_id)
+            if not check['allowed']:
+                return {'claimed': False, 'reason': check['reason'], 'state': 'queued'}
             active = db.execute("SELECT COUNT(*) FROM exploration_tasks WHERE state IN ('starting','running','stopping','unverified')").fetchone()[0]
             if active >= concurrency:
                 return {'claimed': False, 'reason': 'capacity', 'state': 'queued'}
@@ -795,6 +799,25 @@ class RuntimeStore:
         intent = {key:value for key,value in fields.items() if key!='request_key'}
         return self._mutate('runtime.native_event',dict(host=host,session=session,fields=intent),operation,work)
 
+    def runtime_tool_observed(self, host, session, tool, call_id, operation):
+        """Record only host-observed executable tool completion, without its input or output."""
+        if tool not in {'bash', 'shell', 'python', 'terminal'} or not isinstance(call_id, str) or not call_id:
+            raise ValidationError('An observed executable tool and call identity are required')
+        payload = {'host':host, 'session':session, 'tool':tool, 'call_id':call_id}
+        def work(db):
+            role = db.execute('SELECT role FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
+                              (host, session)).fetchone()
+            context = self._invocation_context(db, host, session)
+            if not role or role['role'] != 'node_core' or not context['attempt_id']:
+                return {'recorded':False}
+            key = f'tool:{host}:{session}:{call_id}'
+            details = {'tool':tool, 'status':'completed', 'generation':context['generation'], 'binding':'frozen'}
+            db.execute('INSERT OR IGNORE INTO usage_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (str(uuid4()), key, context['association_id'], context['attempt_id'], context['node_id'],
+                        'tool_execution', None, None, None, 'unknown', json.dumps(details), timestamp()))
+            return {'recorded':True, 'source_key':key}
+        return self._mutate('runtime.tool_observed', payload, operation, work)
+
     def runtime_budget_set(self, host, session, limits, reason, operation):
         if not isinstance(limits, dict) or set(limits)-LIMITS or not isinstance(reason,str) or not reason.strip():
             raise ValidationError('Explicit runtime limits and reason required')
@@ -916,6 +939,8 @@ class RuntimeStore:
             state = view(self,db,host,session)
             if not state['expired'] or state['run_state'] != 'running':
                 return {'stopped':False,**state}
+            affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
+                "WHERE state IN ('queued','starting','running','waiting','stopping')"))
             db.execute("UPDATE workflow_project SET state='paused' WHERE id=1")
             db.execute("UPDATE project SET control='paused'")
             db.execute("UPDATE exploration_tasks SET state='cancelled',error='wall_clock_budget: queued request cancelled',updated_at=? WHERE state='queued'",(timestamp(),))
@@ -923,6 +948,10 @@ class RuntimeStore:
             db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0 WHERE state IN ('starting','running')")
             db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (timestamp(),))
             db.execute("UPDATE workflow_sessions SET pause_reason='budget' WHERE detached=0")
+            for task in affected_tasks:
+                outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
+                self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
+                    outcome, None, {'task_id': task['task_id'], 'reason': 'budget_exhausted'})
             self._event(db,'runtime.budget_exhausted',state)
             return {'stopped':True,**state}
         return self._mutate('runtime.budget_stop',dict(host=host,session=session),operation,work)
@@ -975,6 +1004,8 @@ class RuntimeStore:
                     meaningful |= duplicates==1
                 elif mine=='project' and kind=='project.concluded':
                     meaningful = True
+                elif mine=='project' and kind=='exploration.decided':
+                    meaningful |= data.get('actor')=={'host_id':host,'session_id':session} and bool(data.get('result_ids'))
                 elif kind=='review.scope_changed':
                     meaningful |= data['actor'].get('host_id')==host and data['actor'].get('session_id')==session and bool(data['added'])
                 elif kind == 'review.completed':

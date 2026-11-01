@@ -46,6 +46,7 @@ export interface SessionHost {
 export interface ConclusionInput {
   summary: string
   final_ref: string
+  draft_id?: string
   outcome: "answered" | "partial" | "unresolved"
   gaps: string[]
   review: { status: "unreviewed" | "partial" | "reviewed"; refs: string[]; limitations: string[] }
@@ -475,13 +476,26 @@ export class Engine {
   private async schedule(root: string): Promise<void> {
     const main = this.mainIn(root)
     if (!main) return
-    const state = await this.state(main)
+    let state = await this.state(main)
     if (state.workflow?.run?.state !== "running") return
+    if (state.project?.config?.exploration_policy === 'exploration-v1') {
+      const intents: string[] = await this.call('exploration_pending', main)
+      for (const intent_id of intents) {
+        const result: any = await this.call('exploration_materialize', main, { intent_id })
+        if (result.state === 'stale') await this.say(main, '探索依据发生变化，请重新读取结果并选择下一步。').catch(() => {})
+        if (result.state === 'waiting_budget') await this.say(main, `探索工作等待预算：${result.reason}`).catch(() => {})
+      }
+      if (intents.length) state = await this.state(main)
+    }
     const tasks = await this.allTasks(main, state.workflow)
     let active = tasks.filter((task) => ACTIVE_TASK.has(task.state)).length
     for (const task of tasks.filter((item) => item.state === "queued")) {
       if (active >= this.concurrency) break
       try {
+        if (state.schema_version >= 13) {
+          const check: any = await this.call('exploration_task_check', main, { task_id: task.task_id })
+          if (!check.allowed) continue
+        }
         if (await this.startTask(root, main, task)) active++
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -569,7 +583,9 @@ export class Engine {
           `固定输入：${inputs.length ? `${inputs.join("、")}（已放在 ${workspace}/inputs/，只读）` : "无"}`,
           `工作目录：${workspace}。先 cd 到这里；在 scratch/ 里做实验，把报告和数据放进 output/。`,
           "发布时 source_path 写相对这个工作目录的路径，例如 output/report.md。",
-          "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
+          ['scout','probe'].includes(context.purpose)
+            ? "只回答这个会影响选择的问题。可返回支持、反例、混合或信息不足；发布最小可读结果及固定依据，说明条件、未知和建议。受阻不等于反证；完成或受阻时调用 research_finish。"
+            : "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
         ].join("\n"),
         true,
         `开始节点 ${task.node_id}`,
@@ -598,6 +614,20 @@ export class Engine {
   }
 
   // ── Engine tools called by models ────────────────────────────────────────
+
+  explorationDecide(sessionID: string, fields: Record<string, unknown>, operationID: string): Promise<unknown> {
+    const root = this.research.requireAssociated(sessionID)
+    return this.serial(root, async () => {
+      const decision = await this.call<any>('exploration_decide', sessionID, { fields, model_call: true }, operationID)
+      this.research.notifyChanged(root)
+      if (!decision.intent_id) return decision
+      const state = await this.state(sessionID)
+      if (state.workflow?.run?.state !== 'running') return {...decision, work:{state:'pending',reason:'awaiting_auto'}}
+      const work = await this.call<any>('exploration_materialize', sessionID, {intent_id:decision.intent_id})
+      if (work.state === 'materialized') await this.schedule(root)
+      return {...decision, work}
+    })
+  }
 
   dispatch(sessionID: string, nodeID: string, operationID: string): Promise<unknown> {
     const root = this.research.requireAssociated(sessionID)
@@ -692,15 +722,16 @@ export class Engine {
     return { message: "本轮结束后，节点本次执行结束，总结会交给主协调。", state: finish.state }
   }
 
-  conclude(sessionID: string, fields: ConclusionInput, operationID: string): Promise<unknown> {
+  conclude(sessionID: string, fields: ConclusionInput, operationID: string, deliveryReceipts: string[] = []): Promise<unknown> {
     const root = this.research.requireAssociated(sessionID)
     if (this.research.roleOf(sessionID) !== "main") throw new Error("只有主协调可以结束研究")
     return this.serial(root, async () => {
-      const conclusion = await this.call("conclude", sessionID, { fields, model_call: true }, operationID)
+      const conclusion = await this.call("conclude", sessionID, { fields, model_call: true,
+        ...(fields.draft_id ? { delivery_receipts: deliveryReceipts } : {}) }, operationID)
       let notification_warning: string | undefined
       try {
         this.research.notifyChanged(root)
-        await this.say(sessionID, `研究执行已结束，结果 ${conclusion.outcome}，最终报告 ${conclusion.final_ref}。审阅状态 ${conclusion.review.status} 为调用者声明，不表示结论通过。`)
+        await this.say(sessionID, `研究执行已结束，结果 ${conclusion.outcome}，最终报告 ${conclusion.final_ref}。审阅状态 ${conclusion.evidence ? conclusion.evidence.review_coverage.status + ' 为派生覆盖' : conclusion.review.status + ' 为调用者声明'}，不表示结论通过。`)
       } catch {
         notification_warning = "结项已保存，但会话通知发送失败；可通过状态或项目概览查看。"
       }

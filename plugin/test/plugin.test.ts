@@ -2110,3 +2110,195 @@ test("switching context policy clears cached and in-flight legacy context", asyn
   resolveRead({ text: "LEGACY_IN_FLIGHT", policy_version: "memory-v2", source_sequence: 1 })
   expect(await pending).not.toContain("LEGACY_IN_FLIGHT")
 })
+
+test('exploration chooses one durable probe through the ordinary node scheduler', async () => {
+  const host = await load()
+  await host.command('auto','ses_main',{goal:'Choose an approach'})
+  const policy = await host.command('exploration','ses_main',{mode:'on'})
+  expect(policy.state.exploration_policy).toBe('exploration-v1')
+  expect(policy.state.conclusion_contract).toBe('evidence-v1')
+  const scope = await host.call('research_scope','ses_main',{changes:{objective:'Choose an approach',task_kind:'selection'}})
+  const route = await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'Measure tail',
+    rationale:'The average may not explain the tail',critical_assumption:'The distributions differ'}})
+  const alternative = await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'Check service replay',
+    rationale:'A direct replay can measure the actual target',critical_assumption:'The workload is representative'}})
+  const evidence = await host.call('research_query','ses_main',{collection:'evidence',refs:[]})
+  const decision = await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:evidence.snapshot_id,
+    route_refs:[route.ref],action:'probe',reason:'Resolve the assumption',next_work:{route_refs:[route.ref],
+      question:'Does the tail differ?',why_now:'Choose a direction',plan:'Measure the tail',root_reason:'First probe',work_kind:'probe'}})
+  expect(decision.intent_id).toBeTruthy()
+  expect(decision.work.task_id).toBeTruthy()
+  expect(host.created).toHaveLength(1)
+  expect(host.said(host.created[0]!).some(item=>item.text.includes('信息不足'))).toBe(true)
+  const context = modelRequest('ses_main')
+  await host.hooks.get('context')!(context)
+  expect(JSON.stringify(context.system)).toContain('exploration')
+  expect(Object.keys(context.tools)).toContain('research_decide')
+  expect(Object.keys(context.tools)).toContain('research_prepare_conclusion')
+  expect(Object.keys((context.tools.research_conclude.input as any).properties).sort()).toEqual(['draft_id','final_ref','summary'])
+  expect((context.tools.research_conclude.input as any).required).toContain('draft_id')
+  await host.call('research_wait','ses_main',{task_ids:[decision.work.task_id]})
+  host.turn.end('ses_main')
+  host.turn.start(host.created[0]!)
+  await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:host.created[0]!,id:'probe-exec',input:{command:'private'}})
+  await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:host.created[0]!,id:'probe-exec',status:'completed'})
+  const usage = await host.call('research_query','ses_main',{collection:'usage'})
+  const toolObservation = usage.items.find((item:any) => item.purpose === 'tool_execution')
+  expect(toolObservation.details.tool).toBe('shell')
+  expect(JSON.stringify(toolObservation)).not.toContain('private')
+  const negative = await host.call('research_publish',host.created[0]!,{status:'partial',summary:'No clear tail benefit',
+    items:[{item_id:'result',kind:'text',content:{outcome:'insufficient'}}]})
+  await host.call('research_finish',host.created[0]!,{state:'finished',summary:'The probe is inconclusive'})
+  host.turn.end(host.created[0]!)
+  await until(async () => (await host.call('research_query','ses_main',{collection:'exploration_results'})).total === 2,
+    'publication and finish available for a decision')
+  const results = await host.call('research_query','ses_main',{collection:'exploration_results'})
+  const updated = await host.call('research_query','ses_main',{collection:'evidence',refs:[`pub/${negative.publication_id}#result`]})
+  const redirect = await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:updated.snapshot_id,
+    route_refs:[decision.route_refs[0],alternative.ref],result_ids:results.items.map((item:any)=>item.result_id),
+    action:'redirect',reason:'The first probe did not answer the tail question',
+    route_changes:[{route_ref:decision.route_refs[0],disposition:'deferred',reason:'The probe was inconclusive',
+      reactivation_condition:'New workload data is available',evidence_refs:[`pub/${negative.publication_id}#result`]}],
+    next_work:{route_refs:[alternative.ref],question:'Does the replay meet the target?',why_now:'Use the stronger comparison',
+      plan:'Measure a service replay',predecessors:[{node_id:decision.work.node_id,relation_type:'branches_from',
+        rationale:'The prior probe was inconclusive',input_refs:[`pub/${negative.publication_id}#result`]}],work_kind:'probe'}})
+  expect(redirect.work.task_id).toBeTruthy()
+  expect(host.created).toHaveLength(2)
+  const routes = await host.call('research_query','ses_main',{collection:'exploration_routes'})
+  expect(routes.items.find((item:any)=>item.route_id===route.route_id).disposition).toBe('deferred')
+  await host.call('research_wait','ses_main',{task_ids:[redirect.work.task_id]})
+  host.turn.end('ses_main')
+  const second = host.created[1]!
+  host.turn.start(second)
+  const data = await host.call('research_publish',second,{status:'complete',summary:'The replay measured the target',
+    items:[{item_id:'data',kind:'text',content:{measured:7}}]})
+  const claim = await host.call('research_record',second,{kind:'claim',statement:'The measured target is 7',
+    evidence_refs:[`pub/${data.publication_id}#data`],visibility:'project'})
+  await host.call('research_finish',second,{state:'finished',summary:'Measured the target'})
+  host.turn.end(second)
+  await until(async () => (await host.call('research_query','ses_main',{collection:'exploration_results'})).items
+    .filter((item:any)=>!item.handled_by_decision).length === 2, 'second probe results')
+  const arrived = await host.call('research_query','ses_main',{collection:'exploration_results'})
+  const beforeStop = await host.call('research_query','ses_main',{collection:'evidence',refs:[claim.ref]})
+  const selected = routes.items.find((item:any)=>item.route_id===alternative.route_id)
+  await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:beforeStop.snapshot_id,
+    route_refs:routes.items.map((item:any)=>item.ref),result_ids:arrived.items.filter((item:any)=>!item.handled_by_decision)
+      .map((item:any)=>item.result_id),action:'propose_stop',reason:'The replay answers the bounded question',
+    route_changes:[{route_ref:selected.ref,disposition:'adopted',reason:'The replay provides the target measurement',
+      evidence_refs:[claim.ref]}]})
+  const firstPage = await host.call('research_query','ses_main',{collection:'evidence',refs:[claim.ref,'knowledge/K-404@1']})
+  let body=firstPage.chunk, cursor=firstPage.cursor
+  while (cursor) {
+    const page=await host.call('research_query','ses_main',{collection:'evidence',cursor})
+    body+=page.chunk; cursor=page.cursor
+  }
+  const view=JSON.parse(body)
+  const missing=view.limitations.find((item:any)=>item.reason==='knowledge_missing')
+  const draft = await host.call('research_prepare_conclusion','ses_main',{snapshot_id:firstPage.snapshot_id,
+    core_claim_refs:[claim.ref],outcome:'answered',gaps:[],review_requirements:[],risk_judgments:[{
+      risk_id:missing.risk_id,core_impact:'no',disposition:'unresolved',reason:'The missing mechanism is outside the measured target',
+      evidence_refs:[claim.ref],gap:'The mechanism remains unverified'}],
+    exploration_stop:{reason_kind:'goal_met',reason:'The target is measured under the stated workload'}})
+  expect(draft.evidence_closure.status).toBe('qualified')
+  const report = await host.call('research_publish','ses_main',{status:'complete',summary:'Final report',gaps:[],
+    items:[{item_id:'report',kind:'text',content:{text:'The target was 7 under the measured workload.'}}],
+    knowledge_refs:[claim.ref],draft_id:draft.draft_id,report_item_id:'report'})
+  const parts:any[]=[]; cursor=null
+  do {
+    const id=`integrated-page-${parts.length}`
+    const raw=await host.tools.get('research_query').execute({collection:'evidence',limit:500,
+      ...(cursor?{cursor}:{draft_id:draft.draft_id})},{sessionID:'ses_main',messageID:`integrated-read-${parts.length}`,id,agent:'build'})
+    const page=JSON.parse(raw.content)
+    parts.push({type:'tool-result',id,name:'research_query',result:{type:'text',value:raw.content}})
+    cursor=page.cursor
+  } while (cursor)
+  const finalRequest=modelRequest('ses_main')
+  finalRequest.messages=[{role:'tool',content:parts}] as any
+  host.events.push({id:'integrated-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'integrated-final',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:integrated-final'), 'integrated conclusion step')
+  await host.hooks.get('context')!(finalRequest)
+  const concluded = JSON.parse((await host.tools.get('research_conclude').execute({draft_id:draft.draft_id,
+    final_ref:`pub/${report.publication_id}#report`,summary:'Answered within the measured scope'},
+    {sessionID:'ses_main',messageID:'integrated-final',id:'integrated-final-call',agent:'build'})).content)
+  expect(concluded.evidence.evidence_closure.status).toBe('qualified')
+  expect(concluded.evidence.appendix_ref).toContain('#evidence-appendix')
+})
+
+test('a durable exploration decision resumes exactly once after host restart', async () => {
+  const first = await load()
+  await first.command('auto','ses_main',{goal:'Choose an approach'})
+  await first.command('exploration','ses_main',{mode:'on'})
+  const scope = await first.call('research_scope','ses_main',{changes:{objective:'Choose an approach',task_kind:'selection'}})
+  const route = await first.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'Probe tail',
+    rationale:'Tail may differ',critical_assumption:'The distribution differs'}})
+  const view = await first.call('research_query','ses_main',{collection:'evidence',refs:[]})
+  const original = StorageClient.prototype.request
+  const spy = spyOn(StorageClient.prototype,'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'exploration_materialize') return Promise.reject(new Error('host interrupted before materialization'))
+    return original.call(this,method,fields,operation)
+  })
+  try {
+    await expect(first.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
+      route_refs:[route.ref],action:'probe',reason:'Resolve the tail assumption',next_work:{route_refs:[route.ref],
+        question:'Does tail differ?',why_now:'Choose direction',plan:'Measure',root_reason:'First probe'}}))
+      .rejects.toThrow('host interrupted before materialization')
+  } finally { spy.mockRestore() }
+  expect((await first.page('nodes')).items).toHaveLength(0)
+  cleanups.pop()!()
+  simulateDeadHost()
+  const second = await load()
+  await until(async () => (await second.summary()).run.state === 'paused','cold pause')
+  expect((await second.page('nodes')).items).toHaveLength(0)
+  await second.command('resume','ses_main')
+  await until(async () => (await second.page('tasks')).items.length === 1,'recovered exploration task')
+  expect((await second.page('nodes')).items).toHaveLength(1)
+  expect(second.created).toHaveLength(1)
+  expect((await second.page('tasks')).items).toHaveLength(1)
+})
+
+test('evidence conclusion requires the actual draft pages in the model request', async () => {
+  const host = await load()
+  await host.command('init','ses_main',{goal:'Answer a bounded question'})
+  const legacy = modelRequest('ses_main')
+  await host.hooks.get('context')!(legacy)
+  expect(Object.keys((legacy.tools.research_conclude.input as any).properties).sort()).toEqual(['final_ref','gaps','outcome','review','summary'])
+  expect((legacy.tools.research_conclude.input as any).required).toContain('review')
+  await host.command('conclusion-contract','ses_main',{contract:'evidence-v1'})
+  const source = await host.call('research_publish','ses_main',{status:'complete',summary:'measurement',gaps:[],
+    items:[{item_id:'data',kind:'text',content:{measured:7}}],knowledge_refs:[]})
+  const claim = await host.call('research_record','ses_main',{kind:'claim',statement:'Measured value is 7',
+    evidence_refs:[`pub/${source.publication_id}#data`],visibility:'project'})
+  const view = await host.call('research_query','ses_main',{collection:'evidence',refs:[claim.ref]})
+  const draft = await host.call('research_prepare_conclusion','ses_main',{snapshot_id:view.snapshot_id,
+    core_claim_refs:[claim.ref],outcome:'answered',gaps:[],risk_judgments:[],review_requirements:[],
+    exploration_stop:{reason_kind:'goal_met',reason:'Measured under the stated conditions'}})
+  const publication = await host.call('research_publish','ses_main',{status:'complete',summary:'report',gaps:[],
+    items:[{item_id:'report',kind:'text',content:{text:'The measured value is 7.'}}],knowledge_refs:[claim.ref],
+    draft_id:draft.draft_id,report_item_id:'report'})
+  const parts:any[]=[]
+  let cursor:any = null
+  do {
+    const id=`evidence-page-${parts.length}`
+    const raw = await host.tools.get('research_query').execute({collection:'evidence',limit:500,
+      ...(cursor ? {cursor} : {draft_id:draft.draft_id})},{sessionID:'ses_main',messageID:`read-${parts.length}`,id,agent:'build'})
+    const page=JSON.parse(raw.content)
+    parts.push({type:'tool-result',id,name:'research_query',result:{type:'text',value:raw.content}})
+    cursor=page.cursor
+  } while (cursor)
+  const request=modelRequest('ses_main')
+  request.messages=[{role:'tool',content:parts}] as any
+  host.events.push({id:'evidence-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'final-message',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items.length>0,'evidence step')
+  await host.hooks.get('context')!(request)
+  const result = await host.tools.get('research_conclude').execute({draft_id:draft.draft_id,
+    final_ref:`pub/${publication.publication_id}#report`,summary:'Answered under the measured conditions'},
+    {sessionID:'ses_main',messageID:'final-message',id:'final-call',agent:'build'})
+  const conclusion=JSON.parse(result.content)
+  expect(conclusion.outcome).toBe('answered')
+  expect(conclusion.evidence.evidence_closure.status).toBe('resolved')
+  expect(conclusion.evidence.review_coverage.status).toBe('unreviewed')
+  expect(conclusion.evidence.appendix_ref).toContain('#evidence-appendix')
+})

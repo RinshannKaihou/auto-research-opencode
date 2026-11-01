@@ -1,0 +1,84 @@
+{
+  "description": "Anonymized aggregate of historical local-project observations and synthetic backend probes.",
+  "observed_at_utc": "2026-11-01T04:22:17.588922+00:00",
+  "source_commit": "324f2ed2ad15e88dc6ab39a50f2a3762023f8379",
+  "model_calls": false,
+  "projects": [
+    {
+      "project": "project-01",
+      "schema": 12,
+      "node_count": 6,
+      "edges": [
+        {
+          "relation_type": "depends_on",
+          "count": 5
+        }
+      ],
+      "knowledge_count": 16,
+      "configured_context_policy": "memory-v2"
+    },
+    {
+      "project": "project-02",
+      "schema": 12,
+      "node_count": 12,
+      "edges": [
+        {
+          "relation_type": "depends_on",
+          "count": 12
+        }
+      ],
+      "knowledge_count": 68,
+      "configured_context_policy": "memory-v2"
+    }
+  ],
+  "backend_probes": [
+    {
+      "case": "two_lineage_siblings_can_be_claimed_concurrently",
+      "claims": [
+        {
+          "node_id": "X-002",
+          "workspace_prepared": true,
+          "claimed": true
+        },
+        {
+          "node_id": "X-003",
+          "workspace_prepared": true,
+          "claimed": true
+        }
+      ],
+      "note": "Service launch claim only, no host sessions or model calls."
+    },
+    {
+      "case": "fixed_material_dependency_is_not_parent_task_completion_barrier",
+      "parent_attempt_live": true,
+      "workspace_prepared": true,
+      "successor_claimed": true,
+      "note": "Do not assume depends_on waits for all future outputs of its predecessor."
+    }
+  ],
+  "conclusion_probes": [
+    {
+      "case": "completed_A_with_undispatched_alternative_B",
+      "accepted": true,
+      "outcome": "answered",
+      "gaps": [],
+      "B_status": "proposed",
+      "B_tasks": 0,
+      "explicit_branch_and_redirect": true,
+      "final_has_fixed_claim": true
+    },
+    {
+      "case": "empty_knowledge_self_review",
+      "coverage": "coverage unknown",
+      "accepted": true,
+      "outcome": "answered",
+      "review": "reviewed"
+    }
+  ],
+  "limitations": [
+    "Project identities, raw claims, local paths, source hashes and detailed research content are omitted.",
+    "Historical engineering observations do not establish model quality or cost improvements."
+  ],
+  "conclusion_probe_source_commit": "b61ef05c8bb1ee8bcc4ef7c71f074966dffc8aee",
+  "conclusion_probe_observed_at_utc": "2026-11-01T04:10:53.245981+00:00"
+}

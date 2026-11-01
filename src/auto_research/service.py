@@ -7,7 +7,7 @@ browser or model.
 
 from __future__ import annotations
 
-from . import frozen_refs, workbench_read
+from . import __version__, frozen_refs, workbench_read
 
 import argparse
 import hashlib
@@ -23,7 +23,7 @@ from .artifacts import ArtifactStore, _open_source
 from .migration import preflight, recovery_preview
 from .native_store import NativeStore, SCHEMA_VERSION
 from .memory_store import KINDS, STATUSES
-from .errors import ValidationError
+from .errors import ConflictError, ValidationError
 
 MAX_REQUEST = 64 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
@@ -213,6 +213,8 @@ class NativeService:
     def __init__(self, registry: str | Path):
         self.registry = ProjectRegistry(registry)
         self.stores = {}
+        from .evidence_read import EvidenceCache
+        self.evidence = EvidenceCache()
 
     @staticmethod
     def _identity(request: dict) -> tuple[str, str]:
@@ -644,6 +646,11 @@ class NativeService:
             return {"project": None, "project_root": str(root)}
         store = NativeStore(root, readonly=True)
         view = request.get("view")
+        if view == 'evidence':
+            return self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit') if key in request})
+        if view == 'page' and request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
+            return store.exploration_page(request['collection'], **{key: request[key] for key in
+                ('cursor', 'limit', 'ref') if key in request})
         if view == 'page' and request.get('collection') in {'review_candidates','review_obligations','review_events'}:
             return store.review_page(request['collection'], **{key:request[key] for key in
                 ('cursor','limit','node_id','trigger_kind','generation','scope_owner','state','target_ref','change_id','obligation_id') if key in request})
@@ -655,6 +662,9 @@ class NativeService:
             return {'schema_version': version, 'memory_write_contract': 'r2-v1' if version>=11 else 'requires_migration',
                     'checkpoint_base': 'receipt-cas-v1' if version >= 11 else 'requires_migration',
                     'review_lifecycle': 'candidate-obligation-v1' if version>=11 else 'requires_migration',
+                    'exploration_contract':'exploration-v1' if version >= 13 else 'requires_migration',
+                    'evidence_contract':'evidence-v1' if version >= 14 else 'requires_migration',
+                    'backend_version':__version__,
                     'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered'}
         if view == "context_preview":
             if request.get("model_call"):
@@ -739,6 +749,8 @@ class NativeService:
                 'memory_write_contract':'r2-v1',
                 'runtime_control_contract':'controller-launch-v1',
                 'review_lifecycle':'candidate-obligation-v1',
+                'exploration_contract':'exploration-v1', 'evidence_contract':'evidence-v1',
+                'evidence_read':'snapshot-delivery-v1', 'backend_version':__version__,
                 'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered',
                 "native_specialists": "foreground-one-shot",
             }
@@ -870,6 +882,10 @@ class NativeService:
                 "close_node",
                 "memory_write",
                 "review_scope_set",
+                "exploration_scope",
+                "exploration_route",
+                "exploration_decide",
+                "conclusion_prepare",
                 "specialist_create",
                 "consume",
             }
@@ -1062,7 +1078,16 @@ class NativeService:
                     limit=request.get("limit", 32768),
                 )
             elif method == "query":
-                if request.get('collection')=='adoptions':
+                if request.get('collection') == 'evidence':
+                    value = self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit') if key in request})
+                elif request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
+                    value = store.exploration_page(request['collection'], **{key: request[key] for key in
+                        ('cursor', 'limit', 'ref') if key in request})
+                elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/scope/'):
+                    value = store.exploration_page('exploration_scopes', ref=request['ref'])
+                elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/route/'):
+                    value = store.exploration_page('exploration_routes', ref=request['ref'])
+                elif request.get('collection')=='adoptions':
                     value = store.adoptions(**{key:request[key] for key in ('cursor','limit','node_id') if key in request})
                 elif request.get('collection') in {'review_candidates','review_obligations','review_events'}:
                     value = store.review_page(request['collection'], **{key:request[key] for key in
@@ -1151,13 +1176,65 @@ class NativeService:
                         "ORDER BY r.context_id DESC LIMIT 1", (host_id, session_id),
                     ).fetchone()
                 value = {**value, "last_recorded": dict(last) if last else None}
+            elif method == "exploration_policy":
+                value = store.exploration_policy(host_id, session_id, request.get("mode"), self._operation(request))
+            elif method == "conclusion_contract":
+                value = store.conclusion_contract(host_id, session_id, request.get('contract'), self._operation(request))
+            elif method == "conclusion_prepare":
+                fields = request.get('fields', {})
+                try:
+                    snapshot = self.evidence.get(store, fields.get('snapshot_id'))
+                except ConflictError:
+                    with store._read() as db:
+                        previous = db.execute('SELECT 1 FROM requests WHERE request_id=?', (self._operation(request),)).fetchone()
+                    if not previous:
+                        raise
+                    snapshot = None
+                value = store.prepare_conclusion(host_id, session_id, fields, snapshot, self._operation(request))
+            elif method in {"exploration_scope", "exploration_route"}:
+                value = getattr(store, method)(host_id, session_id, request.get("fields", {}), self._operation(request))
+            elif method == "exploration_decide":
+                fields = request.get("fields", {})
+                try:
+                    snapshot = self.evidence.get(store, fields.get("snapshot_id"))
+                except ConflictError:
+                    with store._read() as db:
+                        previous = db.execute("SELECT 1 FROM requests WHERE request_id=?", (self._operation(request),)).fetchone()
+                    if not previous:
+                        raise
+                    snapshot = None
+                value = store.exploration_decide(host_id, session_id, fields, snapshot, self._operation(request))
+            elif method == "exploration_pending":
+                value = store.exploration_pending(host_id, session_id)
+            elif method == "exploration_materialize":
+                value = store.exploration_materialize(host_id, session_id, request.get("intent_id"), self._operation(request))
+            elif method == "exploration_task_check":
+                value = store.exploration_task_check(host_id, session_id, request.get("task_id"), self._operation(request))
+            elif method == "evidence_observed":
+                pages = request.get('pages')
+                if not isinstance(pages, list):
+                    raise ValidationError('Evidence pages must be a list')
+                validated = []
+                for page in pages:
+                    snapshot = self.evidence.get(store, page.get('snapshot_id'))
+                    start, end = page.get('offset'), page.get('end')
+                    if (type(start) is not int or type(end) is not int or not 0 <= start < end <= len(snapshot['body'])
+                            or page.get('manifest_digest') != snapshot['manifest_digest']
+                            or page.get('chunk_digest') != hashlib.sha256(snapshot['body'][start:end].encode('utf-8')).hexdigest()):
+                        raise ValidationError('Evidence page does not match its snapshot')
+                    validated.append({'snapshot_id': snapshot['snapshot_id'], 'draft_id': snapshot.get('draft_id'),
+                                      'generation': snapshot['generation'], 'offset': start, 'end': end,
+                                      'digest': snapshot['manifest_digest']})
+                value = store.evidence_observed(host_id, session_id, request.get('plugin_instance_id'), validated, self._operation(request))
             elif method == "context_shadow":
                 value = store.context_shadow(host_id, session_id,
                     max_chars=request.get("max_chars", 12000), profile=request.get("profile"),
                     decision_refs=request.get("decision_refs"), final_ref=request.get("final_ref"))
             elif method == "conclude":
                 value = store.conclude(host_id, session_id, request.get("fields", {}), self._operation(request),
-                                       enforce_control=bool(request.get('model_call')))
+                                       enforce_control=bool(request.get('model_call')),
+                                       delivery_receipts=request.get('delivery_receipts'),
+                                       plugin_instance_id=request.get('plugin_instance_id'))
             elif method == "context_record":
                 value = store.record_context_request(
                     {**request.get("fields", {}), "host_id": host_id, "session_id": session_id,},
@@ -1255,6 +1332,8 @@ class NativeService:
                 value = store.runtime_submitted(host_id,session_id,request['reservation_id'],self._operation(request))
             elif method == 'runtime_native_event':
                 value = store.runtime_native_event(host_id,session_id,request['fields'],self._operation(request))
+            elif method == 'runtime_tool_observed':
+                value = store.runtime_tool_observed(host_id,session_id,request['tool'],request['call_id'],self._operation(request))
             elif method == 'invocation_context':
                 value = store.invocation_context(host_id,session_id)
             elif method == "memory_write":
@@ -1494,11 +1573,13 @@ class NativeService:
                     request.get("knowledge_refs", []),
                     asserted_at=self._asserted_at(store, request, host_id, session_id),
                     display=request.get("display"),
+                    draft_id=request.get('draft_id'), report_item_id=request.get('report_item_id'),
                 )
             elif method == "relate":
                 if request.get('contract_version') == 'r2-v1':
                     fields = {key:request[key] for key in ('source_ref','target_ref','label','note','input_refs','revision',
-                        'obligation_id','change_id','result','complete','evidence_refs','contract_version') if key in request}
+                        'obligation_id','change_id','result','complete','evidence_refs','contract_version',
+                        'review_type','specialist_task_id','limitations') if key in request}
                     value = store.relate_typed(fields,self._operation(request),self._asserted_at(store,request,host_id,session_id))
                 else:
                     value = store.relate(request.get('source_ref'),request.get('target_ref'),request.get('label'),

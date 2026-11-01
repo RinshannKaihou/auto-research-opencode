@@ -57,6 +57,22 @@ def summary(store, host_id: str, session_id: str) -> dict:
             row = db.execute("SELECT publication_id,summary,status,node_id FROM publications WHERE publication_id=?", (pid,)).fetchone()
             final = project_publication(db, dict(row)) if row else None
         node_ids = [r[0] for r in db.execute("SELECT node_id FROM nodes ORDER BY rowid")]
+        exploration = None
+        if state['schema_version'] >= 13:
+            from .exploration_store import _current_scope, _decode
+            generation = (state.get('workflow', {}).get('run') or {}).get('generation')
+            scope = _current_scope(db, generation) if generation is not None else None
+            if scope:
+                routes = [_decode(row, 'route') for row in db.execute(
+                    "SELECT r.* FROM exploration_routes r JOIN "
+                    "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
+                    "ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (scope['scope_id'],))]
+                pending = db.execute('SELECT COUNT(*) FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL',
+                                     (scope['scope_id'],)).fetchone()[0]
+                exploration = {'scope_ref': scope['ref'], 'objective': scope['objective'],
+                               'routes_total': len(routes), 'pending_results_total': pending,
+                               'routes': [{key: route[key] for key in ('ref','title','disposition')} for route in routes[:3]],
+                               'policy': state['project']['config'].get('exploration_policy', 'off')}
     workflow = state.get("workflow", {})
     return {
         "node_ids": node_ids,
@@ -72,6 +88,7 @@ def summary(store, host_id: str, session_id: str) -> dict:
         "final_publication": final,
         "latest_publication": latest,
         "conclusion": conclusion,
+        "exploration": exploration,
     }
 
 

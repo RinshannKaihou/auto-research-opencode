@@ -1,5 +1,7 @@
 """Errors which callers may report without an internal traceback."""
 
+import json
+
 
 class ResearchError(Exception):
     """A rejected operation or unavailable research record."""
@@ -15,6 +17,13 @@ class NotFoundError(ResearchError, LookupError):
 
 class ConflictError(ResearchError):
     pass
+
+
+class EvidenceBasisChanged(ConflictError):
+    def __init__(self, context, differences):
+        self.code = context + '_basis_changed'
+        self.details = {**differences, 'read': {'collection': 'evidence'}}
+        super().__init__(f'{self.code}: refresh evidence and pending results; changes={json.dumps(differences, ensure_ascii=False)}')
 
 
 class ResearchControlError(ConflictError):

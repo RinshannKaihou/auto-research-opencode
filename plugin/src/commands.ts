@@ -55,6 +55,12 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
     case "context-policy":
       if (tail && tail !== "legacy" && tail !== "r1") return { kind: "error", message: "用法：/research context-policy legacy|r1" }
       return { kind: "rpc", action, args: { policy: tail || null } }
+    case "exploration":
+      if (tail && tail !== "on" && tail !== "off") return { kind: "error", message: "用法：/research exploration [on|off]" }
+      return { kind: "rpc", action, args: { mode: tail || null } }
+    case "conclusion-contract":
+      if (tail && tail !== "evidence-v1") return { kind: "error", message: "用法：/research conclusion-contract [evidence-v1]" }
+      return { kind: "rpc", action, args: { contract: tail || null } }
     case 'budget': {
       if (!tail) return {kind:'rpc',action,args:{}}
       const match = /^(turns|nodes|seconds|tokens|cost)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)

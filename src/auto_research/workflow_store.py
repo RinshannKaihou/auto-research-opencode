@@ -290,7 +290,7 @@ class WorkflowStore:
             "session": next((s for s in sessions if s["session_id"] == session_id), None),
         }
 
-    def workflow(self, host_id, session_id, action, fields, operation_id):
+    def workflow(self, host_id, session_id, action, fields, operation_id, *, _db=None):
         payload = {"host_id": host_id, "session_id": session_id, "action": action, "fields": fields}
 
         def work(db):
@@ -377,6 +377,8 @@ class WorkflowStore:
                 )
                 db.execute("UPDATE project SET control=?", (control,))
                 if state == "stopping":
+                    affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
+                        "WHERE state IN ('queued','starting','running','waiting','stopping')"))
                     db.execute(
                         "UPDATE exploration_tasks SET state='cancelled',updated_at=? WHERE state='queued'",
                         (at,),
@@ -387,6 +389,10 @@ class WorkflowStore:
                     )
                     db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0,error='stop: execution exit not verified',updated_at=? WHERE state IN ('starting','running')", (at,))
                     db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (at,))
+                    for task in affected_tasks:
+                        outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
+                        self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
+                            outcome, None, {'task_id': task['task_id'], 'reason': 'user_stop'})
             elif action == "session":
                 if not current:
                     raise NotFoundError("Session role is missing")
@@ -548,6 +554,10 @@ class WorkflowStore:
                         fields["task_id"],
                     ),
                 )
+                if fields["state"] in {"failed", "cancelled", "unverified"} and fields["state"] != task["state"]:
+                    self.exploration_record_result(db, task["node_id"],
+                        f"task:{task['task_id']}:{fields['state']}", fields["state"], None,
+                        {"task_id": task["task_id"], "error": fields.get("error")})
             elif action == "task_retry":
                 task = db.execute(
                     "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
@@ -627,7 +637,7 @@ class WorkflowStore:
                     (fields["state"], fields["notification_id"]),
                 )
             elif action == "intent":
-                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization"}:
+                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization", "exploration_work"}:
                     raise ValidationError("Typed runtime intents require their dedicated operation")
                 db.execute(
                     "INSERT INTO workflow_intents VALUES(?,?,?,?,?,?) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
@@ -657,6 +667,8 @@ class WorkflowStore:
             self._event(db, "workflow." + action, {"session_id": session_id, **fields})
             return self.workflow_control(db, session_id)
 
+        if _db is not None:
+            return work(_db)
         return self._mutate("workflow", payload, operation_id, work)
 
     def takeover_main(self, host_id, session_id, cwd, operation_id):

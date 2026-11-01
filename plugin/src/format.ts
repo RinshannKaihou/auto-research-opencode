@@ -63,7 +63,9 @@ export function conclusionLines(conclusion: any, state?: string): string[] {
   return [
     `结项结果：${OUTCOMES[conclusion.outcome] ?? conclusion.outcome}`,
     `最终报告：${conclusion.final_ref}`,
-    `审阅声明：${REVIEWS[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
+    conclusion.evidence
+      ? `证据：${conclusion.evidence.evidence_closure.status} · 审阅覆盖：${conclusion.evidence.review_coverage.status} · 停止：${conclusion.evidence.exploration_stop.reason}`
+      : `审阅声明：${REVIEWS[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
     ...(counted.length ? [`${counted.join(" · ")}，逐条见 /research board 概览`] : []),
   ]
 }
@@ -139,6 +141,8 @@ export const USAGE = [
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
   "/research guidance [路径 [--version v]]  查看或登记科研指导文档",
   "/research context-policy [legacy|r1]  查看或切换上下文读取策略",
+  "/research exploration [on|off]  查看或切换探索模式",
+  "/research conclusion-contract [evidence-v1]  查看或采用证据结项契约",
   "/research takeover            接管目录里已有的项目（单向，需确认）",
   "/research detach              把本会话移出项目，保留对话和材料",
 ].join("\n")

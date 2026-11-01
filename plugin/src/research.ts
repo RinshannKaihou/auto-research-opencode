@@ -8,7 +8,9 @@ import { existsSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import type { StorageClient } from "./storage"
 import { CheckpointDelivery } from './checkpoint-delivery'
+import { EvidenceDelivery } from './evidence-delivery'
 import { associatedStatus, unassociatedStatus } from "./format"
+import packageInfo from '../package.json'
 
 export const HOST_ID = "opencode"
 const MEMORY_TIMEOUT_MS = 2000
@@ -72,6 +74,7 @@ interface Membership {
 
 export class Research {
   readonly checkpoints = new CheckpointDelivery()
+  readonly evidenceDelivery = new EvidenceDelivery()
   private members = new Map<string, Membership>()
   private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
@@ -152,7 +155,9 @@ export class Research {
 
   ensureContract(): Promise<void> {
     this.contract ??= this.storage.request('capabilities').then(value => {
-      if (value.memory_write_contract!=='r2-v1' || value.runtime_control_contract !== 'controller-launch-v1') throw Object.assign(
+      if (value.memory_write_contract!=='r2-v1' || value.runtime_control_contract !== 'controller-launch-v1' ||
+          value.exploration_contract !== 'exploration-v1' || value.evidence_contract !== 'evidence-v1' ||
+          value.evidence_read !== 'snapshot-delivery-v1') throw Object.assign(
         new Error('Research backend contract mismatch: install the matching plugin and bundled Python package.'),
         {code:'research_contract_mismatch'})
     }).catch(error=>{this.contract=null;throw error})
@@ -225,6 +230,7 @@ export class Research {
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)
     this.checkpoints.forget(sessionID)
+    this.evidenceDelivery.forget(sessionID)
     this.receipts.delete(sessionID)
     this.forgotten(sessionID)
   }
@@ -356,6 +362,28 @@ export class Research {
     return { message: `当前上下文策略：${labels[state.policy_version]}\n最近一次记录：${recorded}\n后续模型请求生效；不会重算旧回答或重开已结束的项目。`, state: { ...state, observations: { ...this.memoryObservations } } }
   }
 
+  async explorationPolicy(sessionID: string, mode?: string | null): Promise<CommandResult> {
+    await this.ready()
+    const root = this.requireAssociated(sessionID)
+    this.requireScope(root)
+    const state = await this.call<any>("exploration_policy", sessionID, { mode: mode ?? null })
+    if (mode) {
+      this.memoryGeneration++
+      for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
+      this.changed(root)
+    }
+    return { message: `探索策略：${state.exploration_policy}\n上下文策略：${state.context_policy}\n结项契约：${state.conclusion_contract}（研究代 ${state.generation}）`, state }
+  }
+
+  async conclusionContract(sessionID: string, contract?: string | null): Promise<CommandResult> {
+    await this.ready()
+    const root = this.requireAssociated(sessionID)
+    this.requireScope(root)
+    const state = await this.call<any>('conclusion_contract',sessionID,{contract:contract ?? null})
+    if (contract) this.changed(root)
+    return {message:`研究代 ${state.generation} 的结项契约：${state.conclusion_contract}`,state}
+  }
+
   async guidance(sessionID: string, directory: string, path?: string, version?: string): Promise<CommandResult> {
     await this.ready()
     this.requireAssociated(sessionID)
@@ -400,6 +428,7 @@ export class Research {
       value = { ...value, ...receipt }
     }
     if (value && typeof value === 'object') this.checkpoints.result(call.sessionID,call.callID,call.name,value)
+    if (value && typeof value === 'object') this.evidenceDelivery.result(call.sessionID,call.callID,call.name,value)
     if (writes) this.changed(root)
     return value
   }
@@ -477,6 +506,8 @@ export class Research {
           policy_version: view.policy_version,
           dependencies: view.dependencies ?? [],
           selection: { source_digest: view.source_digest, context_mode: view.context_mode, omitted: view.omitted ?? [],
+            exploration_policy: view.exploration_policy, conclusion_contract: view.conclusion_contract,
+            exploration_context: view.exploration_context, plugin_version:packageInfo.version,
             selected: view.selection, coverage: view.coverage, block_chars: view.block_chars, truncation: view.truncation },
         },
       }).then(() => { this.memoryObservations.recorded++ }, () => { this.memoryObservations.recordFailed++ })
@@ -501,6 +532,7 @@ export class Research {
   }
 
   async delivered(sessionID:string,text:string,messages:any[],timeoutMs=MEMORY_TIMEOUT_MS): Promise<void> {
+    const deadline=performance.now()+Math.max(0,timeoutMs)
     this.checkpoints.clear(sessionID)
     const cached = this.memoryCache.get(sessionID)
     const matches = cached && (text===cached.text || text===`${cached.text}\n\n[Research memory is stale: storage did not answer in time.]`)
@@ -525,5 +557,13 @@ export class Research {
       } finally {clearTimeout(timer)}
     }
     this.checkpoints.request(sessionID,messages,matches ? cached.checkpoint_owner : undefined,context)
+    await this.evidenceDelivery.request(sessionID,messages,async pages => {
+      const batches = Array.from({length:Math.ceil(pages.length/100)},(_,i)=>pages.slice(i*100,(i+1)*100))
+      const observed = await Promise.all(batches.map(batch => {
+        const operation=createHash('sha256').update(JSON.stringify([this.instanceID,sessionID,batch])).digest('hex')
+        return this.call<{receipt_ids:string[]}>('evidence_observed',sessionID,{pages:batch},`evidence-observed:${operation}`)
+      }))
+      return {receipt_ids:observed.flatMap(item=>item.receipt_ids)}
+    },Math.max(0,deadline-performance.now()))
   }
 }

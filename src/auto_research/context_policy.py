@@ -27,6 +27,20 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
         run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
         if declared is not None and run and declared['generation']==run[0]:
             decision_refs = declared['refs']
+    run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+    if (node_id is None and run and db.execute('PRAGMA user_version').fetchone()[0] >= 13
+            and store._project(db)['config'].get('exploration_policy') == 'exploration-v1'):
+        from .exploration_store import _current_scope
+        current_scope = _current_scope(db, run['generation'])
+        if current_scope:
+            route_refs = []
+            for row in db.execute("SELECT r.data FROM exploration_routes r JOIN "
+                "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
+                "ON r.route_id=x.route_id AND r.revision=x.revision", (current_scope['scope_id'],)):
+                route = json.loads(row['data'])
+                if route.get('disposition') in {'investigating', 'adopted'}:
+                    route_refs.extend(route.get('evidence_refs', []))
+            decision_refs = list(dict.fromkeys([*(decision_refs or []), *route_refs]))
     if decision_refs is not None and (not isinstance(decision_refs, list) or
             any(not isinstance(ref, str) or not ref.strip() for ref in decision_refs)):
         raise ValidationError("decision_refs must be a list of nonempty references")
@@ -316,6 +330,28 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         ('node_id', node_id), ('decision_refs', decision_refs), ('final_ref', final_ref)
     ) if value is not None}
     views = {'identity': block_map['identity']}
+    exploration_details = None
+    if (block_map['identity']['role'] == 'main' and db.execute('PRAGMA user_version').fetchone()[0] >= 13
+            and store._project(db)['config'].get('exploration_policy') == 'exploration-v1'):
+        from .exploration_store import _current_scope, _decode
+        run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+        selected_scope = _current_scope(db, run['generation']) if run else None
+        routes, results = [], []
+        if selected_scope:
+            for row in db.execute("SELECT r.* FROM exploration_routes r JOIN "
+                "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
+                "ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (selected_scope['scope_id'],)):
+                route = _decode(row, 'route')
+                routes.append({'ref': route['ref'], 'title': route['title'][:100], 'disposition': route['disposition']})
+            results = [r[0] for r in db.execute("SELECT result_id FROM exploration_results WHERE scope_id=? "
+                "AND handled_by_decision IS NULL ORDER BY rowid", (selected_scope['scope_id'],))]
+        views['exploration'] = {'scope_ref': selected_scope['ref'] if selected_scope else None,
+            'routes_total': len(routes), 'pending_results_total': len(results),
+            'routes': {'collection': 'exploration_routes'}, 'results': {'collection': 'exploration_results'}}
+        exploration_details = {'objective': selected_scope['objective'][:200] if selected_scope else None,
+            'route_sample': routes[:3], 'pending_result_ids': results[:3],
+            'instruction': ('Process new results and explicitly decide whether to probe, deepen, redirect, defer or stop.'
+                            if selected_scope else 'For a choice or discovery with a key unknown, create a scope and save possible routes; direct delivery need not invent alternatives.')}
     for name in ('critical_now', 'findings'):
         views[name] = {'total': len(model[name]), 'items': [], 'index_complete': False,
                        'details_complete': False, 'expand_required': True,
@@ -368,6 +404,10 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         del views['identity']
     if len(body()) > max_chars:
         raise ValidationError(f'Context budget too small for decision scope; requires at least {len(body())} characters')
+    if exploration_details is not None:
+        views['exploration']['details'] = exploration_details
+        if len(body()) > max_chars:
+            del views['exploration']['details']
     # Role/control and current task are preserved before filling optional prose.
     for key in ('role_instructions', 'control_instructions', 'attempt', 'task', 'project'):
         if block_map[key] is not None:
@@ -466,6 +506,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         'shown': views['findings']['completed_nodes']['shown'] if 'shown' in views['findings']['completed_nodes'] else 0,
         'source_complete': True, 'expand': {'collection': 'completed_findings'}}
     return {'text': text, 'policy_version': 'memory-r1-v1', 'context_mode': block_map['specialist_task']['context_mode'] if block_map['specialist_task'] else None,
+            **({'exploration_context': 'exploration-context-v1'} if exploration_details is not None else {}),
             'source_digest': hashlib.sha256(text.encode()).hexdigest(),
             'source_sequence': model['source_sequence'], 'dependencies': sorted(dependencies),
             'selection': {value['ref']: {'reasons': value['selection_reasons'], 'scope_origins': value['scope_origins']} for value in shown},
