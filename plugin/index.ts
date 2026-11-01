@@ -333,12 +333,14 @@ export default Plugin.define({
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
         status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
       if (request.status === 'completed' && research.roleOf(request.sessionID) === 'node_core' &&
-          ['bash','shell','python','terminal'].includes(request.tool)) {
-        await within(research.call('runtime_tool_observed', request.sessionID,
+          ['bash','shell','python','terminal'].includes(request.tool) && research.conclusionContractOf(request.sessionID)==='evidence-v1') {
+        const observed = await within(research.call('runtime_tool_observed', request.sessionID,
           {tool:request.tool,call_id:request.id}, `tool-observed:${request.sessionID}:${request.id}`).catch(error => {
             observations.append(root,{phase:'coverage_gap',source:'execution_observation',session_id:request.sessionID,
               error_code:error.code ?? 'storage_unavailable'})
           }), 2000)
+        if (!observed) observations.append(root,{phase:'coverage_gap',source:'execution_observation',session_id:request.sessionID,
+          error_code:'not_confirmed'})
       }
     })
     const count = (value: unknown, fallback: number) => Math.max(1, Math.floor(Number(value ?? fallback)) || fallback)

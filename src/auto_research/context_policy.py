@@ -347,6 +347,7 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
                 "AND handled_by_decision IS NULL ORDER BY rowid", (selected_scope['scope_id'],))]
         views['exploration'] = {'scope_ref': selected_scope['ref'] if selected_scope else None,
             'routes_total': len(routes), 'pending_results_total': len(results),
+            'details_omitted': True,
             'routes': {'collection': 'exploration_routes'}, 'results': {'collection': 'exploration_results'}}
         exploration_details = {'objective': selected_scope['objective'][:200] if selected_scope else None,
             'route_sample': routes[:3], 'pending_result_ids': results[:3],
@@ -406,8 +407,10 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         raise ValidationError(f'Context budget too small for decision scope; requires at least {len(body())} characters')
     if exploration_details is not None:
         views['exploration']['details'] = exploration_details
+        views['exploration']['details_omitted'] = False
         if len(body()) > max_chars:
             del views['exploration']['details']
+            views['exploration']['details_omitted'] = True
     # Role/control and current task are preserved before filling optional prose.
     for key in ('role_instructions', 'control_instructions', 'attempt', 'task', 'project'):
         if block_map[key] is not None:

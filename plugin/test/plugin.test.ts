@@ -2380,3 +2380,26 @@ test('material pages are confirmed when the coordinator actually responds', asyn
   const view=JSON.parse(JSON.parse(response.content).chunk)
   expect(view.materials.find((item:any)=>item.ref===ref).material_read.complete).toBe(true)
 })
+
+test('node execution observation waits only after evidence conclusion is adopted', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'Compare execution observation'})
+  host.turn.start('ses_main')
+  const node=await host.call('research_propose','ses_main',{question:'Measure',why_now:'now',plan:'measure',root_reason:'first'})
+  await host.call('research_dispatch','ses_main',{node_id:node.node_id})
+  const child=host.created[0]!
+  host.turn.start(child)
+  const original=StorageClient.prototype.request
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(function(method,fields,operation) {
+    return original.call(this,method,fields,operation)
+  })
+  try {
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'legacy-shell'})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'legacy-shell',status:'completed'})
+    expect(spy.mock.calls.filter(([method])=>method==='runtime_tool_observed')).toHaveLength(0)
+    await host.command('conclusion-contract','ses_main',{contract:'evidence-v1'})
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'evidence-shell'})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'evidence-shell',status:'completed'})
+    expect(spy.mock.calls.filter(([method])=>method==='runtime_tool_observed')).toHaveLength(1)
+  } finally { spy.mockRestore() }
+})

@@ -54,12 +54,14 @@ def migrate_schema15(path: Path):
                 if (saved.execute('PRAGMA user_version').fetchone()[0] != 14
                         or saved.execute('PRAGMA integrity_check').fetchone()[0] != 'ok'):
                     raise ValidationError('Invalid schema 14 backup')
-                for table in ('requests', 'events', 'workflow_notifications', 'conclusion_drafts'):
+                existing = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                for table in {'requests', 'events', 'workflow_notifications', 'conclusion_drafts'} & existing:
                     if saved.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] != db.execute(
                             f'SELECT COUNT(*) FROM {table}').fetchone()[0]:
                         raise ValidationError(f'Schema 14 backup row count differs: {table}')
             before = list(db.execute('SELECT * FROM workflow_notifications ORDER BY notification_id'))
-            project = db.execute('SELECT p.generation,c.config FROM workflow_project p CROSS JOIN project c WHERE p.id=1').fetchone()
+            project = (db.execute('SELECT p.generation,c.config FROM workflow_project p CROSS JOIN project c WHERE p.id=1').fetchone()
+                       if {'workflow_project', 'project'} <= existing else None)
             ensure_schema15(db)
             after = list(db.execute('SELECT * FROM workflow_notifications ORDER BY notification_id'))
             if before != after:

@@ -327,6 +327,8 @@ class ExplorationStore:
             reason = _text(fields.get("reason"), "reason")
             next_work = fields.get("next_work")
             if next_work is not None:
+                if any(item['reason'] == 'evidence_traversal_limit' for item in snapshot['view']['limitations']):
+                    raise ConflictError('Evidence traversal was truncated; narrow the scope before scheduling exploration')
                 if not isinstance(next_work, dict):
                     raise ValidationError("next_work must be an object")
                 for key in ("question", "why_now", "plan"):

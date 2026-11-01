@@ -4,26 +4,41 @@ import { createHash } from 'node:crypto'
 export type EvidencePage = { snapshot_id:string; draft_id?:string; part?:string; material_ref?:string;
   model_message_id?:string; offset:number; end:number; manifest_digest:string; chunk_digest:string }
 export type EvidenceAck = { receipt_ids:string[]; rejected?:{reason:string}[] }
+type EvidenceContext = { epoch:number; pages:EvidencePage[]; receipts:string[]; message?:string }
 
 export class EvidenceDelivery {
   private active = new Map<string,string>()
-  private delivered = new Map<string,string[]>()
   private messages = new Map<string,string[]>()
   private calls = new Map<string,string[]>()
   private outputs = new Map<string,{session:string;name:string;text:string;json:string;page:EvidencePage}>()
   private epoch = new Map<string,number>()
-  private pendingMaterials = new Map<string,EvidencePage[]>()
+  private contexts = new Map<string,EvidenceContext>()
+  private messageContexts = new Map<string,number>()
   private materialMessages = new Map<string,EvidencePage[]>()
   private materialInFlight = new Map<string,Promise<void>>()
+  private materialFailure = new Map<string,string>()
+
+  private bind(session:string,message:string,context:EvidenceContext): void {
+    const key=`${session}:${message}`
+    context.message=message
+    this.messageContexts.set(key,context.epoch)
+    this.materialMessages.set(key,context.pages)
+    this.messages.set(key,context.receipts)
+  }
 
   stepStarted(session:string, message:string): void {
     this.active.set(session,message)
-    this.messages.set(`${session}:${message}`,this.delivered.get(session) ?? [])
-    this.materialMessages.set(`${session}:${message}`,this.pendingMaterials.get(session) ?? [])
+    const context=this.contexts.get(session)
+    if (context && !context.message) this.bind(session,message,context)
   }
 
   stepFinished(session:string,message:string): void {
     if (this.active.get(session)===message) this.active.delete(session)
+  }
+
+  stepFailed(session:string,message:string): void {
+    this.stepFinished(session,message)
+    this.materialMessages.delete(`${session}:${message}`)
   }
 
   async confirmMaterials(session:string,message:string, acknowledge:(pages:EvidencePage[])=>Promise<EvidenceAck>): Promise<void> {
@@ -36,15 +51,19 @@ export class EvidenceDelivery {
       const result=await acknowledge(pages)
       if (result.rejected?.length) throw new Error(`Evidence material delivery was not confirmed: ${result.rejected.map(item=>item.reason).join(', ')}`)
       this.materialMessages.delete(key)
+      this.materialFailure.delete(session)
     })()
     this.materialInFlight.set(key,pending)
-    try { await pending } finally { if(this.materialInFlight.get(key)===pending)this.materialInFlight.delete(key) }
+    try { await pending } catch (error) {
+      this.materialFailure.set(session,'material_delivery_unconfirmed')
+      throw error
+    } finally { if(this.materialInFlight.get(key)===pending)this.materialInFlight.delete(key) }
   }
 
   forget(session:string): void {
     this.epoch.set(session,(this.epoch.get(session) ?? 0)+1)
-    this.active.delete(session); this.delivered.delete(session)
-    this.pendingMaterials.delete(session)
+    this.active.delete(session); this.contexts.delete(session); this.materialFailure.delete(session)
+    for (const key of this.messageContexts.keys()) if (key.startsWith(session+':')) this.messageContexts.delete(key)
     for (const key of this.messages.keys()) if (key.startsWith(session+':')) this.messages.delete(key)
     for (const key of this.calls.keys()) if (key.startsWith(session+':')) this.calls.delete(key)
     for (const key of this.materialMessages.keys()) if (key.startsWith(session+':')) this.materialMessages.delete(key)
@@ -65,7 +84,6 @@ export class EvidenceDelivery {
   async request(session:string, messages:any[], acknowledge:(pages:EvidencePage[],onBatch:(result:EvidenceAck)=>void)=>Promise<EvidenceAck | void>, timeoutMs:number): Promise<string[]> {
     const epoch=(this.epoch.get(session) ?? 0)+1
     this.epoch.set(session,epoch)
-    this.delivered.delete(session)
     const pages:EvidencePage[]=[]
     const visible=new Set<string>()
     for (const message of messages) for (const part of message.content ?? []) {
@@ -83,11 +101,14 @@ export class EvidenceDelivery {
     for (const [key,value] of this.outputs) if (value.session===session && !visible.has(key)) this.outputs.delete(key)
     const materialPages=pages.filter(page=>page.part==='material')
     const decisionPages=pages.filter(page=>page.part!=='material')
-    this.pendingMaterials.set(session,materialPages)
+    const context:EvidenceContext={epoch,pages:materialPages,receipts:[]}
+    this.contexts.set(session,context)
     const current=this.active.get(session)
-    if (current) this.materialMessages.set(`${session}:${current}`,materialPages)
+    if (current && !this.messageContexts.has(`${session}:${current}`)) this.bind(session,current,context)
     const receipts=new Set<string>()
     const issues=new Set<string>()
+    const failure=this.materialFailure.get(session)
+    if (failure) issues.add(failure)
     let accepting=true
     const collect=(result:EvidenceAck) => {
       if (!accepting || this.epoch.get(session)!==epoch) return
@@ -108,9 +129,8 @@ export class EvidenceDelivery {
     accepting=false
     if (this.epoch.get(session)!==epoch) return []
     const accepted=[...receipts]
-    this.delivered.set(session,accepted)
-    const active=this.active.get(session)
-    if (active) this.messages.set(`${session}:${active}`,accepted)
+    context.receipts=accepted
+    if (context.message) this.messages.set(`${session}:${context.message}`,accepted)
     return [...issues]
   }
 

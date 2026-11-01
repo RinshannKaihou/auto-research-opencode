@@ -304,16 +304,29 @@ def read_row(db, row):
     return value
 
 
-def unresolved_challenges(db):
-    return list(db.execute('''SELECT o.target_ref,o.obligation_id,o.generation,e.event_id,e.evidence_refs
+def unresolved_challenges(db, *, relevant_refs=None, limit=None):
+    query = '''SELECT o.target_ref,o.obligation_id,o.generation,e.event_id,e.evidence_refs
         FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id)
         WHERE e.action IN ('completed','report_partial')
         AND json_extract(e.scope_snapshot,'$.result')='challenges'
         AND COALESCE((SELECT json_extract(d.scope_snapshot,'$.kind')
             FROM review_lifecycle_events d WHERE d.action='challenge_disposed'
             AND json_extract(d.scope_snapshot,'$.review_event')=e.event_id
-            ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved'
-        ORDER BY (o.generation=(SELECT generation FROM workflow_project WHERE id=1)) DESC,e.event_id DESC'''))
+            ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved' '''
+    params = []
+    if relevant_refs is not None:
+        knowledge = sorted({ref.split('@', 1)[0] for ref in relevant_refs if ref.startswith('knowledge/') and '@' in ref})
+        publications = sorted({'pub/' + parsed['publication_id'] for ref in relevant_refs if frozen_refs.is_frozen(ref)
+                               for parsed in [frozen_refs.parse(ref)] if parsed.get('publication_id')})
+        query += '''AND (o.target_ref IN (SELECT value FROM json_each(?))
+            OR (o.target_ref LIKE 'knowledge/%' AND substr(o.target_ref,1,instr(o.target_ref,'@')-1) IN (SELECT value FROM json_each(?)))
+            OR (o.target_ref LIKE 'pub/%' AND substr(o.target_ref,1,instr(o.target_ref||'#','#')-1) IN (SELECT value FROM json_each(?)))) '''
+        params.extend((encoded(sorted(relevant_refs)), encoded(knowledge), encoded(publications)))
+    query += 'ORDER BY (o.generation=(SELECT generation FROM workflow_project WHERE id=1)) DESC,e.event_id DESC'
+    if limit is not None:
+        query += ' LIMIT ?'
+        params.append(limit)
+    return list(db.execute(query, params))
 
 
 def summary(db, node_id=None):

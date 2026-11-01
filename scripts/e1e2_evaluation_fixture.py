@@ -41,8 +41,15 @@ def seed_evidence(root, task_id):
     if task_id == 'E2-03-qualified':
         return {'core_claim_ref':claim['ref'], 'source_ref':source_ref, 'additional_ref':'knowledge/K-404@1'}
     call('review_scope_set', refs=refs, reason='Current synthesis')
-    view = call('query', collection='evidence', refs=refs,
-                **({'include_materials':[source_ref]} if task_id == 'E2-02-self-reference' else {}))
+    if task_id == 'E2-02-self-reference':
+        # A synthetic prior session is part of this fixture, not an evaluation run.
+        material = call('query', collection='evidence', material_ref=source_ref)
+        call('evidence_observed', plugin_instance_id='fixture-prior-session', pages=[{
+            'part':'material', 'material_ref':source_ref, 'snapshot_id':material['snapshot_id'],
+            'offset':material['offset'], 'end':material['end'], 'manifest_digest':material['manifest_digest'],
+            'chunk_digest':hashlib.sha256(material['chunk'].encode()).hexdigest(),
+            'model_message_id':'fixture-synthetic-prior-step'}])
+    view = call('query', collection='evidence', refs=refs)
     draft = call('conclusion_prepare', model_call=True, fields={'snapshot_id':view['snapshot_id'],
         'core_claim_refs':refs, 'outcome':'answered', 'gaps':[], 'risk_judgments':[], 'review_requirements':[],
         'exploration_stop':{'reason_kind':'goal_met','reason':'The stated target was measured'}})
@@ -54,8 +61,8 @@ def seed_evidence(root, task_id):
     page = call('query', collection='evidence', draft_id=draft['draft_id'], limit=500)
     pages = []
     while True:
-        end = page['cursor']['offset'] if page['cursor'] else page['total_chars']
-        pages.append({'snapshot_id':page['snapshot_id'], 'offset':page['offset'], 'end':end,
+        end = page['end']
+        pages.append({'snapshot_id':page['snapshot_id'], 'draft_id':draft['draft_id'], 'part':page['part'], 'offset':page['offset'], 'end':end,
             'manifest_digest':page['manifest_digest'], 'chunk_digest':hashlib.sha256(page['chunk'].encode()).hexdigest()})
         if not page['cursor']:
             break

@@ -162,6 +162,8 @@ def evaluate(store, db, view, fields):
     outcome = fields.get('outcome')
     if outcome not in {'answered', 'partial', 'unresolved'}:
         raise ValidationError('outcome must be answered, partial or unresolved')
+    if outcome == 'answered' and any(item['reason'] == 'evidence_traversal_limit' for item in view['limitations']):
+        raise ConflictError('Evidence traversal was truncated; choose partial/unresolved or narrow the scope')
     gaps = fields.get('gaps', [])
     if not isinstance(gaps, list) or any(not isinstance(gap, str) or not gap.strip() for gap in gaps):
         raise ValidationError('gaps must be a list of text')
@@ -349,6 +351,8 @@ class EvidenceConclusionStore:
                 raise ConflictError('Explicitly adopt evidence-v1 before preparing a conclusion')
             if not snapshot or snapshot['generation'] != run['generation']:
                 raise ConflictError('evidence_snapshot_expired: read the evidence again')
+            if snapshot.get('host_id') != host or snapshot.get('session_id') != session:
+                raise ConflictError('evidence_snapshot_session_changed: read the evidence again in the current main session')
             current = build_evidence_view(self, db, snapshot['view']['roots'])
             if current['basis_digest'] != snapshot['basis_digest']:
                 raise EvidenceBasisChanged('conclusion', basis_changes(snapshot['view'], current['view']))

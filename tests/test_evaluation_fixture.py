@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.review_lifecycle import unresolved_challenges
 
 
@@ -22,7 +22,7 @@ def test_e2_evaluation_projects_reproduce_the_requested_ledger_state(tmp_path, t
     assert (root / 'TASK.md').is_file()
     assert not list(root.rglob('scoring.md'))
     with NativeStore(root, readonly=True)._read() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 14
+        assert db.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
         if task_id == 'E2-01-stale':
             assert unresolved_challenges(db)
             assert db.execute("SELECT status FROM knowledge_revisions ORDER BY rowid DESC LIMIT 1").fetchone()[0] == 'retracted'

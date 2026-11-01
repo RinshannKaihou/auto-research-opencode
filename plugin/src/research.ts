@@ -78,6 +78,7 @@ export class Research {
   private members = new Map<string, Membership>()
   private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
+  private conclusionContracts = new Map<string,string>()
   private executionFor: (sessionID: string) => string | undefined = () => undefined
   private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
   private memoryGeneration = 0
@@ -212,6 +213,11 @@ export class Research {
     return this.members.get(sessionID)?.node
   }
 
+  conclusionContractOf(sessionID:string): string | undefined {
+    const root=this.rootOf(sessionID)
+    return root ? this.conclusionContracts.get(root) : undefined
+  }
+
   roots(): string[] {
     return [...new Set([...this.members.values()].map((member) => member.root))]
   }
@@ -256,7 +262,16 @@ export class Research {
       { host_id: HOST_ID, session_id: sessionID, ...(execution ? { execution_token: execution } : {}), ...fields,
         ...(owner ? { control_owner: owner } : {}), plugin_instance_id: this.instanceID },
       (operationId ?? `${sessionID}:${method}:${randomUUID()}`).slice(0, 256),
-    )
+    ).then(value => {
+      if (root) {
+        const result=value as any
+        const contract=method==='status' ? result?.project?.config?.conclusion_contract
+          : ['memory_context','exploration_policy','conclusion_contract'].includes(method) ? result?.conclusion_contract : undefined
+        if (typeof contract==='string') this.conclusionContracts.set(root,contract)
+        if (method==='workflow' && fields.action==='run' && (fields.fields as any)?.new_generation) this.conclusionContracts.delete(root)
+      }
+      return value
+    })
   }
 
   requireAssociated(sessionID: string): string {

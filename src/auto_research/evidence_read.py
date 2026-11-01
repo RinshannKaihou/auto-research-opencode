@@ -8,10 +8,14 @@ from uuid import uuid4
 from . import epistemic, frozen_refs
 from .errors import ConflictError, ValidationError
 from .exploration_store import _current_scope, _decode
-from .memory_store import parse_knowledge_ref
+from .memory_store import parse_knowledge_ref, is_knowledge_ref
 from .review_lifecycle import unresolved_challenges
 from .workflow_store import encoded
 from .material_read import MaterialReader, canonical_content, material_coverage
+
+MAX_EVIDENCE_REFS = 2048
+MAX_EVIDENCE_EDGES = 8192
+MAX_EVIDENCE_REVIEWS = 4096
 
 
 def _hash(value):
@@ -28,7 +32,8 @@ def basis_changes(before, after):
     # Content selected for delivery is an augmentation of the structural view,
     # not a change to the frozen reference itself.
     def materials(view):
-        return {item['ref']: {key: value for key, value in item.items() if key != 'content_text'}
+        return {item['ref']: {key: value for key, value in item.items() if key not in
+                              {'content_text', 'material_identity', 'material_read', 'read_error'}}
                 for item in view['materials']}
     old_materials, new_materials = materials(before), materials(after)
     def structural_limits(view):
@@ -71,9 +76,36 @@ def build_evidence_view(store, db, refs):
             "SELECT * FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL ORDER BY result_id", (scope["scope_id"],))]
 
     records, edges, materials, limitations, publication_checks = {}, [], {}, [], {}
-    queue, visited = list(refs), set()
+    queue, visited, queued = [], set(), set()
+    limited = set()
+
+    def mark_limit(kind, limit):
+        if kind not in limited:
+            limited.add(kind)
+            limitations.append({'ref':'evidence', 'reason':'evidence_traversal_limit',
+                                'detail':{'kind':kind, 'limit':limit}, 'expand':{'collection':'evidence'}})
+
+    def enqueue(ref):
+        if ref in visited or ref in queued:
+            return
+        if len(visited) + len(queued) >= MAX_EVIDENCE_REFS:
+            mark_limit('references', MAX_EVIDENCE_REFS)
+            return
+        queue.append(ref)
+        queued.add(ref)
+
+    def add_edge(edge):
+        if len(edges) >= MAX_EVIDENCE_EDGES:
+            mark_limit('edges', MAX_EVIDENCE_EDGES)
+            return
+        edges.append(edge)
+        enqueue(edge['used_ref'])
+
+    for ref in refs:
+        enqueue(ref)
     while queue:
         ref = queue.pop()
+        queued.remove(ref)
         if ref in visited:
             continue
         visited.add(ref)
@@ -92,17 +124,30 @@ def build_evidence_view(store, db, refs):
             pinned = store._decode_knowledge(row, db)
             current = store._decode_knowledge(store._latest_revision(db, kid), db)
             records[ref] = {"ref": ref, "pinned": pinned, "current": current}
+            remaining = MAX_EVIDENCE_EDGES - len(edges)
             for edge in db.execute("SELECT user_ref,used_ref,from_dependencies,from_evidence FROM knowledge_support_edges "
-                                   "WHERE user_ref=? ORDER BY used_ref", (ref,)):
-                edges.append(dict(edge))
-                queue.append(edge["used_ref"])
-            for unresolved in epistemic.uncovered_refs(db, ref):
+                                   "WHERE user_ref=? ORDER BY used_ref LIMIT ?", (ref, remaining + 1)):
+                add_edge(dict(edge))
+            remaining = MAX_EVIDENCE_EDGES - len(edges)
+            raw_refs = db.execute("SELECT 'dependencies' field,j.value ref FROM knowledge_revisions r,json_each(r.dependencies) j "
+                                  "WHERE r.knowledge_id=? AND r.revision=? AND NOT EXISTS "
+                                  "(SELECT 1 FROM knowledge_support_edges e WHERE e.user_ref=? AND e.used_ref=j.value) UNION ALL "
+                                  "SELECT 'evidence_refs' field,j.value ref FROM knowledge_revisions r,json_each(r.evidence_refs) j "
+                                  "WHERE r.knowledge_id=? AND r.revision=? AND NOT EXISTS "
+                                  "(SELECT 1 FROM knowledge_support_edges e WHERE e.user_ref=? AND e.used_ref=j.value) LIMIT ?",
+                                  (kid, rev, ref, kid, rev, ref, remaining + 1))
+            for index, row in enumerate(raw_refs):
+                if index >= remaining:
+                    mark_limit('edges', MAX_EVIDENCE_EDGES)
+                    break
+                if is_knowledge_ref(row['ref']):
+                    continue
+                unresolved = {'ref':row['ref'], 'field':row['field'], 'status':'reference type not covered'}
                 used = unresolved["ref"]
                 if frozen_refs.is_frozen(used):
                     # Material is a terminal source, not a knowledge propagation edge.
-                    edges.append({"user_ref": ref, "used_ref": used, "from_dependencies": int(unresolved["field"] == "dependencies"),
-                                  "from_evidence": int(unresolved["field"] == "evidence_refs")})
-                    queue.append(used)
+                    add_edge({"user_ref": ref, "used_ref": used, "from_dependencies": int(unresolved["field"] == "dependencies"),
+                              "from_evidence": int(unresolved["field"] == "evidence_refs")})
                 else:
                     limitations.append({"ref": ref, "reason": "uncovered_reference", "detail": unresolved})
         elif frozen_refs.is_frozen(ref):
@@ -127,16 +172,18 @@ def build_evidence_view(store, db, refs):
                         limitations.append({'ref': ref, 'reason': 'material_content_not_delivered'})
                 materials[ref]["item"] = {**dict(item), "content": content,
                                            "knowledge_refs": json.loads(item["knowledge_refs"])}
-                queue.extend(json.loads(item["knowledge_refs"]))
+                for used in json.loads(item['knowledge_refs']):
+                    enqueue(used)
             elif pid:
                 from .publication_display import DISPLAY_KIND
-                for item in db.execute('SELECT item_id FROM publication_items WHERE publication_id=? AND kind<>? ORDER BY item_id',
-                                       (pid, DISPLAY_KIND)):
+                remaining = MAX_EVIDENCE_EDGES - len(edges)
+                for item in db.execute('SELECT item_id FROM publication_items WHERE publication_id=? AND kind<>? ORDER BY item_id LIMIT ?',
+                                       (pid, DISPLAY_KIND, remaining + 1)):
                     child = f"pub/{pid}#{item['item_id']}"
-                    edges.append({'user_ref': ref, 'used_ref': child, 'from_dependencies': 0, 'from_evidence': 1})
-                    queue.append(child)
-                queue.extend(f"knowledge/{row[0]}@{row[1]}" for row in db.execute(
-                    "SELECT knowledge_id,revision FROM publication_knowledge WHERE publication_id=?", (pid,)))
+                    add_edge({'user_ref': ref, 'used_ref': child, 'from_dependencies': 0, 'from_evidence': 1})
+                remaining = MAX_EVIDENCE_REFS - len(visited) - len(queued)
+                for row in db.execute("SELECT knowledge_id,revision FROM publication_knowledge WHERE publication_id=? LIMIT ?", (pid, remaining + 1)):
+                    enqueue(f"knowledge/{row[0]}@{row[1]}")
             if pid:
                 declared = json.loads(item['knowledge_refs']) if parsed.get('item_id') else None
                 check = epistemic.publication_check(db, pid, bound, declared_refs=declared)
@@ -165,7 +212,10 @@ def build_evidence_view(store, db, refs):
             if check["result"] != "consistent":
                 risks.append({"kind": "field_check", "target": ref, "detail": check, "relevance": "related"})
     if version >= 11:
-        for challenge in unresolved_challenges(db):
+        challenges = unresolved_challenges(db, relevant_refs=visited, limit=MAX_EVIDENCE_REVIEWS + 1)
+        if len(challenges) > MAX_EVIDENCE_REVIEWS:
+            mark_limit('review_events', MAX_EVIDENCE_REVIEWS)
+        for challenge in challenges[:MAX_EVIDENCE_REVIEWS]:
             target = challenge['target_ref']
             relevance = 'related' if target in visited else None
             if relevance is None and target.startswith('knowledge/'):
@@ -187,34 +237,41 @@ def build_evidence_view(store, db, refs):
                           "relevance": relevance})
     reviews, review_history = [], []
     if version >= 11:
-        for row in db.execute("SELECT o.target_ref,o.obligation_id,e.event_id,e.action,e.evidence_refs,e.scope_snapshot "
-                              "FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id) ORDER BY e.event_id"):
-            if row['target_ref'] in visited:
-                item = dict(row)
-                item['evidence_refs'] = json.loads(item['evidence_refs'])
-                item['scope_snapshot'] = json.loads(item['scope_snapshot'])
-                review_history.append(item)
+        rows = db.execute("SELECT o.target_ref,o.obligation_id,e.event_id,e.action,e.evidence_refs,e.scope_snapshot "
+                          "FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id) "
+                          "WHERE o.target_ref IN (SELECT value FROM json_each(?)) ORDER BY e.event_id LIMIT ?",
+                          (encoded(sorted(visited)), MAX_EVIDENCE_REVIEWS + 1)).fetchall()
+        if len(rows) > MAX_EVIDENCE_REVIEWS:
+            mark_limit('review_events', MAX_EVIDENCE_REVIEWS)
+        for row in rows[:MAX_EVIDENCE_REVIEWS]:
+            item = dict(row)
+            item['evidence_refs'] = json.loads(item['evidence_refs'])
+            item['scope_snapshot'] = json.loads(item['scope_snapshot'])
+            review_history.append(item)
     if version >= 14:
-        for row in db.execute("SELECT a.*,e.action,e.scope_snapshot,o.obligation_id,o.generation,o.change_id "
-                              "FROM review_assessments a JOIN review_lifecycle_events e USING(event_id) "
-                              "JOIN review_obligations o USING(obligation_id) ORDER BY a.event_id"):
-            if row["target_ref"] in visited:
-                item = dict(row)
-                for key in ("identity", "limitations", "scope_snapshot"):
-                    item[key] = json.loads(item[key])
-                latest_reopen = db.execute("SELECT COALESCE(MAX(event_id),0) FROM review_lifecycle_events "
-                                           "WHERE obligation_id=? AND action='reopen'", (row['obligation_id'],)).fetchone()[0]
-                accepted = db.execute("SELECT e.event_id FROM review_lifecycle_events e JOIN review_obligations o USING(obligation_id) "
-                    "WHERE o.generation=? AND o.target_ref=? AND o.change_id IS ? AND e.action='accept_previous' "
-                    "AND json_extract(e.scope_snapshot,'$.report_link')=? AND e.event_id>COALESCE((SELECT MAX(r.event_id) "
-                    "FROM review_lifecycle_events r WHERE r.obligation_id=o.obligation_id AND r.action='reopen'),0) "
-                    "ORDER BY e.event_id DESC LIMIT 1", (generation, row['target_ref'], row['change_id'], row['event_id'])).fetchone()
-                item['accepted_by_event'] = accepted[0] if accepted else None
-                item['effective_in_generation'] = bool((row['generation'] == generation and row['event_id'] > latest_reopen) or accepted)
-                reviews.append(item)
-                if item['effective_in_generation'] and item['scope_snapshot'].get('result') == 'inconclusive':
-                    risks.append({'kind': 'review_inconclusive', 'target': item['target_ref'],
-                                  'review_event': item['event_id'], 'relevance': 'related'})
+        rows = db.execute("SELECT a.*,e.action,e.scope_snapshot,o.obligation_id,o.generation,o.change_id "
+                          "FROM review_assessments a JOIN review_lifecycle_events e USING(event_id) "
+                          "JOIN review_obligations o USING(obligation_id) WHERE a.target_ref IN (SELECT value FROM json_each(?)) "
+                          "ORDER BY a.event_id LIMIT ?", (encoded(sorted(visited)), MAX_EVIDENCE_REVIEWS + 1)).fetchall()
+        if len(rows) > MAX_EVIDENCE_REVIEWS:
+            mark_limit('review_events', MAX_EVIDENCE_REVIEWS)
+        for row in rows[:MAX_EVIDENCE_REVIEWS]:
+            item = dict(row)
+            for key in ("identity", "limitations", "scope_snapshot"):
+                item[key] = json.loads(item[key])
+            latest_reopen = db.execute("SELECT COALESCE(MAX(event_id),0) FROM review_lifecycle_events "
+                                       "WHERE obligation_id=? AND action='reopen'", (row['obligation_id'],)).fetchone()[0]
+            accepted = db.execute("SELECT e.event_id FROM review_lifecycle_events e JOIN review_obligations o USING(obligation_id) "
+                "WHERE o.generation=? AND o.target_ref=? AND o.change_id IS ? AND e.action='accept_previous' "
+                "AND json_extract(e.scope_snapshot,'$.report_link')=? AND e.event_id>COALESCE((SELECT MAX(r.event_id) "
+                "FROM review_lifecycle_events r WHERE r.obligation_id=o.obligation_id AND r.action='reopen'),0) "
+                "ORDER BY e.event_id DESC LIMIT 1", (generation, row['target_ref'], row['change_id'], row['event_id'])).fetchone()
+            item['accepted_by_event'] = accepted[0] if accepted else None
+            item['effective_in_generation'] = bool((row['generation'] == generation and row['event_id'] > latest_reopen) or accepted)
+            reviews.append(item)
+            if item['effective_in_generation'] and item['scope_snapshot'].get('result') == 'inconclusive':
+                risks.append({'kind': 'review_inconclusive', 'target': item['target_ref'],
+                              'review_event': item['event_id'], 'relevance': 'related'})
     risks.sort(key=encoded)
     for risk in risks:
         risk["risk_id"] = "risk-" + _hash(risk)[:24]
@@ -276,6 +333,7 @@ class EvidenceCache:
         if include_materials:
             raise ValidationError('evidence_read_contract_changed: use material_ref to read frozen material')
         self.annotate_materials(store, snapshot['view'], host, session)
+        snapshot.update(host_id=host, session_id=session)
         with store._read() as db:
             if build_evidence_view(store, db, refs)['basis_digest'] != snapshot['basis_digest']:
                 raise ConflictError('evidence_basis_changed: read the evidence again')

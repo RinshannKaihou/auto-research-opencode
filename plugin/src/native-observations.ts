@@ -49,7 +49,7 @@ export class NativeObservations {
       })
       this.research.evidenceDelivery.stepFinished(session,data.assistantMessageID)
     }
-    if (type==='session.step.failed') this.research.evidenceDelivery.stepFinished(session,data.assistantMessageID)
+    if (type==='session.step.failed') this.research.evidenceDelivery.stepFailed(session,data.assistantMessageID)
     if (!event.id) return
     if (type==='session.step.started') {
       void this.save(session,{phase:'started',source_key:`step:${session}:${data.assistantMessageID}`,model:data.model},event.id)

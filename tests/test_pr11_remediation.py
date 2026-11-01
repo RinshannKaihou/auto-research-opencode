@@ -282,3 +282,92 @@ def test_publish_replay_and_invalid_input_do_not_freeze_an_appendix(completed, m
     assert host.call('publish', **args) == first and len(frozen) == 1
     assert 'complete report item' in host.error('publish', **{**args,'status':'partial','operation_id':'bad-publish'})
     assert len(frozen) == 1
+
+
+def test_traversal_limit_is_visible_and_cannot_authorize_answered(completed, monkeypatch):
+    from auto_research import evidence_read
+    host, _, _, _, claim, _ = completed
+    host.call('conclusion_contract', contract='evidence-v1')
+    monkeypatch.setattr(evidence_read, 'MAX_EVIDENCE_REFS', 1)
+    page = host.call('query', collection='evidence', refs=[claim['ref']], limit=16384)
+    view = json.loads(page['chunk'])
+    assert not view['graph_complete']
+    assert any(item['reason'] == 'evidence_traversal_limit' for item in view['limitations'])
+    assert 'truncated' in host.error('conclusion_prepare', model_call=True,
+        fields={**fields([claim['ref']]),'snapshot_id':page['snapshot_id']})
+    partial = host.call('conclusion_prepare', model_call=True,
+        fields={**fields([], 'partial'),'snapshot_id':page['snapshot_id']})
+    assert partial['outcome'] == 'partial' and partial['evidence_closure']['status'] == 'unknown'
+
+
+def test_review_event_limit_preserves_incompleteness(completed, monkeypatch):
+    from auto_research import evidence_read
+    from test_r2_runtime import obligations, link, report
+    host, store, _, _, claim, _ = completed
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    host.call('review_scope_set', refs=[claim['ref']], reason='review')
+    obligation = next(row for row in obligations(store) if row['target_ref'] == claim['ref'])
+    link(host, obligation, report(host), result='challenges', complete=False)
+    link(host, obligation, report(host), result='challenges', complete=False)
+    monkeypatch.setattr(evidence_read, 'MAX_EVIDENCE_REVIEWS', 1)
+    page = host.call('query', collection='evidence', refs=[claim['ref']], limit=16384)
+    view = json.loads(page['chunk'])
+    assert not view['graph_complete']
+    assert any(item['kind'] == 'review_challenge' for item in view['risks'])
+    assert any(item['reason'] == 'evidence_traversal_limit' and item['detail']['kind'] == 'review_events'
+               for item in view['limitations'])
+
+
+def test_edge_limit_reports_overflow_without_rejecting_the_exact_boundary(tmp_path, monkeypatch):
+    from auto_research import evidence_read
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    source = host.call('publish', status='complete', summary='basis', gaps=[], knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','content':{'text':'measurements'}}])
+    source_ref = f"pub/{source['publication_id']}#data"
+    refs = [host.call('memory_write', action='record', fields={'kind':'claim','visibility':'project',
+             'statement':f'Basis {i}', 'evidence_refs':[source_ref]})['ref'] for i in range(2)]
+    root = host.call('memory_write', action='record', fields={'kind':'claim','visibility':'project',
+                     'statement':'Combined', 'dependencies':refs, 'evidence_refs':[source_ref]})['ref']
+    monkeypatch.setattr(evidence_read, 'MAX_EVIDENCE_EDGES', 1)
+    truncated = json.loads(host.call('query',collection='evidence',refs=[root],limit=16384)['chunk'])
+    assert any(item['reason']=='evidence_traversal_limit' and item['detail']['kind']=='edges' for item in truncated['limitations'])
+    monkeypatch.setattr(evidence_read, 'MAX_EVIDENCE_EDGES', 5)
+    complete = json.loads(host.call('query',collection='evidence',refs=[root],limit=16384)['chunk'])
+    assert len(complete['edges']) == 5
+    assert not any(item['reason']=='evidence_traversal_limit' and item['detail']['kind']=='edges' for item in complete['limitations'])
+
+
+def test_exploration_context_discloses_omitted_details(tmp_path):
+    from test_exploration_foundation import scope_and_route
+    from test_context_policy import sections
+    host = Host(tmp_path)
+    host.open()
+    scope_and_route(host)
+    small = sections(host.call('memory_context',policy='memory-r1-v1',max_chars=900))['exploration']
+    large = sections(host.call('memory_context',policy='memory-r1-v1',max_chars=2400))['exploration']
+    assert small['details_omitted'] and small['routes']['collection'] == 'exploration_routes'
+    assert not large['details_omitted'] and large['details']['route_sample']
+
+
+def test_new_main_cannot_inherit_previous_main_material_snapshot(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    (host.root / 'data.txt').write_text('material available to the first main')
+    source = host.call('publish', status='complete', summary='data', gaps=[], knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','source_path':'data.txt'}])
+    ref = f"pub/{source['publication_id']}#data"
+    claim = host.call('memory_write', action='record', fields={'kind':'claim','statement':'Measured result',
+        'visibility':'project','evidence_refs':[ref]})['ref']
+    host.call('conclusion_contract', contract='evidence-v1')
+    deliver_material(host, ref)
+    old = host.call('query', collection='evidence', refs=[claim])
+    host.call('takeover_main', session='ses_new', root=str(host.root), cwd=str(host.root))
+    declaration = {**fields([claim]), 'snapshot_id':old['snapshot_id']}
+    assert 'evidence_snapshot_session_changed' in host.error('conclusion_prepare', session='ses_new',
+        fields=declaration, model_call=True)
+    fresh = host.call('query', session='ses_new', collection='evidence', refs=[claim])
+    assert 'Core evidence' in host.error('conclusion_prepare', session='ses_new', model_call=True,
+        fields={**declaration, 'snapshot_id':fresh['snapshot_id']})

@@ -62,3 +62,37 @@ test('material pages become durable only after their model step produces a respo
   expect(seen[0].model_message_id).toBe('model-message')
   expect(seen[0].material_ref).toBe('pub/P-1#data')
 })
+
+test('a late previous step cannot confirm a later request or a failed step', async () => {
+  const delivery=new EvidenceDelivery()
+  const first={snapshot_id:'material-1',part:'material',material_ref:'pub/P-1#data',offset:0,end:3,
+    chunk:'one',total_bytes:6,cursor:null,manifest_digest:'digest'}
+  const second={...first,offset:3,end:6,chunk:'two'}
+  delivery.result('main','call','research_query',first)
+  delivery.stepStarted('main','old')
+  await delivery.request('main',result(first),async()=>({receipt_ids:[]}),100)
+  delivery.result('main','call','research_query',second)
+  await delivery.request('main',result(second),async()=>({receipt_ids:[]}),100)
+  let observed:any[]=[]
+  await delivery.confirmMaterials('main','old',async pages=>{observed=pages;return {receipt_ids:['ok']}})
+  expect(observed.map(page=>page.offset)).toEqual([0])
+  delivery.stepFinished('main','old')
+  delivery.stepStarted('main','new')
+  delivery.stepFailed('main','new')
+  observed=[]
+  await delivery.confirmMaterials('main','new',async pages=>{observed=pages;return {receipt_ids:['ok']}})
+  expect(observed).toEqual([])
+})
+
+test('a failed material confirmation is visible in the next request', async () => {
+  const delivery=new EvidenceDelivery()
+  const material={snapshot_id:'material-1',part:'material',material_ref:'pub/P-1#data',offset:0,end:3,
+    chunk:'one',total_bytes:3,cursor:null,manifest_digest:'digest'}
+  delivery.result('main','call','research_query',material)
+  await delivery.request('main',result(material),async()=>({receipt_ids:[]}),100)
+  delivery.stepStarted('main','message')
+  await expect(delivery.confirmMaterials('main','message',async()=>({receipt_ids:[],rejected:[{reason:'expired'}]}))).rejects.toThrow()
+  delivery.stepFinished('main','message')
+  const issues=await delivery.request('main',result(material),async()=>({receipt_ids:[]}),100)
+  expect(issues).toContain('material_delivery_unconfirmed')
+})
