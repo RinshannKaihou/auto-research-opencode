@@ -15,7 +15,7 @@ from .workflow_store import encoded, now
 
 REVIEW_TYPES = {'citation_scope', 'semantic_inference', 'recompute', 'reimplementation', 'adversarial_test'}
 STOP_REASONS = {'goal_met', 'sufficient_for_current_choice', 'low_expected_value', 'resource_limited', 'user_requested'}
-PAGED_DECISION_MAX_BYTES = 1024 * 1024
+PAGED_DECISION_MAX_BYTES = 256 * 1024
 DECISION_PAGE_BYTES = 16384
 
 
@@ -74,8 +74,15 @@ def decision_package(view, result, fields=None):
         # evaluate() validates every member individually; retain only the groups
         # the coordinator actually supplied in the delivered decision package.
         decision['evidence_closure']['risk_judgments'] = copy.deepcopy(fields.get('risk_judgments', []))
+    decisions = [{'decision_id': item['decision_id'], 'scope_id': item['scope_id'],
+                  'ref': 'explore/decision/' + item['decision_id'],
+                  'data': {key: item['data'].get(key) for key in ('action', 'reason', 'provisional', 'expected_results',
+                           'expected_missing', 'missing_results', 'comparisons', 'route_changes', 'revises_decision_id')},
+                  'expand': {'collection': 'exploration_decisions', 'ref': 'explore/decision/' + item['decision_id']}}
+                 for item in view.get('scope_decisions', [])]
     return {'roots':view['roots'], 'scope':view['scope'], 'conclusion_scope':view['conclusion_scope'],
-            **{key: view[key] for key in ('scopes', 'scope_id', 'scope_exclusions', 'exploration_exclusions', 'scope_decisions') if key in view},
+            **{key: view[key] for key in ('scopes', 'scope_id', 'scope_exclusions', 'exploration_exclusions') if key in view},
+            'scope_decisions': decisions,
             'records':records, 'edges':[edge for edge in view['edges'] if edge['user_ref'] in reachable],
             'materials':materials, 'risks':view['risks'], 'limitations':view['limitations'],
             'reviews':result['review_coverage']['coverage'], 'routes':routes, 'pending_results':pending,

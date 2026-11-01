@@ -184,6 +184,8 @@ def exploration_budget_view(store, db):
     for row in held:
         item = dict(row)
         item['resources'] = json.loads(item['resources'])
+        if not item['resources']:
+            continue  # Also hide empty leases written by an earlier E3 build.
         leases.append(item)
         for name, amount in item['resources'].items():
             resource_usage[name] = resource_usage.get(name, 0) + amount
@@ -285,9 +287,12 @@ def claim_exploration_resources(store, db, task_id):
     row = db.execute('SELECT * FROM exploration_allocations WHERE task_id=?', (task_id,)).fetchone()
     if not row:
         return {'allowed': True, 'exploration': False}
-    if row['resource_state'] in {'held', 'uncertain'}:
-        return {'allowed': True, 'exploration': True, 'resources': json.loads(row['resources'])}
     requested = json.loads(row['resources'])
+    if not requested:
+        _release_task_resources(db, task_id)
+        return {'allowed': True, 'exploration': True, 'resources': {}}
+    if row['resource_state'] in {'held', 'uncertain'}:
+        return {'allowed': True, 'exploration': True, 'resources': requested}
     capacities = store._project(db)['config'].get('runtime_budget', {}).get('resource_capacities') or {}
     occupied = {}
     for lease in db.execute("SELECT resources FROM exploration_allocations WHERE resource_state IN ('held','uncertain')"):
@@ -297,7 +302,26 @@ def claim_exploration_resources(store, db, task_id):
                for name, amount in requested.items()
                if name not in capacities or occupied.get(name, 0) + amount > capacities[name]}
     if missing:
-        return {'allowed': False, 'reason': 'waiting_resource', 'state': 'queued', 'resources': missing}
+        blockers = []
+        for lease in db.execute("SELECT a.task_id,a.resources,a.resource_state,t.state task_state "
+                "FROM exploration_allocations a LEFT JOIN exploration_tasks t USING(task_id) "
+                "WHERE a.resource_state IN ('held','uncertain') ORDER BY a.rowid"):
+            shared = {name: amount for name, amount in json.loads(lease['resources']).items() if name in missing}
+            if shared:
+                blockers.append({'task_id': lease['task_id'], 'state': lease['resource_state'],
+                                 'task_state': lease['task_state'], 'resources': shared})
+        current_main = db.execute('SELECT main_session_id FROM workflow_project WHERE id=1').fetchone()[0]
+        body = {'kind': 'resource_wait', 'task_id': task_id, 'resources': missing, 'blockers': blockers,
+                'recovery_commands': [f"/research recover resource {item['task_id']} <外部进程退出核实原因>"
+                    for item in blockers if item['task_state'] in {'finished', 'failed', 'cancelled'}]}
+        notice = 'resource-wait:' + hashlib.sha256(json.dumps([current_main, body], sort_keys=True).encode()).hexdigest()[:24]
+        # Reuse the existing durable delivery protocol. A repeated scheduler
+        # claim (including after restart) must not produce another message.
+        db.execute('INSERT OR IGNORE INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)',
+                   (notice, task_id, current_main, 'resource_wait', None,
+                    json.dumps(body, sort_keys=True), 'pending', timestamp()))
+        return {'allowed': False, 'reason': 'waiting_resource', 'state': 'queued', 'resources': missing,
+                'blockers': blockers, 'notification_id': notice}
     db.execute("UPDATE exploration_allocations SET resource_state='held',updated_at=? WHERE reservation_id=?",
                (timestamp(), row['reservation_id']))
     return {'allowed': True, 'exploration': True, 'resources': requested}
@@ -576,11 +600,11 @@ class RuntimeStore:
 
         def work(db):
             actor = db.execute("SELECT role,detached FROM workflow_sessions WHERE host_id=? AND session_id=?", (host, session)).fetchone()
-            task = db.execute('SELECT * FROM exploration_tasks WHERE task_id=? AND parent_session_id=?', (task_id, session)).fetchone()
+            task = db.execute('SELECT * FROM exploration_tasks WHERE task_id=?', (task_id,)).fetchone()
             run = db.execute('SELECT main_session_id FROM workflow_project WHERE id=1').fetchone()
             if (not actor or actor['role'] != 'main' or actor['detached'] or run['main_session_id'] != session
                     or not task or task['state'] not in {'finished', 'failed', 'cancelled'}):
-                raise ConflictError('Only the current main may verify external exit of a terminal owned task; reconcile unverified execution first')
+                raise ConflictError('Only the current main may verify external exit of a terminal project task; reconcile unverified execution first')
             _release_task_resources(db, task_id)
             self._event(db, 'runtime.resources_exit_verified', payload)
             return {'task_id': task_id, 'resources_released': True, 'exit_verified_by': 'user',
@@ -641,6 +665,9 @@ class RuntimeStore:
                 raise ValidationError('The task does not belong to this coordinator')
             if task['state'] != 'queued':
                 return {'claimed': False, 'reason': 'already_claimed', 'state': task['state']}
+            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+            if task['generation'] != run['generation']:
+                raise ConflictError('The task belongs to an earlier research generation')
             from .exploration_store import check_exploration_task
             check = check_exploration_task(self, db, task_id)
             if not check['allowed']:
@@ -650,12 +677,11 @@ class RuntimeStore:
                 return {'claimed': False, 'reason': 'capacity', 'state': 'queued'}
             resources = claim_exploration_resources(self, db, task_id)
             if not resources['allowed']:
-                db.execute('UPDATE exploration_tasks SET error=?,updated_at=? WHERE task_id=?',
-                           ('waiting_resource: ' + json.dumps(resources.get('resources', {}), sort_keys=True), timestamp(), task_id))
+                error = 'waiting_resource: ' + json.dumps(resources.get('resources', {}), sort_keys=True)
+                if task['error'] != error:
+                    db.execute('UPDATE exploration_tasks SET error=?,updated_at=? WHERE task_id=?',
+                               (error, timestamp(), task_id))
                 return {'claimed': False, **resources}
-            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
-            if task['generation'] != run['generation']:
-                raise ConflictError('The task belongs to an earlier research generation')
             launch_no = db.execute("SELECT COUNT(*) FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=?",
                                    (task_id,)).fetchone()[0] + 1
             reuse = bool(db.execute("SELECT 1 FROM workflow_sessions WHERE session_id=? AND detached=0 AND role='node_core'",
@@ -786,6 +812,11 @@ class RuntimeStore:
                                 (notification_id, session)).fetchone()
             if not role or role['role'] != 'main' or role['detached'] or not notice:
                 raise ValidationError('Notification does not belong to the current coordinator')
+            if notice['kind'] == 'resource_wait' and not db.execute(
+                    "SELECT 1 FROM exploration_tasks WHERE task_id=? AND state='queued'",
+                    (notice['task_id'],)).fetchone():
+                db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
+                return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
             if notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
                 db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
                 return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
@@ -933,8 +964,9 @@ class RuntimeStore:
             db.execute("UPDATE exploration_tasks SET state='finished',updated_at=? WHERE task_id=? AND session_id=?",
                        (timestamp(), details['task_id'], session))
             if _allocations_available(db):
-                db.execute("UPDATE exploration_allocations SET resource_state='uncertain',updated_at=? "
-                           "WHERE task_id=? AND resource_state='held' AND resources!='{}'",
+                db.execute("UPDATE exploration_allocations SET resource_state=CASE WHEN resources='{}' "
+                           "THEN 'released' ELSE 'uncertain' END,updated_at=? "
+                           "WHERE task_id=? AND resource_state='held'",
                            (timestamp(), details['task_id']))
             db.execute("UPDATE workflow_sessions SET pause_reason='segment_complete' WHERE session_id=?", (session,))
             db.execute("UPDATE workflow_intents SET state='completed',updated_at=? WHERE intent_id=?", (timestamp(), intent_id))

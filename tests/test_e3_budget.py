@@ -40,6 +40,99 @@ def task(host, store, key):
     return store.workflow('opencode', 'ses_main', 'task', {'node_id': node['node_id']}, 'task:' + key)
 
 
+def finish_claimed(host, store, task, launch):
+    child = launch['session_id']
+    host.call('open', session=child, root=str(host.root), cwd=str(host.root),
+              session_role='node_core', node_id=task['node_id'])
+    host.call('focus', session=child, node_id=task['node_id'], role='core', mode='auto')
+    finish = store.node_finish_request('opencode', child, 'finished', 'Measured synthetic result', 'turn', 'finish')
+    store.runtime_execution_end('opencode', child, 'end', 'succeeded', f'end:{child}:end', 'turn')
+    return store.node_finish_commit('opencode', child, finish['intent_id'], 'turn', 'end', 'commit')
+
+
+def test_normal_finish_resource_wait_is_durable_deduplicated_and_recoverable(tmp_path):
+    host, store = project(tmp_path)
+    store.runtime_budget_set('opencode', 'ses_main', {'resource_capacities': {'gpu:0': 1}}, 'one GPU', 'limit')
+    first, second = task(host, store, 'first'), task(host, store, 'second')
+    reserve(store, 'first', resources={'gpu:0': 1}, task_id=first['task_id'])
+    reserve(store, 'second', resources={'gpu:0': 1}, task_id=second['task_id'])
+    launch = store.node_launch_claim('opencode', 'ses_main', first['task_id'], 2, 'launch')
+    finish_claimed(host, store, first, launch)
+    assert store.runtime_budget_status('opencode', 'ses_main')['exploration']['resource_leases'][0]['resource_state'] == 'uncertain'
+    blocked = store.node_launch_claim('opencode', 'ses_main', second['task_id'], 2, 'blocked')
+    notice_id = blocked['notification_id']
+    assert blocked['blockers'][0]['task_id'] == first['task_id']
+    # A cold backend retries the same wait and reserves no additional notice.
+    store = NativeStore(host.root)
+    again = store.node_launch_claim('opencode', 'ses_main', second['task_id'], 2, 'blocked-again')
+    assert again['notification_id'] == notice_id
+    with store._read() as db:
+        notices = list(db.execute("SELECT * FROM workflow_notifications WHERE kind='resource_wait'"))
+        assert len(notices) == 1
+        import json
+        body = json.loads(notices[0]['payload'])
+        assert body['recovery_commands'][0].startswith('/research recover resource ' + first['task_id'])
+    delivery = store.notification_begin('opencode', 'ses_main', notice_id, 'notice', 'User must verify external exit')
+    assert delivery['send']
+    store.notification_confirm('opencode', 'ses_main', delivery['intent_id'], delivery['message_id'], 'delivered')
+    assert not store.notification_begin('opencode', 'ses_main', notice_id, 'repeat', 'User must verify external exit')['send']
+    store.runtime_resources_release('opencode', 'ses_main', first['task_id'], 'Checked GPU process exit', 'release')
+    assert store.node_launch_claim('opencode', 'ses_main', second['task_id'], 2, 'next')['claimed']
+    assert store.runtime_budget_status('opencode', 'ses_main')['exploration']['allocated'] == 2
+
+
+def test_finished_lease_can_be_released_after_main_takeover(tmp_path):
+    host, store = project(tmp_path)
+    store.runtime_budget_set('opencode', 'ses_main', {'resource_capacities': {'gpu:0': 1}}, 'one GPU', 'limit')
+    first = task(host, store, 'before-takeover')
+    reserve(store, 'old-main-work', resources={'gpu:0': 1}, task_id=first['task_id'])
+    launch = store.node_launch_claim('opencode', 'ses_main', first['task_id'], 2, 'launch')
+    finish_claimed(host, store, first, launch)
+    host.call('workflow', action='run', fields={'state': 'stopped'})
+    host.call('takeover_main', session='ses_successor', root=str(host.root), cwd=str(host.root))
+    with pytest.raises(ConflictError, match='current main'):
+        store.runtime_resources_release('opencode', 'ses_main', first['task_id'], 'Detached caller', 'denied-old')
+    result = store.runtime_resources_release('opencode', 'ses_successor', first['task_id'], 'Checked GPU process exit', 'release-new')
+    assert result['resources_released'] and not result['work_budget_released']
+    host.call('focus', session='ses_successor', node_id=None, role='planner', mode='auto')
+    host.call('workflow', session='ses_successor', action='run', fields={'state': 'running'})
+    node = host.call('propose', session='ses_successor', question='After takeover', why_now='Resume', plan='Measure', root_reason='New test')
+    second = store.workflow('opencode', 'ses_successor', 'task', {'node_id': node['node_id']}, 'next-task')
+    reserve(store, 'new-main-work', resources={'gpu:0': 1}, task_id=second['task_id'])
+    assert store.node_launch_claim('opencode', 'ses_successor', second['task_id'], 2, 'next-claim')['claimed']
+
+
+def test_empty_resource_requests_never_hold_a_lease_including_old_rows(tmp_path):
+    host, store = project(tmp_path)
+    queued = task(host, store, 'no-resources')
+    reserve(store, 'empty', task_id=queued['task_id'])
+    launch = store.node_launch_claim('opencode', 'ses_main', queued['task_id'], 2, 'launch')
+    assert store.runtime_budget_status('opencode', 'ses_main')['exploration']['resource_leases'] == []
+    # Repair the old-build form as part of normal completion, and hide it in
+    # read projections even before the task finishes.
+    with store._connection() as db:
+        db.execute("UPDATE exploration_allocations SET resource_state='held'")
+    assert store.runtime_budget_status('opencode', 'ses_main')['exploration']['resource_leases'] == []
+    finish_claimed(host, store, queued, launch)
+    with store._read() as db:
+        assert db.execute('SELECT resource_state FROM exploration_allocations').fetchone()[0] == 'released'
+
+
+def test_earlier_generation_task_is_rejected_before_resource_wait(tmp_path):
+    host, store = project(tmp_path)
+    store.runtime_budget_set('opencode', 'ses_main', {'resource_capacities': {'gpu:0': 1}}, 'one GPU', 'limit')
+    first, old = task(host, store, 'first'), task(host, store, 'old')
+    reserve(store, 'first', resources={'gpu:0': 1}, task_id=first['task_id'])
+    reserve(store, 'old', resources={'gpu:0': 1}, task_id=old['task_id'])
+    assert store.node_launch_claim('opencode', 'ses_main', first['task_id'], 2, 'first-claim')['claimed']
+    with store._connection() as db:
+        db.execute('UPDATE exploration_tasks SET generation=-1 WHERE task_id=?', (old['task_id'],))
+    with pytest.raises(ConflictError, match='earlier research generation'):
+        store.node_launch_claim('opencode', 'ses_main', old['task_id'], 2, 'old-claim')
+    with store._read() as db:
+        assert db.execute("SELECT COUNT(*) FROM workflow_notifications WHERE kind='resource_wait'").fetchone()[0] == 0
+
+
 def test_concurrent_scopes_share_one_atomic_budget_and_unknown_usage(tmp_path):
     _, store = project(tmp_path)
     store.runtime_budget_set('opencode', 'ses_main', {'shared_work_budget': 3}, 'bounded pilot', 'limit')

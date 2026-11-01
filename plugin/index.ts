@@ -19,7 +19,7 @@ import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialist
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { COORDINATOR_NATIVE_READS, controlInstructions } from "./src/coordinator-boundary"
 import { parameters, validateArgs } from "./src/schema"
-import { USAGE } from "./src/format"
+import { USAGE, runtimeBudgetSummary } from "./src/format"
 import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
 import { attachController } from './src/controller-lifecycle'
 import { preflight } from './src/host-submission'
@@ -770,13 +770,15 @@ export default Plugin.define({
               let value:any = args.value==='off' ? null : Number(args.value)
               if (args.limit==='resource') {
                 const current = await research.call<any>('runtime_budget_status',sid)
-                value = {...(current.limits?.resource_capacities ?? {}),[String(args.resource)]:Number(args.value)}
+                value = {...(current.limits?.resource_capacities ?? {})}
+                if (args.value==='off') delete value[String(args.resource)]
+                else value[String(args.resource)] = Number(args.value)
               }
               await research.call('runtime_budget_set',sid,{limits:{[names[args.limit]!]:value},reason:args.reason})
               research.notifyChanged(research.rootOf(sid)!)
             }
             const budget = await research.call('runtime_budget_status',sid)
-            return {message:`自主调度预算（work 为计划投入单位；token/cost 为已观测停发阈值，外部进程未计量）\n${JSON.stringify(budget,null,2)}`}
+            return {message:`自主调度预算（work 为计划投入单位；token/cost 为已观测停发阈值，外部进程未计量）；逐项分配与租约：research_query collection=exploration_budget\n${JSON.stringify(runtimeBudgetSummary(budget),null,2)}`}
           })()
         }
         case "auto":

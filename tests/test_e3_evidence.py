@@ -224,12 +224,17 @@ def test_explicit_large_decision_manifest_survives_restart_and_requires_every_by
     final = host.call('publish', status='complete', summary='final', gaps=[], knowledge_refs=[claim],
         items=[{'item_id': 'report', 'kind': 'text', 'content': {'text': 'Independent summary of the measured result'}}],
         draft_id=draft['draft_id'], report_item_id='report')
-    first = host.call('query', collection='evidence', draft_id=draft['draft_id'], limit=16384)
+    first = host.call('query', collection='evidence', draft_id=draft['draft_id'])
+    assert first['end'] - first['offset'] >= 16380  # default decision page is 16KiB, UTF-8 aligned
     # Cache loss models the persistent backend restart path, including its cursor.
     host.service.evidence._snapshots.clear()
     pages, chunks, page = [], [], first
     while True:
-        assert page['delivery_manifest'] == manifest
+        if page['offset'] == 0:
+            assert page['delivery_manifest'] == manifest
+        else:
+            assert 'delivery_manifest' not in page
+        assert page['manifest_digest'] == draft['manifest_digest']
         chunks.append(page['chunk'])
         pages.append({'snapshot_id': page['snapshot_id'], 'draft_id': draft['draft_id'], 'part': 'decision',
             'offset': page['offset'], 'end': page['end'], 'manifest_digest': page['manifest_digest'],
@@ -248,3 +253,97 @@ def test_explicit_large_decision_manifest_survives_restart_and_requires_every_by
     assert 'Complete evidence' in host.error('conclude', fields=args, delivery_receipts=partial, plugin_instance_id='e3-plugin')
     complete = host.call('evidence_observed', pages=pages, plugin_instance_id='e3-plugin')['receipt_ids']
     assert host.call('conclude', fields=args, delivery_receipts=complete, plugin_instance_id='e3-plugin')['outcome'] == 'answered'
+
+
+def test_paged_decision_near_cap_is_linear_and_oversize_fails_during_prepare(tmp_path):
+    from auto_research.evidence_conclusion import PAGED_DECISION_MAX_BYTES
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    source = host.call('publish', status='complete', summary='data', gaps=[], knowledge_refs=[],
+        items=[{'item_id': 'data', 'kind': 'text', 'content': {'measurement': 7}}])
+    claim = host.call('memory_write', action='record', fields={'kind': 'claim', 'statement': '结果🙂' * 24000,
+        'visibility': 'project', 'evidence_refs': [f"pub/{source['publication_id']}#data"]})['ref']
+    host.call('conclusion_contract', contract='evidence-v1')
+    page = host.call('query', collection='evidence', refs=[claim])
+    draft = host.call('conclusion_prepare', model_call=True,
+        fields={**fields([claim]), 'snapshot_id': page['snapshot_id'], 'delivery_mode': 'paged'})
+    assert 230000 < draft['delivery_manifest']['total_bytes'] <= PAGED_DECISION_MAX_BYTES
+    current = host.call('query', collection='evidence', draft_id=draft['draft_id'])
+    copied_manifests, total = 0, 0
+    while True:
+        copied_manifests += int('delivery_manifest' in current)
+        total += len(current['chunk'].encode())
+        if not current['cursor']:
+            break
+        current = host.call('query', collection='evidence', cursor=current['cursor'])
+    assert copied_manifests == 1 and total == draft['delivery_manifest']['total_bytes']
+    # Oversize declarations fail before the model spends requests reading pages.
+    too_big = fields([claim])
+    too_big['exploration_stop']['reason'] = 'x' * PAGED_DECISION_MAX_BYTES
+    page = host.call('query', collection='evidence', refs=[claim])
+    assert 'paged_decision_package_too_large' in host.error('conclusion_prepare', model_call=True,
+        fields={**too_big, 'snapshot_id': page['snapshot_id'], 'delivery_mode': 'paged'})
+
+
+@pytest.mark.parametrize('scope_state', ['deferred', 'closed'])
+def test_changes_to_inactive_scope_evidence_remain_pending_without_sending_wakes(completed, scope_state):
+    host, store, _, _, claim, _ = completed
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    scope, route = scope_and_route(host)
+    host.call('exploration_route', model_call=True, fields={'scope_ref': scope['ref'], 'route_ref': route['ref'],
+        'reason': 'Register candidate source', 'changes': {'hypothesis_refs': [claim['ref']]}})
+    host.call('exploration_scope', model_call=True, fields={'scope_ref': scope['ref'],
+        'reason': 'Stop current investment', 'changes': {'state': scope_state, 'reactivation_condition': 'Source changes'}})
+    with store._read() as db:
+        before_notices = db.execute('SELECT COUNT(*) FROM workflow_notifications').fetchone()[0]
+    store.revise_knowledge({'ref': claim['ref'], 'expected_revision': 1, 'changes': {'status': 'retracted'},
+        'reason': 'A declared source is no longer supported', 'change_kind': 'retract',
+        'affected_scope_mode': 'versions', 'affected_scope': [claim['ref']]}, 'inactive-source-withdrawn')
+    results = host.call('query', collection='exploration_results', scope_id=scope['scope_id'])['items']
+    assert any(item['data'].get('target_ref') == claim['ref'] and not item['handled_by_decision'] for item in results)
+    with store._read() as db:
+        assert db.execute('SELECT COUNT(*) FROM workflow_notifications').fetchone()[0] == before_notices
+
+
+def test_local_choice_does_not_expand_unselected_candidate_evidence(tmp_path, monkeypatch):
+    from auto_research import evidence_read
+    from test_e3_multiroute import decision, work
+    host = Host(tmp_path)
+    host.open()
+    host.call('workflow', action='run', fields={'state': 'running'})
+    scope, route = scope_and_route(host)
+    refs = [host.call('memory_write', action='record', fields={'kind': 'open_question', 'visibility': 'project',
+            'statement': f'An unrelated candidate question {index}'})['ref'] for index in range(5)]
+    host.call('exploration_route', model_call=True, fields={'scope_ref': scope['ref'], 'changes': {
+        'title': 'Unselected large candidate', 'rationale': 'Possible later question',
+        'critical_assumption': 'Unmeasured', 'hypothesis_refs': refs}})
+    monkeypatch.setattr(evidence_read, 'MAX_EVIDENCE_REFS', 2)
+    project = host.call('query', collection='evidence', refs=[])
+    assert not project['graph_complete']
+    local = host.call('query', collection='evidence', refs=[], scope_id=scope['scope_id'])
+    assert local['graph_complete']
+    chosen = decision(host, scope, [route], next_work=work([route]))
+    assert host.call('exploration_materialize', intent_id=chosen['intent_id'])['state'] == 'materialized'
+
+
+def test_closeout_keeps_choice_and_gap_but_expands_full_work_plan_by_reference(tmp_path):
+    from test_e3_multiroute import decision, work
+    host = Host(tmp_path)
+    host.open()
+    scope, route = scope_and_route(host)
+    plan = 'An unexecuted detailed measurement instruction. ' * 2000
+    chosen = decision(host, scope, [route], next_work=work([route], plan=plan),
+                      provisional=True, missing_results=['No measurement has been executed'])
+    page = host.call('query', collection='evidence', refs=[])
+    draft = host.call('conclusion_prepare', model_call=True,
+        fields={**fields([], 'partial'), 'snapshot_id': page['snapshot_id']})
+    page = host.call('query', collection='evidence', draft_id=draft['draft_id'])
+    package = json.loads(page['chunk'])
+    choice = package['scope_decisions'][0]
+    assert choice['data']['provisional'] is True
+    assert choice['data']['missing_results'] == ['No measurement has been executed']
+    assert 'next_work' not in choice['data'] and 'work_batch' not in choice['data']
+    expanded = host.call('query', **choice['expand'])
+    assert expanded['decision_id'] == chosen['decision_id']
+    assert expanded['data']['next_work']['plan'] == plan

@@ -1,0 +1,196 @@
+{
+  "source_commit": "31fd90da8a7634619a1a42b23a62b680f483294d",
+  "schema_version": 15,
+  "generated_by": "main NativeService exploration_decide and build_evidence_view; synthetic projects only",
+  "cases": [
+    {
+      "input_in_snapshot": false,
+      "intent": {
+        "intent_id": "exploration-work:ED-001",
+        "kind": "exploration_work",
+        "session_id": "ses_main",
+        "state": "pending",
+        "details": "{\"basis_digest\": \"cc4360aa8079397501256db21796abf0c5f0877c328bafd9efba3895f0ac204e\", \"decision_id\": \"ED-001\", \"generation\": 0, \"next_work\": {\"inputs\": [\"pub/P-001#data\"], \"plan\": \"Compare measurements\", \"question\": \"Measure fixed baseline\", \"root_reason\": \"Independent synthetic test\", \"route_refs\": [\"explore/route/ER-001@1\"], \"why_now\": \"Compatibility fixture\"}, \"roots\": [], \"route_refs\": [\"explore/route/ER-001@2\"], \"scope_id\": \"ES-001\", \"scope_ref\": \"explore/scope/ES-001@1\"}",
+        "updated_at": "2026-11-01T10:39:16.417003+00:00"
+      },
+      "view": {
+        "roots": [],
+        "scope": {
+          "scope_id": "ES-001",
+          "revision": 1,
+          "generation": 0,
+          "goal_version": 1,
+          "actor": {
+            "host_id": "opencode",
+            "session_id": "ses_main"
+          },
+          "created_at": "2026-11-01T10:39:16.409057+00:00",
+          "baseline_refs": [],
+          "budget_policy": null,
+          "comparison_basis": null,
+          "constraints": {
+            "memory": "bounded"
+          },
+          "objective": "Improve latency",
+          "question_refs": [],
+          "reason": null,
+          "task_kind": "selection",
+          "ref": "explore/scope/ES-001@1"
+        },
+        "conclusion_scope": null,
+        "routes": [
+          {
+            "route_id": "ER-001",
+            "revision": 2,
+            "scope_id": "ES-001",
+            "goal_version": 1,
+            "actor": {
+              "host_id": "opencode",
+              "session_id": "ses_main"
+            },
+            "created_at": "2026-11-01T10:39:16.416788+00:00",
+            "baseline_refs": [],
+            "cost_estimate": null,
+            "critical_assumption": "Tail costs differ from the average",
+            "disposition": "investigating",
+            "disposition_reason": "Synthetic pre-E3 approval",
+            "evidence_refs": [],
+            "hypothesis_refs": [],
+            "next_probe": null,
+            "rationale": "Average cost may not explain the tail",
+            "reactivation_condition": null,
+            "reason": "Synthetic pre-E3 approval",
+            "title": "Measure tail",
+            "ref": "explore/route/ER-001@2"
+          }
+        ],
+        "pending_results": [],
+        "records": [],
+        "edges": [],
+        "materials": [],
+        "publication_checks": [],
+        "risks": [],
+        "reviews": [],
+        "review_history": [],
+        "limitations": [],
+        "graph_complete": true,
+        "raw_material_read": "not_assessed"
+      }
+    },
+    {
+      "input_in_snapshot": true,
+      "intent": {
+        "intent_id": "exploration-work:ED-001",
+        "kind": "exploration_work",
+        "session_id": "ses_main",
+        "state": "pending",
+        "details": "{\"basis_digest\": \"6920cd2f4f0a2cfb8a4a35931c656ba555dfa4fcee79646cb750cd700f88a609\", \"decision_id\": \"ED-001\", \"generation\": 0, \"next_work\": {\"inputs\": [\"pub/P-001#data\"], \"plan\": \"Compare measurements\", \"question\": \"Measure fixed baseline\", \"root_reason\": \"Independent synthetic test\", \"route_refs\": [\"explore/route/ER-001@1\"], \"why_now\": \"Compatibility fixture\"}, \"roots\": [\"pub/P-001#data\"], \"route_refs\": [\"explore/route/ER-001@2\"], \"scope_id\": \"ES-001\", \"scope_ref\": \"explore/scope/ES-001@1\"}",
+        "updated_at": "2026-11-01T10:39:16.457812+00:00"
+      },
+      "view": {
+        "roots": [
+          "pub/P-001#data"
+        ],
+        "scope": {
+          "scope_id": "ES-001",
+          "revision": 1,
+          "generation": 0,
+          "goal_version": 1,
+          "actor": {
+            "host_id": "opencode",
+            "session_id": "ses_main"
+          },
+          "created_at": "2026-11-01T10:39:16.449872+00:00",
+          "baseline_refs": [],
+          "budget_policy": null,
+          "comparison_basis": null,
+          "constraints": {
+            "memory": "bounded"
+          },
+          "objective": "Improve latency",
+          "question_refs": [],
+          "reason": null,
+          "task_kind": "selection",
+          "ref": "explore/scope/ES-001@1"
+        },
+        "conclusion_scope": null,
+        "routes": [
+          {
+            "route_id": "ER-001",
+            "revision": 2,
+            "scope_id": "ES-001",
+            "goal_version": 1,
+            "actor": {
+              "host_id": "opencode",
+              "session_id": "ses_main"
+            },
+            "created_at": "2026-11-01T10:39:16.457588+00:00",
+            "baseline_refs": [],
+            "cost_estimate": null,
+            "critical_assumption": "Tail costs differ from the average",
+            "disposition": "investigating",
+            "disposition_reason": "Synthetic pre-E3 approval",
+            "evidence_refs": [],
+            "hypothesis_refs": [],
+            "next_probe": null,
+            "rationale": "Average cost may not explain the tail",
+            "reactivation_condition": null,
+            "reason": "Synthetic pre-E3 approval",
+            "title": "Measure tail",
+            "ref": "explore/route/ER-001@2"
+          }
+        ],
+        "pending_results": [],
+        "records": [],
+        "edges": [],
+        "materials": [
+          {
+            "ref": "pub/P-001#data",
+            "outcome": "resolved",
+            "reason": null,
+            "kind": "publication_item",
+            "object": null,
+            "integrity": "unverified",
+            "message": "pub/P-001#data: resolved",
+            "publication_id": "P-001",
+            "item_id": "data",
+            "source_path": null,
+            "item": {
+              "kind": "text",
+              "content": {
+                "fixture": true
+              },
+              "object_version": null,
+              "object_kind": null,
+              "source_path": null,
+              "knowledge_refs": []
+            }
+          }
+        ],
+        "publication_checks": [
+          {
+            "ref": "pub/P-001#data",
+            "publication_id": "P-001",
+            "check_scope": {
+              "declared_refs": [],
+              "coverage": "unknown"
+            },
+            "result": {
+              "status": "coverage unknown",
+              "versions": {}
+            },
+            "targets_complete": false,
+            "targets_truncated": false,
+            "paths_truncated": false
+          }
+        ],
+        "risks": [],
+        "reviews": [],
+        "review_history": [],
+        "limitations": [],
+        "graph_complete": true,
+        "raw_material_read": "not_assessed"
+      }
+    }
+  ]
+}

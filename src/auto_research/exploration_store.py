@@ -75,7 +75,7 @@ def _scopes(db, generation):
 def _work_basis(store, db, details):
     # An older fingerprint cannot retrospectively prove the state of an input
     # that was absent from its roots when the work was authorized.
-    from .evidence_read import build_evidence_view, scope_work_basis
+    from .evidence_read import scope_work_basis
     mode = details.get('basis_mode')
     roots = details['roots']
     if mode == 'scope-work-v2':
@@ -85,8 +85,19 @@ def _work_basis(store, db, details):
     if set(_work_input_references(details.get('next_work') or {})) - set(roots):
         return None
     if mode == 'scope-work-v1':
+        # Development-only E3 round-1 format; schema <=15 never shipped this.
         return scope_work_basis(store, db, roots, details['scope_id'], details['route_refs'])
-    return build_evidence_view(store, db, details['roots'])['basis_digest']
+    return None
+
+
+def _work_invalid_reason(store, db, details):
+    if details.get('basis_mode') not in {'scope-work-v1', 'scope-work-v2'}:
+        # Pre-E3 digests cover a different view layout. Do not claim the
+        # evidence changed, or manufacture authorization with a new digest.
+        return 'exploration_basis_format_upgraded'
+    if _work_basis(store, db, details) != details['basis_digest']:
+        return 'exploration_basis_changed'
+    return None
 
 
 def _work_input_references(work):
@@ -257,9 +268,10 @@ def check_exploration_task(store, db, task_id):
     if store._project(db)["config"].get("exploration_policy") != "exploration-v1":
         settle_exploration_work(store, db, row, 'cancelled', 'exploration_disabled')
         return {"allowed": False, "reason": "exploration_disabled", 'state':'cancelled'}
-    if _work_basis(store, db, details) != details["basis_digest"]:
-        settle_exploration_work(store, db, row, 'stale', 'exploration_basis_changed')
-        return {"allowed": False, "reason": "exploration_basis_changed", 'state':'cancelled'}
+    reason = _work_invalid_reason(store, db, details)
+    if reason:
+        settle_exploration_work(store, db, row, 'stale', reason)
+        return {"allowed": False, "reason": reason, 'state':'cancelled'}
     return {"allowed": True, "exploration": True}
 
 
@@ -655,16 +667,21 @@ class ExplorationStore:
             for result_id in result_ids:
                 db.execute("UPDATE exploration_results SET handled_by_decision=? WHERE result_id=?", (decision_id, result_id))
             intent_ids = []
-            for index, selected_work in enumerate(works):
-                intent_id = 'exploration-work:' + decision_id + (f':{index + 1}' if batch is not None else '')
-                # Reconcile the route changes before taking the post-decision
-                # basis; the outer transaction will reconcile again harmlessly.
+            if works:
+                # All route revisions and result acknowledgements above are
+                # already final for this transaction. Reconcile once per batch.
                 from .review_lifecycle import reconcile
                 reconcile(self, db, operation)
+            work_bases = {}
+            for index, selected_work in enumerate(works):
+                intent_id = 'exploration-work:' + decision_id + (f':{index + 1}' if batch is not None else '')
                 selected_refs = [current_routes[ref]['ref'] for ref in selected_work['route_refs']]
                 work_roots = sorted(set(snapshot['view']['roots']) | set(work_input_refs[index]))
-                post_digest = scope_work_basis(self, db, work_roots, scope_id, selected_refs,
-                                               ignore_review_scope_events=True)
+                basis_key = (tuple(work_roots), tuple(sorted(selected_refs)))
+                if basis_key not in work_bases:
+                    work_bases[basis_key] = scope_work_basis(self, db, work_roots, scope_id, selected_refs,
+                                                           ignore_review_scope_events=True)
+                post_digest = work_bases[basis_key]
                 details = {"scope_id": scope_id, "scope_ref": scope["ref"], "generation": run["generation"],
                            "decision_id": decision_id, "basis_digest": post_digest, "basis_mode": "scope-work-v2",
                            "roots": snapshot["view"]["roots"], "next_work": selected_work,
@@ -709,13 +726,16 @@ class ExplorationStore:
             require_new_work(db, host, session, role="main", waiting=True)
             if self._project(db)["config"].get("exploration_policy") != "exploration-v1":
                 return settle_exploration_work(self, db, row, 'cancelled', 'exploration_disabled')
-            if _work_basis(self, db, details) != details["basis_digest"]:
-                return settle_exploration_work(self, db, row, 'stale', 'exploration_basis_changed')
+            reason = _work_invalid_reason(self, db, details)
+            if reason:
+                return settle_exploration_work(self, db, row, 'stale', reason)
             try:
                 check_node(self, db)
             except BudgetError as error:
-                db.execute("UPDATE workflow_intents SET state='waiting_budget',updated_at=? WHERE intent_id=?", (now(), intent_id))
-                return {"intent_id": intent_id, "state": "waiting_budget", "reason": str(error)}
+                changed = row['state'] != 'waiting_budget'
+                if changed:
+                    db.execute("UPDATE workflow_intents SET state='waiting_budget',updated_at=? WHERE intent_id=?", (now(), intent_id))
+                return {"intent_id": intent_id, "state": "waiting_budget", "reason": str(error), 'notify_waiting': changed}
             work = details["next_work"]
             db.execute('SAVEPOINT exploration_propose')
             try:
@@ -817,6 +837,8 @@ class ExplorationStore:
         return self._mutate("exploration.task_check", payload, operation, work)
 
     def exploration_page(self, collection, *, cursor=None, limit=50, ref=None, scope_id=None):
+        if cursor is not None and not isinstance(cursor, dict):
+            raise ValidationError('Exploration cursor must be an object')
         kinds = {"exploration_scopes": "scope", "exploration_routes": "route",
                  "exploration_decisions": "decision", "exploration_results": "result", "exploration_intents": "intent"}
         if collection not in kinds:
@@ -870,6 +892,11 @@ class ExplorationStore:
                     values.append(item)
             else:
                 values = []
+            if ref and kind in {'decision', 'result', 'intent'}:
+                found = next((item for item in values if item['ref'] == ref), None)
+                if not found:
+                    raise NotFoundError(f'Unknown exploration reference: {ref}')
+                return found
             signature = {"project_id": project_id, "collection": collection, "generation": generation,
                          "scope_id": scope_id, "scope_refs": [item['ref'] for item in scopes],
                          "revisions": hashlib.sha256(encoded(values).encode()).hexdigest()}
@@ -877,7 +904,9 @@ class ExplorationStore:
             if cursor is not None:
                 if any(cursor.get(key) != value for key, value in signature.items()):
                     raise ConflictError("read_view_changed: refresh exploration")
-                offset = int(cursor["offset"])
+                offset = cursor.get('offset')
+                if type(offset) is not int or not 0 <= offset <= len(values):
+                    raise ValidationError('Invalid exploration cursor offset')
             limit = max(1, min(int(limit or 50), 100))
             items = values[offset:offset + limit]
             next_offset = offset + len(items)

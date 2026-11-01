@@ -2,6 +2,7 @@
 
 import sqlite3
 import json
+from pathlib import Path
 
 import pytest
 
@@ -282,7 +283,7 @@ def test_new_review_challenge_still_invalidates_work_input(completed):
 
 @pytest.mark.parametrize('input_in_snapshot', [False, True])
 @pytest.mark.parametrize('stage', ['before_materialize', 'before_claim'])
-def test_legacy_pending_work_requires_reapproval_only_if_input_was_unbound(completed, input_in_snapshot, stage):
+def test_development_v1_pending_work_requires_reapproval_if_input_was_unbound(completed, input_in_snapshot, stage):
     host, store, _, _, _, publication = completed
     host.call('focus', node_id=None, role='planner', mode='manual')
     host.call('exploration_policy', mode='on')
@@ -296,7 +297,7 @@ def test_legacy_pending_work_requires_reapproval_only_if_input_was_unbound(compl
         'scope_ref': scope['ref'], 'route_refs': [route['ref']], 'snapshot_id': page['snapshot_id'],
         'action': 'probe', 'reason': 'Approve work', 'next_work': work([route], inputs=[source])})
     task = host.call('exploration_materialize', intent_id=chosen['intent_id']) if stage == 'before_claim' else None
-    # Emulate an existing v1 authorization using the exact old fingerprint.
+    # Development-only E3 round-1 format, NOT a schema15 authorization.
     with store._connection() as db:
         row = db.execute('SELECT details FROM workflow_intents WHERE intent_id=?', (chosen['intent_id'],)).fetchone()
         details = json.loads(row['details'])
@@ -313,6 +314,59 @@ def test_legacy_pending_work_requires_reapproval_only_if_input_was_unbound(compl
     else:
         result = host.call('exploration_materialize', intent_id=chosen['intent_id'])
         assert result['state'] == ('materialized' if input_in_snapshot else 'stale')
+
+
+@pytest.mark.parametrize('input_in_snapshot', [False, True])
+@pytest.mark.parametrize('stage', ['before_materialize', 'before_claim'])
+def test_real_schema15_intents_require_explicit_format_reapproval(tmp_path, monkeypatch, input_in_snapshot, stage):
+    from auto_research import native_store
+    from auto_research.native_store import NativeStore
+    from auto_research.evidence_read import _hash
+    fixture = json.loads((Path(__file__).parent / 'fixtures/schema15-exploration-intents.json').read_text())
+    case = next(case for case in fixture['cases'] if case['input_in_snapshot'] == input_in_snapshot)
+    old_details = json.loads(case['intent']['details'])
+    assert 'basis_mode' not in old_details
+    assert _hash(case['view']) == old_details['basis_digest']
+    assert fixture['source_commit'] == '31fd90da8a7634619a1a42b23a62b680f483294d'
+    monkeypatch.setattr(native_store, 'SCHEMA_VERSION', 15)
+    host = Host(tmp_path)
+    scope, routes = setup(host)
+    chosen = decision(host, scope, routes, next_work=work([routes[0]]))
+    task = host.call('exploration_materialize', intent_id=chosen['intent_id']) if stage == 'before_claim' else None
+    if task:
+        old_details.update(task_id=task['task_id'], node_id=task['node_id'])
+    store = NativeStore(host.root)
+    with store._connection() as db:
+        db.execute('UPDATE workflow_intents SET details=? WHERE intent_id=?', (json.dumps(old_details), chosen['intent_id']))
+    monkeypatch.setattr(native_store, 'SCHEMA_VERSION', 16)
+    store = NativeStore(host.root)
+    host.service.stores[str(host.root)] = store
+    if task:
+        result = host.call('node_launch_claim', task_id=task['task_id'], concurrency=2)
+        assert not result['claimed']
+    else:
+        result = host.call('exploration_materialize', intent_id=chosen['intent_id'])
+        assert result['state'] == 'stale'
+    assert result['reason'] == 'exploration_basis_format_upgraded'
+    with store._read() as db:
+        row = db.execute('SELECT state,details FROM workflow_intents WHERE intent_id=?', (chosen['intent_id'],)).fetchone()
+        assert row['state'] == 'stale'
+        assert json.loads(row['details'])['basis_digest'] == old_details['basis_digest']
+        assert db.execute('SELECT COUNT(*) FROM exploration_results').fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM workflow_notifications WHERE kind='exploration_result'").fetchone()[0] == 1
+
+
+def test_budget_wait_hint_is_emitted_once_per_transition(tmp_path):
+    host = Host(tmp_path)
+    scope, routes = setup(host)
+    # Occupy the one-node ceiling without starting an exploration task.
+    host.call('propose', question='Existing node', why_now='Initial work', plan='Measure', root_reason='Prior work')
+    host.call('runtime_budget_set', limits={'max_total_nodes': 1}, reason='One node ceiling')
+    chosen = decision(host, scope, routes, next_work=work([routes[0]]))
+    first = host.call('exploration_materialize', intent_id=chosen['intent_id'])
+    second = host.call('exploration_materialize', intent_id=chosen['intent_id'])
+    assert first['state'] == second['state'] == 'waiting_budget'
+    assert first['notify_waiting'] and not second['notify_waiting']
 
 
 def test_missing_expected_result_survives_later_stop_and_is_reported(tmp_path):

@@ -12,7 +12,7 @@ DDL = """
 CREATE TABLE IF NOT EXISTS exploration_allocations (
  reservation_id TEXT PRIMARY KEY REFERENCES runtime_budget_reservations(reservation_id),
  intent_id TEXT NOT NULL UNIQUE, scope_id TEXT NOT NULL, task_id TEXT,
- amount REAL NOT NULL CHECK(amount >= 0), unit TEXT NOT NULL,
+ amount REAL NOT NULL CHECK(amount > 0), unit TEXT NOT NULL,
  resources TEXT NOT NULL, resource_state TEXT NOT NULL,
  actual_usage REAL, updated_at TEXT NOT NULL
 );
@@ -56,9 +56,14 @@ def migrate_schema16(path: Path):
                         or saved.execute("PRAGMA integrity_check").fetchone()[0] != "ok"):
                     raise ValidationError("Invalid schema 15 backup")
                 for table in preserved:
-                    if saved.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall() != db.execute(
-                            f"SELECT * FROM {table} ORDER BY rowid").fetchall():
-                        raise ValidationError(f"Schema 15 backup differs: {table}")
+                    before = saved.execute(f'SELECT * FROM {table} ORDER BY rowid')
+                    current = db.execute(f'SELECT * FROM {table} ORDER BY rowid')
+                    while True:
+                        chunk, expected = current.fetchmany(256), before.fetchmany(256)
+                        if chunk != expected:
+                            raise ValidationError(f'Schema 15 backup differs: {table}')
+                        if not chunk:
+                            break
             ensure_schema16(db)
             db.execute("PRAGMA user_version=16")
             db.commit()

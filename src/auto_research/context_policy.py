@@ -329,10 +329,13 @@ def exploration_overview(store, db, generation):
         "GROUP BY route_id) x ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (generation,))]
     pending = db.execute('SELECT COUNT(*) FROM exploration_results WHERE handled_by_decision IS NULL AND '
         'scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?)', (generation,)).fetchone()[0]
-    intents = list(db.execute("SELECT state,details FROM workflow_intents WHERE kind='exploration_work' "
-        "AND json_extract(details,'$.generation')=? AND state IN ('pending','waiting_budget','materialized') ORDER BY rowid", (generation,)))
+    intents = list(db.execute("SELECT i.state,i.details,t.error FROM workflow_intents i LEFT JOIN exploration_tasks t "
+        "ON t.task_id=json_extract(i.details,'$.task_id') WHERE i.kind='exploration_work' "
+        "AND json_extract(i.details,'$.generation')=? AND (i.state IN ('pending','waiting_budget') "
+        "OR i.state='materialized' AND (t.state IN ('queued','starting','running','waiting','stopping','unverified') "
+        "OR t.task_id IS NULL)) ORDER BY i.rowid", (generation,)))
     decisions = []
-    for scope in [*active, *[item for item in scopes if item not in active]][:3]:
+    for scope in [*active, *[item for item in scopes if item not in active]]:
         row = db.execute('SELECT decision_id,data FROM exploration_decisions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1',
                          (scope['scope_id'],)).fetchone()
         if row:
@@ -340,7 +343,9 @@ def exploration_overview(store, db, generation):
             decisions.append({'scope_id': scope['scope_id'], 'decision_id': row['decision_id'],
                 'action': data.get('action'), 'provisional': data.get('provisional', False),
                 'expected_results_total': len(data.get('expected_results', [])),
-                'missing_results_total': len(data.get('missing_results', [])),
+                'missing_results_total': len(data.get('expected_missing', [])),
+                'unacknowledged_missing_total': sum(not item.get('acknowledged_by_decision') for item in data.get('expected_missing', [])),
+                'declared_missing_results_total': len(data.get('missing_results', [])),
                 'revises_decision_id': data.get('revises_decision_id')})
     selected = active[-1] if active else scopes[-1]
     return {'scope_ref': selected['ref'], 'objective': selected['objective'],
@@ -350,6 +355,10 @@ def exploration_overview(store, db, generation):
         'routes_total': len(routes), 'active_routes_total': sum(item.get('disposition') == 'investigating' for item in routes),
         'pending_results_total': pending, 'pending_work_total': len(intents),
         'waiting_budget_total': sum(row['state'] == 'waiting_budget' for row in intents),
+        'waiting_resource_total': sum((row['error'] or '').startswith('waiting_resource:') for row in intents),
+        'provisional_scopes_total': sum(item['provisional'] for item in decisions),
+        'missing_results_total': sum(item['missing_results_total'] for item in decisions),
+        'unacknowledged_missing_total': sum(item['unacknowledged_missing_total'] for item in decisions),
         'index_complete': False,
         'scopes_index': {'collection':'exploration_scopes', 'generation':generation},
         'routes_index': {'collection':'exploration_routes', 'generation':generation},
@@ -358,7 +367,7 @@ def exploration_overview(store, db, generation):
         'scopes': [{'ref': item['ref'], 'scope_id': item['scope_id'], 'objective': item['objective'][:100],
                     'state': item.get('state', 'active')} for item in [*active, *[scope for scope in scopes if scope not in active]][:3]],
         'routes': [{key: route[key] for key in ('ref','scope_id','title','disposition')} for route in routes[:3]],
-        'latest_decisions': decisions}
+        'latest_decisions': decisions[:3]}
 
 
 def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None, final_ref=None):
@@ -382,13 +391,15 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         overview = exploration_overview(store, db, run['generation']) if run else None
         if overview:
             views['exploration'] = {key: overview[key] for key in
-                ('scope_ref', 'scopes_total', 'active_scopes_total', 'routes_total', 'pending_results_total')}
+                ('scope_ref', 'scopes_total', 'active_scopes_total', 'routes_total', 'pending_results_total',
+                 'provisional_scopes_total', 'missing_results_total', 'unacknowledged_missing_total')}
             views['exploration'].update({'details_omitted': True,
                 'scopes': {'collection':'exploration_scopes'}, 'routes': {'collection':'exploration_routes'},
                 'results': {'collection':'exploration_results'}, 'intents': {'collection':'exploration_intents'}})
             exploration_details = {'objective':overview['objective'][:200], 'scope_sample':overview['scopes'],
                 'route_sample':overview['routes'], 'latest_decisions':overview['latest_decisions'],
-                'pending_work_total':overview['pending_work_total'], 'waiting_budget_total':overview['waiting_budget_total']}
+                'pending_work_total':overview['pending_work_total'], 'waiting_budget_total':overview['waiting_budget_total'],
+                'waiting_resource_total':overview['waiting_resource_total']}
             from .runtime_budget import exploration_budget_view
             budget = exploration_budget_view(store, db)
             if budget.get('available'):

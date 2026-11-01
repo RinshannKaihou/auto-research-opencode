@@ -1,5 +1,14 @@
 /** Plain-text summaries of ledger state for /research dialogs. */
 
+export function runtimeBudgetSummary(budget: any): any {
+  const {exploration, ...runtime} = budget
+  if (!exploration) return runtime
+  const {allocations = [], resource_leases = [], by_scope = {}, ...totals} = exploration
+  return {...runtime, exploration:{...totals, allocations_total:allocations.length,
+    resource_leases_total:resource_leases.length, scopes_total:Object.keys(by_scope).length,
+    expand:{collection:'exploration_budget'}}}
+}
+
 const RUN_STATES: Record<string, string> = {
   manual: "手动",
   running: "自主推进中",

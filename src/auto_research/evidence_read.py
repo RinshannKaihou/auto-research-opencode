@@ -501,7 +501,9 @@ class EvidenceCache:
         return snapshot
 
     def page(self, store, *, refs=None, include_materials=None, draft_id=None, snapshot_id=None, cursor=None,
-             material_ref=None, limit=4096, host=None, session=None, scope_id=None):
+             material_ref=None, limit=None, host=None, session=None, scope_id=None):
+        if cursor is not None and not isinstance(cursor, dict):
+            raise ValidationError('Evidence cursor must be an object')
         if material_ref or (cursor and cursor.get('part') == 'material'):
             return self.materials.page(store, material_ref, cursor, limit)
         if cursor:
@@ -531,9 +533,9 @@ class EvidenceCache:
             raise ConflictError('read_view_changed: exploration scope changed')
         is_decision = snapshot.get('draft_id') and snapshot.get('format_version') == 2
         source = snapshot['body'].encode('utf-8') if is_decision else snapshot['body']
-        if not isinstance(offset, int) or offset < 0 or offset > len(source):
+        if type(offset) is not int or offset < 0 or offset > len(source):
             raise ValidationError("Invalid evidence cursor offset")
-        limit = max(4 if is_decision else 1, min(int(limit or 4096), 16384))
+        limit = max(4 if is_decision else 1, min(int(limit or (16384 if is_decision else 4096)), 16384))
         end = min(offset + limit, len(source))
         if is_decision:
             while end < len(source) and source[end] & 0xc0 == 0x80:
@@ -550,7 +552,7 @@ class EvidenceCache:
             "offset": offset, "end": end, "chunk": chunk, "total_chars": len(snapshot["body"]),
             **({'part': 'decision', 'offset_unit': 'utf8_byte', 'total_bytes': len(source)} if is_decision else {}),
             "draft_id": snapshot.get('draft_id'),
-            **({'delivery_manifest': snapshot['delivery_manifest']} if snapshot.get('delivery_manifest') else {}),
+            **({'delivery_manifest': snapshot['delivery_manifest']} if offset == 0 and snapshot.get('delivery_manifest') else {}),
             "cursor": {"snapshot_id": snapshot_id, "offset": end,
                        **({'draft_id': snapshot['draft_id']} if snapshot.get('draft_id') else {})}
                       if end < len(source) else None,

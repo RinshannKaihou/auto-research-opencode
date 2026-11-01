@@ -63,9 +63,9 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
       return { kind: "rpc", action, args: { contract: tail || null } }
     case 'budget': {
       if (!tail) return {kind:'rpc',action,args:{}}
-      const resource = /^resource\s+(\S+)\s+((?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
+      const resource = /^resource\s+(\S+)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
       if (resource) {
-        if (!Number.isSafeInteger(Number(resource[2])) || Number(resource[2])<=0) return {kind:'error',message:'资源容量须为正整数单位'}
+        if (resource[2]!=='off' && (!Number.isSafeInteger(Number(resource[2])) || Number(resource[2])<=0)) return {kind:'error',message:'资源容量须为正整数单位或 off'}
         return {kind:'rpc',action,args:{limit:'resource',resource:resource[1]!,value:resource[2]!,reason:resource[3]!}}
       }
       const match = /^(turns|nodes|seconds|tokens|cost|work)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)

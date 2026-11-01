@@ -222,8 +222,9 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
               {(exploration) => <box flexDirection="column">
                 <text fg={colors.base}>{`当前选择  ${exploration().objective}`}</text>
                 <text fg={colors.muted}>{`范围 ${exploration().activeScopes} 活跃 / ${exploration().scopesTotal} 全部 · 候选 ${exploration().routesTotal} · 在途工作 ${exploration().pendingWork} · 待处理结果 ${exploration().pendingTotal}`}</text>
+                <text fg={colors.warning}>{`等待资源 ${exploration().waitingResources} · 临时选择范围 ${exploration().provisionalScopes} · 缺失结果 ${exploration().missingResults}（未处置 ${exploration().unacknowledgedMissing}）`}</text>
                 <For each={exploration().scopes}>{scope => <text fg={colors.base}>{`${scope.ref}  ${scope.state} · ${scope.objective}`}</text>}</For>
-                <For each={exploration().decisions.filter(item=>item.provisional)}>{decision => <text fg={colors.warning}>{`临时选择 ${decision.decision_id} · 预期 ${decision.expected_results_total} / 缺失 ${decision.missing_results_total}`}</text>}</For>
+                <For each={exploration().decisions.filter(item=>item.provisional)}>{decision => <text fg={colors.warning}>{`临时选择 ${decision.decision_id} · 预期 ${decision.expected_results_total} / 缺失 ${decision.missing_results_total}（未处置 ${decision.unacknowledged_missing_total ?? 0}）`}</text>}</For>
               </box>}
             </Show>
             <text wrapMode="none" marginTop={1}>

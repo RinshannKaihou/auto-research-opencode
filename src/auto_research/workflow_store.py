@@ -189,6 +189,11 @@ class WorkflowStore:
             ),
             "intents": ("workflow_intents", "session_id=? AND kind='jobs'", (session_id,)),
         }
+        task_scopes = {}
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 13:
+            task_scopes = {row[0]: row[1] for row in db.execute(
+                "SELECT json_extract(details,'$.task_id'),json_extract(details,'$.scope_id') "
+                "FROM workflow_intents WHERE kind='exploration_work' AND json_extract(details,'$.task_id') IS NOT NULL")}
         result, next_cursors = {}, {}
         for name, (table, where, args) in specs.items():
             columns = (
@@ -211,10 +216,7 @@ class WorkflowStore:
                 # Do not move large research text into the control channel.
                 if name == "tasks":
                     value.pop("context", None)
-                    if db.execute('PRAGMA user_version').fetchone()[0] >= 13:
-                        scope = db.execute("SELECT json_extract(details,'$.scope_id') FROM workflow_intents "
-                            "WHERE kind='exploration_work' AND json_extract(details,'$.task_id')=?", (value['task_id'],)).fetchone()
-                        value['exploration_scope_id'] = scope[0] if scope else None
+                    value['exploration_scope_id'] = task_scopes.get(value['task_id'])
                 for key in ("waiting", "payload", "details"):
                     if key in value:
                         value[key] = json.loads(value[key])

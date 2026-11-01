@@ -97,6 +97,7 @@ export function fairTaskOrder(tasks: any[], afterScope?: string): any[] {
 }
 
 export class Engine {
+  /** In-memory rotation hint; durable queue order remains the restart fallback. */
   private lastScheduledScope: Map<string,string>
   private busy: Set<string>
   /** Interrupts the engine issued itself; OpenCode reports every interrupt as "user". */
@@ -423,6 +424,14 @@ export class Engine {
     if (notice.kind === 'exploration_result') {
       return `探索工作未启动：${payload.reason}。待处理结果 ${payload.result_id}；请读取探索结果并决定下一步。`
     }
+    if (notice.kind === 'resource_wait') {
+      const blockers = (payload.blockers ?? []).map((item: any) => `${item.task_id}（${item.task_state} / ${item.state}）`).join('、')
+      const commands: string[] = payload.recovery_commands ?? []
+      return [`任务 ${payload.task_id} 等待资源：${JSON.stringify(payload.resources)}。`,
+        blockers ? `持有任务：${blockers}。` : '请核对已配置的资源容量。',
+        commands.length ? `正常节点结束仍需用户独立核实外部进程退出，再执行：\n${commands.join('\n')}` : '运行中或退出未核实的任务继续占用资源；不会自动释放。',
+      ].join('\n')
+    }
     const pubs = await this.research.storage
       .request("project_read", { root, view: "page", collection: "publications", node_id: payload.node_id, limit: 5 })
       .catch(() => null)
@@ -510,7 +519,7 @@ export class Engine {
       for (const intent_id of intents) {
         const result: any = await this.call('exploration_materialize', main, { intent_id })
         if (['stale','failed','cancelled'].includes(result.state)) settled = true
-        if (result.state === 'waiting_budget') await this.say(main, `探索工作等待预算：${result.reason}`).catch(() => {})
+        if (result.state === 'waiting_budget' && result.notify_waiting) await this.say(main, `探索工作等待预算：${result.reason}`).catch(() => {})
       }
       if (intents.length) state = await this.state(main)
     }
@@ -524,7 +533,7 @@ export class Engine {
           active++
           this.lastScheduledScope.set(root,task.exploration_scope_id ?? '__ordinary__')
         }
-        if (result === 'settled') settled = true
+        if (result === 'settled' || result === 'notify') settled = true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if ((error as any)?.unsent_rolled_back) {
@@ -564,14 +573,17 @@ export class Engine {
     if (settled) await this.deliver(root)
   }
 
-  private async startTask(root: string, main: string, task: any): Promise<'started' | 'settled' | 'skipped'> {
+  private async startTask(root: string, main: string, task: any): Promise<'started' | 'settled' | 'notify' | 'skipped'> {
     let workspace: string | null = task.cwd
     if (!workspace) {
       const prepared = await this.call("prepare_branch", main, { node_id: task.node_id }, `${task.task_id}:prepare`)
       workspace = prepared.workspace as string
     }
     const launch = await this.call("node_launch_claim", main, { task_id: task.task_id, concurrency: this.concurrency })
-    if (!launch.claimed) return ['exploration_basis_changed','exploration_disabled'].includes(launch.reason) ? 'settled' : 'skipped'
+    if (!launch.claimed) {
+      if (launch.reason === 'waiting_resource' && launch.notification_id) return 'notify'
+      return ['exploration_basis_changed','exploration_basis_format_upgraded','exploration_disabled'].includes(launch.reason) ? 'settled' : 'skipped'
+    }
     let createAttempted = false
     let createConfirmed = !!launch.reuse
     let kickoffAttempted = false
@@ -651,16 +663,32 @@ export class Engine {
       this.research.notifyChanged(root)
       const intents: string[] = decision.intent_ids ?? (decision.intent_id ? [decision.intent_id] : [])
       if (!intents.length) return decision
-      const state = await this.state(sessionID)
+      let state: any
+      try { state = await this.state(sessionID) }
+      catch (error) {
+        return {...decision, decision_recorded:true, works:intents.map(intent_id=>({intent_id,state:'unconfirmed'})),
+          errors:[{phase:'status',reason:String(error)}], recovery:'Decision is recorded; query or retry the same intent IDs. Do not repeat the decision.'}
+      }
       if (state.workflow?.run?.state !== 'running') {
         const works = intents.map(intent_id => ({intent_id,state:'pending',reason:'awaiting_auto'}))
-        return {...decision,work:works[0],works}
+        return {...decision,decision_recorded:true,work:works[0],works}
       }
-      const works = []
-      for (const intent_id of intents) works.push(await this.call<any>('exploration_materialize', sessionID, {intent_id}))
-      if (works.some(work => work.state === 'materialized')) await this.schedule(root)
-      if (works.some(work => ['stale','failed','cancelled'].includes(work.state))) await this.deliver(root)
-      return {...decision,work:works[0],works}
+      const works: any[] = [], errors: {phase:string;intent_id?:string;reason:string}[] = []
+      for (const intent_id of intents) {
+        try { works.push(await this.call<any>('exploration_materialize', sessionID, {intent_id})) }
+        catch (error) {
+          works.push({intent_id,state:'unconfirmed'})
+          errors.push({phase:'materialize',intent_id,reason:String(error)})
+        }
+      }
+      if (works.some(work => work.state === 'materialized')) {
+        try { await this.schedule(root) } catch (error) { errors.push({phase:'schedule',reason:String(error)}) }
+      }
+      if (works.some(work => ['stale','failed','cancelled'].includes(work.state))) {
+        try { await this.deliver(root) } catch (error) { errors.push({phase:'deliver',reason:String(error)}) }
+      }
+      return {...decision,decision_recorded:true,work:works[0],works,errors,
+        ...(errors.length ? {recovery:'Decision is recorded; query or retry the same intent IDs. Do not repeat the decision.'} : {})}
     })
   }
 

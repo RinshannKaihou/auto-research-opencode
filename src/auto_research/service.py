@@ -1085,11 +1085,14 @@ class NativeService:
                     items = ([{'kind':'allocation', **item} for item in budget.get('allocations', [])]
                              + [{'kind':'resource_lease', **item} for item in budget.get('resource_leases', [])])
                     digest = hashlib.sha256(json.dumps(budget, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-                    cursor = request.get('cursor') or {}
+                    cursor = request.get('cursor')
+                    if cursor is not None and not isinstance(cursor, dict):
+                        raise ValidationError('Exploration budget cursor must be an object')
+                    cursor = cursor or {}
                     if cursor and (cursor.get('digest') != digest or cursor.get('project_root') != str(root)):
                         raise ConflictError('read_view_changed: refresh exploration budget')
-                    offset = int(cursor.get('offset', 0))
-                    if offset < 0 or offset > len(items):
+                    offset = cursor.get('offset', 0)
+                    if type(offset) is not int or offset < 0 or offset > len(items):
                         raise ValidationError('Invalid exploration budget cursor offset')
                     limit = max(1, min(int(request.get('limit') or 50), 100))
                     summary = {key:value for key,value in budget.items() if key not in {'allocations','resource_leases'}}
@@ -1106,6 +1109,8 @@ class NativeService:
                     value = store.exploration_page('exploration_scopes', ref=request['ref'])
                 elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/route/'):
                     value = store.exploration_page('exploration_routes', ref=request['ref'])
+                elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/decision/'):
+                    value = store.exploration_page('exploration_decisions', ref=request['ref'])
                 elif request.get('collection')=='adoptions':
                     value = store.adoptions(**{key:request[key] for key in ('cursor','limit','node_id') if key in request})
                 elif request.get('collection') in {'review_candidates','review_obligations','review_events'}:
@@ -1242,6 +1247,9 @@ class NativeService:
                                       "WHERE p.id=1 AND w.host_id=? AND w.session_id=? AND w.role='main' AND w.detached=0",
                                       (host_id, session_id)).fetchone()
                 for index, page in enumerate(pages):
+                    if not isinstance(page, dict):
+                        rejected.append({'index': index, 'reason': 'page_mismatch'})
+                        continue
                     if page.get('part') == 'material':
                         if not main:
                             rejected.append({'index': index, 'reason': 'wrong_session'})
