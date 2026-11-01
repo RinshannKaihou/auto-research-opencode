@@ -19,6 +19,26 @@ def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
 
 
+def cancel_unstarted_exploration(store, db, generation, reason):
+    """Settle intents before a control transition bulk-cancels queued tasks.
+
+    Started and uncertain tasks deliberately remain untouched. The existing
+    settlement path owns reservation release, durable results and notices.
+    """
+    if db.execute('PRAGMA user_version').fetchone()[0] < 13:
+        return set()
+    from .exploration_store import settle_exploration_work
+    settled_tasks = set()
+    rows = list(db.execute("SELECT * FROM workflow_intents WHERE kind='exploration_work' "
+        "AND state IN ('pending','waiting_budget','materialized') "
+        "AND json_extract(details,'$.generation')=? ORDER BY rowid", (generation,)))
+    for row in rows:
+        settled = settle_exploration_work(store, db, row, 'cancelled', reason)
+        if settled and settled['task_id']:
+            settled_tasks.add(settled['task_id'])
+    return settled_tasks
+
+
 DDL = """
 CREATE TABLE IF NOT EXISTS workflow_project (
  id INTEGER PRIMARY KEY CHECK(id=1), main_session_id TEXT, state TEXT NOT NULL,
@@ -191,6 +211,10 @@ class WorkflowStore:
                 # Do not move large research text into the control channel.
                 if name == "tasks":
                     value.pop("context", None)
+                    if db.execute('PRAGMA user_version').fetchone()[0] >= 13:
+                        scope = db.execute("SELECT json_extract(details,'$.scope_id') FROM workflow_intents "
+                            "WHERE kind='exploration_work' AND json_extract(details,'$.task_id')=?", (value['task_id'],)).fetchone()
+                        value['exploration_scope_id'] = scope[0] if scope else None
                 for key in ("waiting", "payload", "details"):
                     if key in value:
                         value[key] = json.loads(value[key])
@@ -390,6 +414,7 @@ class WorkflowStore:
                 if state == "stopping":
                     affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
                         "WHERE state IN ('queued','starting','running','waiting','stopping')"))
+                    settled_tasks = cancel_unstarted_exploration(self, db, generation, 'user_stop')
                     db.execute(
                         "UPDATE exploration_tasks SET state='cancelled',updated_at=? WHERE state='queued'",
                         (at,),
@@ -401,6 +426,8 @@ class WorkflowStore:
                     db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0,error='stop: execution exit not verified',updated_at=? WHERE state IN ('starting','running')", (at,))
                     db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (at,))
                     for task in affected_tasks:
+                        if task['task_id'] in settled_tasks:
+                            continue
                         outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
                         self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
                             outcome, None, {'task_id': task['task_id'], 'reason': 'user_stop'})

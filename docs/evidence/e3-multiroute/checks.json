@@ -1,0 +1,113 @@
+{
+  "date": "2026-11-01",
+  "baseline_commit": "84262f6ef2091cdea3813626520b528c99a8695e",
+  "source_manifest": "source-manifest.json",
+  "engineering": [
+    {
+      "command": "python3 -m pytest tests/ -q",
+      "exit_code": 0,
+      "result": "726 passed",
+      "output": "runs/pytest.txt"
+    },
+    {
+      "command": "cd plugin && bun run sync:python && bun test",
+      "exit_code": 0,
+      "result": "181 pass, 0 fail, 903 expect calls",
+      "output": "runs/bun-test.txt"
+    },
+    {
+      "command": "cd plugin && bun run typecheck",
+      "exit_code": 0,
+      "output": "runs/typecheck.txt"
+    },
+    {
+      "command": "Compare each shipped plugin/python/auto_research/*.py with src/auto_research",
+      "exit_code": 0,
+      "files": 41,
+      "mismatches": []
+    },
+    {
+      "command": "PYTHONPATH=src python3 scripts/e1e2_compatibility.py --roots <private roots list> --output docs/evidence/e3-multiroute/local-project-compatibility.json",
+      "exit_code": 0,
+      "projects": 5,
+      "migration": "10 to 16",
+      "source_db_wal_unchanged": true
+    },
+    {
+      "command": "git diff --check -- src tests plugin scripts README.md CHANGELOG.md docs/README.md \"docs/Exploration and multi-route management design.md\" \"docs/Remediation roadmap auto-research-opencode.md\" \"docs/Remediation implementation plan auto-research-opencode.md\"",
+      "exit_code": 0
+    }
+  ],
+  "actual_host": [
+    {
+      "command": "python3 scripts/probe_e3_run.py --scenario full --output docs/evidence/e3-multiroute/runs/host-full.json",
+      "exit_code": 0,
+      "output": "runs/host-full.json",
+      "provider": "scripted loopback",
+      "runtime_digest": "3a34cec86e2e0c370ce0aae6a259ff6e7b8981d651ff327e2a4fae919fd6df6c"
+    },
+    {
+      "command": "python3 scripts/probe_e3_run.py --scenario multi --output docs/evidence/e3-multiroute/runs/host-multi.json",
+      "exit_code": 0,
+      "output": "runs/host-multi.json",
+      "provider": "scripted loopback",
+      "runtime_digest": "3a34cec86e2e0c370ce0aae6a259ff6e7b8981d651ff327e2a4fae919fd6df6c"
+    },
+    {
+      "command": "python3 scripts/probe_packed_release.py --e3 > docs/evidence/e3-multiroute/runs/packed.json",
+      "exit_code": 0,
+      "output": "runs/packed.json",
+      "backend_from_extracted_package": true,
+      "build_tree_deleted": true,
+      "runtime_digest": "3a34cec86e2e0c370ce0aae6a259ff6e7b8981d651ff327e2a4fae919fd6df6c"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario stale > docs/evidence/e3-multiroute/runs/e1e2-stale.json",
+      "exit_code": 0,
+      "output": "runs/e1e2-stale.json",
+      "provider": "scripted loopback"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario off > docs/evidence/e3-multiroute/runs/e1e2-off.json",
+      "exit_code": 0,
+      "output": "runs/e1e2-off.json",
+      "provider": "scripted loopback"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario restart > docs/evidence/e3-multiroute/runs/e1e2-restart.json",
+      "exit_code": 0,
+      "output": "runs/e1e2-restart.json",
+      "provider": "scripted loopback"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario material-failure --trace-output docs/evidence/e3-multiroute/runs/e1e2-material-trace.json > docs/evidence/e3-multiroute/runs/e1e2-material-failure.json",
+      "exit_code": 0,
+      "output": "runs/e1e2-material-failure.json",
+      "provider": "scripted loopback"
+    }
+  ],
+  "evaluation": {
+    "command": "python3 scripts/e3_evaluation.py selftest --output docs/evidence/e3-multiroute/evaluation/selftest.json",
+    "exit_code": 0,
+    "output": "evaluation/selftest.json",
+    "real_model_effect": "not_run"
+  },
+  "publication": {
+    "version": "0.1.1 unchanged",
+    "committed": false,
+    "pushed": false,
+    "pr_created": false,
+    "published": false,
+    "shared_service_changed": false
+  },
+  "preliminary_findings_resolved": [
+    "Initial Bun run raced the schema16 addition to the bundle allowlist; final sync and full rerun passed.",
+    "Latest migration idempotence regression now targets schema16 while preserving old migration rejection.",
+    "PR11 stale-without-task trigger now changes the selected premise; unrelated-candidate stability has a separate regression.",
+    "Isolated host version query created an existing temporary config directory; harness mkdir was made idempotent."
+  ],
+  "preserved_existing_work": [
+    "Initial planning/archival modifications and untracked review/workspace materials were retained.",
+    "Global git diff --check still reports two pre-existing Markdown hard-break trailing spaces in docs/archive/Remediation implementation plan auto-research-opencode.md lines 5 and 6; this file was not edited in E3."
+  ]
+}

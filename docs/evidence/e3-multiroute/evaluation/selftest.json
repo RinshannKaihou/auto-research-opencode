@@ -1,0 +1,268 @@
+{
+  "version": "e3-evaluation-v1",
+  "kind": "synthetic_fixture_and_scorer_selftest",
+  "real_model_effect": "not_run",
+  "runs_checked": 8,
+  "tasks_checked": [
+    "E3-01-combination",
+    "E3-02-reactivation",
+    "E3-03-shared-async",
+    "E3-04-direct"
+  ],
+  "shared_once": true,
+  "async_overlap": true,
+  "budget_rejection": true,
+  "fabricated_reference_rejected": true,
+  "implicit_execution_rejected": true,
+  "explicit_no_model_runner_checked": true,
+  "isolated_xdg_checked": true,
+  "configuration_mismatch_retained": true,
+  "missing_usage_remains_unknown": true,
+  "paired_inputs_and_measurements_match": true,
+  "measurement_trace": "selftest-measurements.json",
+  "scoring_key_outside_projects": true,
+  "automatic_reports": [
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-001",
+      "task_id": "E3-02-reactivation",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true,
+        "reactivation_reason_provided": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 3,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-002",
+      "task_id": "E3-01-combination",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 4,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-003",
+      "task_id": "E3-01-combination",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 4,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-004",
+      "task_id": "E3-03-shared-async",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 3,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-005",
+      "task_id": "E3-03-shared-async",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 3,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-006",
+      "task_id": "E3-02-reactivation",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "choice_matches_fixture": true,
+        "reactivation_reason_provided": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 3,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-007",
+      "task_id": "E3-04-direct",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "direct_tests_pass": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 0,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    },
+    {
+      "version": "e3-evaluation-v1",
+      "run_id": "run-008",
+      "task_id": "E3-04-direct",
+      "automatic_checks": {
+        "answer_present": true,
+        "reference_format_valid": true,
+        "scope_declared": true,
+        "refs_exist_in_this_run": true,
+        "required_measurements_considered": true,
+        "measurement_budget_respected": true,
+        "direct_tests_pass": true
+      },
+      "automatic_pass": true,
+      "answer_error": null,
+      "work_units": 0,
+      "usage": {
+        "tokens": null,
+        "cost": null,
+        "model_requests": null
+      },
+      "manual_quality_score": null,
+      "manual_review_required": true,
+      "observed_model_match": null,
+      "observed_software_match": null,
+      "paired_effect_eligible": false,
+      "quality_note": "Identity/fixture checks do not grade reasoning, honest limitations, or general research quality.",
+      "group_blind": true,
+      "real_model_effect": "not_run"
+    }
+  ]
+}

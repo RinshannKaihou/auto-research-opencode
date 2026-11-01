@@ -117,7 +117,7 @@ export interface OverviewModel {
     stopReason?: string
     appendixRef?: string
   }
-  exploration?: { objective: string; routesTotal: number; pendingTotal: number; routes: {ref:string;title:string;disposition:string}[] }
+  exploration?: { objective: string; scopesTotal: number; activeScopes: number; pendingWork: number; scopes: {ref:string;objective:string;state:string}[]; decisions: {scope_id:string;decision_id:string;provisional:boolean;expected_results_total:number;missing_results_total:number}[]; routesTotal: number; pendingTotal: number; routes: {ref:string;title:string;disposition:string}[] }
   counts: { label: string; value: number }[]
   /** The publication the conclusion names. */
   final?: PublicationCard
@@ -167,7 +167,9 @@ export function overviewModel(summary: any, presentation: any): OverviewModel | 
         }
       : undefined,
     exploration: summary.exploration ? {
-      objective: summary.exploration.objective, routesTotal: summary.exploration.routes_total,
+      objective: summary.exploration.objective, scopesTotal:summary.exploration.scopes_total ?? 1,
+      activeScopes:summary.exploration.active_scopes_total ?? 1,pendingWork:summary.exploration.pending_work_total ?? 0,
+      scopes:summary.exploration.scopes ?? [],decisions:summary.exploration.latest_decisions ?? [],routesTotal: summary.exploration.routes_total,
       pendingTotal: summary.exploration.pending_results_total, routes: summary.exploration.routes ?? [],
     } : undefined,
     counts: [

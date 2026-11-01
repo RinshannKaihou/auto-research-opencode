@@ -1,0 +1,100 @@
+{
+  "date": "2026-11-01",
+  "baseline_commit": "84262f6ef2091cdea3813626520b528c99a8695e",
+  "source_manifest": "source-manifest.json",
+  "engineering": [
+    {
+      "command": "python3 -m pytest tests/ -q",
+      "exit_code": 0,
+      "result": "748 passed",
+      "output": "pytest-final.txt"
+    },
+    {
+      "command": "cd plugin && bun run sync:python && bun test",
+      "exit_code": 0,
+      "result": "181 pass, 0 fail, 903 assertions",
+      "output": "bun-test-final.txt"
+    },
+    {
+      "command": "cd plugin && bun run typecheck",
+      "exit_code": 0,
+      "output": "typecheck-final.txt"
+    },
+    {
+      "command": "python3 -m pytest tests/test_e3_multiroute.py tests/test_e3_evidence.py tests/test_evidence_read.py tests/test_evidence_conclusion.py tests/test_pr11_remediation.py tests/test_pr11_exploration_recovery.py tests/test_r2_runtime.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "123 passed",
+      "output": "targeted.txt"
+    },
+    {
+      "command": "Compare each shipped plugin/python/auto_research/*.py with src/auto_research",
+      "exit_code": 0,
+      "files": 41,
+      "mismatches": []
+    },
+    {
+      "command": "git diff --check -- src/auto_research/exploration_store.py src/auto_research/evidence_read.py src/auto_research/review_lifecycle.py tests/test_e3_multiroute.py tests/test_e3_evidence.py scripts/probe_e3_run.py plugin/src/tools.ts plugin/README.md CHANGELOG.md <E3 plan> <E3 evidence README>",
+      "exit_code": 0
+    }
+  ],
+  "isolated_host": [
+    {
+      "command": "python3 scripts/probe_e3_run.py --scenario full --output docs/evidence/e3-multiroute/round2/host-full.json",
+      "exit_code": 0,
+      "output": "host-full.json",
+      "runtime_digest": "63bed14108c3396c3051631c40fcd041168c6b04f0c42c7f07c75e1d0e8e38b2"
+    },
+    {
+      "command": "python3 scripts/probe_e3_run.py --scenario multi --output docs/evidence/e3-multiroute/round2/host-multi.json",
+      "exit_code": 0,
+      "output": "host-multi.json",
+      "runtime_digest": "63bed14108c3396c3051631c40fcd041168c6b04f0c42c7f07c75e1d0e8e38b2"
+    },
+    {
+      "command": "python3 scripts/probe_packed_release.py --e3 --e3-output docs/evidence/e3-multiroute/round2/host-packed-full.json > docs/evidence/e3-multiroute/round2/packed.json",
+      "exit_code": 0,
+      "output": "packed.json",
+      "runtime_digest": "63bed14108c3396c3051631c40fcd041168c6b04f0c42c7f07c75e1d0e8e38b2",
+      "backend_from_extracted_package": true,
+      "build_tree_deleted": true
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario stale > docs/evidence/e3-multiroute/round2/e1e2-stale.json",
+      "exit_code": 0,
+      "output": "e1e2-stale.json"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario off > docs/evidence/e3-multiroute/round2/e1e2-off.json",
+      "exit_code": 0,
+      "output": "e1e2-off.json"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario restart > docs/evidence/e3-multiroute/round2/e1e2-restart.json",
+      "exit_code": 0,
+      "output": "e1e2-restart.json"
+    },
+    {
+      "command": "python3 scripts/probe_e1e2_run.py --scenario material-failure --trace-output docs/evidence/e3-multiroute/round2/e1e2-material-trace.json > docs/evidence/e3-multiroute/round2/e1e2-material-failure.json",
+      "exit_code": 0,
+      "output": "e1e2-material-failure.json"
+    }
+  ],
+  "initial_host_failure": {
+    "output": "host-full-initial-failure.json",
+    "trace": "host-full-initial-failure-trace.json",
+    "cause": "Sibling review-scope lifecycle events changed the work basis; corrected while retaining substantive review changes."
+  },
+  "previous_legacy_project_migration": "../local-project-compatibility.json (not rerun this round)",
+  "model_effect": "not_run",
+  "release": {
+    "committed": false,
+    "pushed": false,
+    "published": false,
+    "shared_service_changed": false
+  },
+  "limits": [
+    "work_units are planned allocations, not exact token/cost/device hard caps",
+    "declared resource leases do not prove OS-level isolation",
+    "explicit paged decision delivery still requires the entire package in the concluding request"
+  ]
+}

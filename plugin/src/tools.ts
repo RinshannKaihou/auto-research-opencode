@@ -33,9 +33,10 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history. A read proves delivery, not scientific understanding.',
+      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history; exploration_budget pages common allocations and resource leases. A read proves delivery, not scientific understanding.',
     parameters: {
       expected_digest: { type: "string" },
+      scope_id:{type:'string',description:'For a local exploration choice, query evidence with this scope ID; omit for project-wide conclusion evidence.'},
       scope_owner:{type:'string'},generation:{type:'number'},target_ref:{type:'string'},change_id:{type:'string'},obligation_id:{type:'string'},
       state: { type: "string" }, trigger_kind: { type: "string" },
       cursor: { type: "object", additionalProperties: true, properties: {} },
@@ -304,10 +305,21 @@ TOOLS.push({name:'research_review_scope',roles:['main'],method:'review_scope_set
   description:'Explicitly replace the project synthesis review scope with fixed adopted references and a reason. Empty refs clears the scope; it does not dispose scientific risks. No checkpoint is needed.',
   parameters:{refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true}},fields:same})
 
+const EXPLORATION_WORK: Spec = {type:'object',additionalProperties:false,properties:{
+  key:{type:'string',description:'Stable identity of one work allocation; shared probes bind multiple routes once.'},
+  budget_amount:{type:'number',description:'Planned units from the configured common work budget; actual usage remains separately observed or unknown.'},
+  resources:{type:'object',additionalProperties:true,properties:{},description:'Named positive integer units to hold while executing, for example {"gpu:0":1}.'},
+  route_refs:{type:'array',required:true,items:{type:'string'}},question:{type:'string',required:true},
+  why_now:{type:'string',required:true},plan:{type:'string',required:true},root_reason:{type:'string'},
+  predecessors:{type:'array',items:{type:'object',additionalProperties:true,properties:{}}},
+  inputs:{type:'array',items:{type:'string'}},work_kind:{type:'string',enum:['scout','probe','deepen','combine','restore']},
+  strategy:{type:'string',enum:['continue','redirect','anchor']},anchor_ref:{type:'string'},question_ref:{type:'string'},
+}}
+
 TOOLS.push(
   { name:'research_prepare_conclusion', roles:['main'], method:'conclusion_prepare', writes:true,
     description:'Prepare an evidence-v1 conclusion from a current evidence snapshot. Declare exact core claim versions, outcome, risk judgments, review requirements and why exploration stops. Read every page of the returned draft before publishing its final report.',
-    parameters:{snapshot_id:{type:'string',required:true},core_claim_refs:{type:'array',required:true,items:{type:'string'}},
+    parameters:{delivery_mode:{type:'string',enum:['paged'],description:'Opt into an immutable paged decision package when the complete package exceeds the legacy 32000-byte limit. All pages must still reach the concluding request.'},snapshot_id:{type:'string',required:true},core_claim_refs:{type:'array',required:true,items:{type:'string'}},
       outcome:{type:'string',required:true,enum:['answered','partial','unresolved']},gaps:{type:'array',required:true,items:{type:'string'}},
       risk_judgments:{type:'array',required:true,items:{type:'object',additionalProperties:false,properties:{
         risk_id:{type:'string'},risk_ids:{type:'array',items:{type:'string'}},core_impact:{type:'string',required:true,enum:['yes','no','unknown']},
@@ -324,6 +336,11 @@ TOOLS.push(
       exploration_stop:{type:'object',required:true,additionalProperties:true,properties:{
         reason_kind:{type:'string',required:true,enum:['goal_met','sufficient_for_current_choice','low_expected_value','resource_limited','user_requested']},
         reason:{type:'string',required:true},unprocessed_results:{type:'array',items:{type:'string'}},
+        scope_judgments:{type:'array',description:'Required for multiple scopes: cover every exact scope version, including deferred and closed scopes.',items:{type:'object',additionalProperties:false,properties:{
+          scope_refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true},
+          remaining_work:{type:'string',required:true},residual_uncertainty:{type:'string',required:true},
+          reactivation_condition:{type:'string',required:true},
+        }}},
         route_judgments:{type:'array',items:{type:'object',additionalProperties:false,properties:{
           route_refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true},
           reactivation_condition:{type:'string',required:true},
@@ -331,39 +348,49 @@ TOOLS.push(
       }}},
     fields:args=>({fields:args}) },
   { name:'research_scope', roles:['main'], method:'exploration_scope', writes:true,
-    description:'Create or revise the current exploration scope. On revision supply the current scope_ref and a reason. Changes to objective or constraints create a new goal version.',
-    parameters:{scope_ref:{type:'string'},reason:{type:'string'},
+    description:'Create or revise an exploration scope; multiple scopes may stay active. On revision supply its current scope_ref and reason. Deferred or closed scopes retain all evidence and risks; reactivation must explain changed conditions. Objective or constraints changes create a new goal version.',
+    parameters:{scope_ref:{type:'string'},reason:{type:'string'},changed_conditions:{type:'string',description:'Required to reactivate a deferred or closed scope.'},
       changes:{type:'object',required:true,additionalProperties:false,properties:{
         objective:{type:'string'},task_kind:{type:'string',enum:['delivery','selection','discovery']},
         question_refs:{type:'array',items:{type:'string'}},constraints:{},comparison_basis:{},
         baseline_refs:{type:'array',items:{type:'string'}},budget_policy:{},
+        parent_scope_ref:{type:'string'},state:{type:'string',enum:['active','deferred','closed']},reactivation_condition:{type:'string'},
       }}}, fields:args=>({fields:args}) },
   { name:'research_route', roles:['main'], method:'exploration_route', writes:true,
     description:'Save a candidate route without creating a node. Supply scope_ref; for edits also supply the current route_ref and a reason. Disposition is set by a decision.',
     parameters:{scope_ref:{type:'string',required:true},route_ref:{type:'string'},reason:{type:'string'},
       changes:{type:'object',required:true,additionalProperties:false,properties:{
         title:{type:'string'},rationale:{type:'string'},critical_assumption:{type:'string'},
+        candidate_key:{type:'string',description:'Optional stable mechanism identity within this scope; duplicate keys identify the existing route.'},
         hypothesis_refs:{type:'array',items:{type:'string'}},baseline_refs:{type:'array',items:{type:'string'}},
         evidence_refs:{type:'array',items:{type:'string'}},next_probe:{},cost_estimate:{},reactivation_condition:{},
+        component_refs:{type:'array',items:{type:'string'}},
+        relations:{type:'array',items:{type:'object',additionalProperties:false,properties:{
+          kind:{type:'string',required:true,enum:['competes_with','depends_on','complements','combines']},route_ref:{type:'string',required:true},
+        }}},
       }}}, fields:args=>({fields:args}) },
   { name:'research_decide', roles:['main'], engine:'exploration_decide', writes:true,
-    description:'Record a decision after reading collection=evidence. Use its snapshot_id, the current scope and route revisions, and the result IDs actually considered. Optionally schedule one bounded probe; existing budgets and node execution apply.',
+    description:'Record a local decision after reading collection=evidence with scope_id. Cite current scope/route revisions and actually received result IDs. Schedule next_work or work_batch, sharing a probe by binding multiple routes to one work. Expected intent IDs, provisional choices and later revises_decision_id preserve asynchronous evidence. Unresolved expected work carries forward automatically; defer or stop records a reason without erasing the missing result. Failed/missing work is not refutation. Combinations require a new experiment with frozen inputs; restore from a fixed baseline.',
     parameters:{scope_ref:{type:'string',required:true},snapshot_id:{type:'string',required:true},
       route_refs:{type:'array',required:true,items:{type:'string'}},result_ids:{type:'array',items:{type:'string'}},
-      action:{type:'string',required:true,enum:['probe','deepen','redirect','defer','recommend_combine','propose_stop']},
+      action:{type:'string',required:true,enum:['probe','deepen','redirect','defer','recommend_combine','combine','restore','propose_stop']},
       reason:{type:'string',required:true},route_changes:{type:'array',items:{type:'object',additionalProperties:false,properties:{
         route_ref:{type:'string',required:true},disposition:{type:'string',required:true,enum:['untried','investigating','deferred','excluded','adopted','combination_proposed']},
         reason:{type:'string',required:true},reactivation_condition:{type:'string'},evidence_refs:{type:'array',items:{type:'string'}},
       }}},
       missing_results:{type:'array',items:{}},remaining_options:{type:'array',items:{}},
+      provisional:{type:'boolean'},expected_results:{type:'array',items:{type:'string'},description:'Stable intent IDs whose results have not all arrived; explain missing results and keep the decision provisional.'},
+      revises_decision_id:{type:'string'},
+      comparisons:{type:'array',items:{type:'object',additionalProperties:false,properties:{
+        result_refs:{type:'array',required:true,items:{type:'string'}},ranking:{type:'boolean',required:true},reason:{type:'string',required:true},
+        conditions:{type:'array',required:true,items:{type:'object',additionalProperties:false,properties:{
+          baseline_ref:{type:'string',required:true},workload:{required:true},metric:{type:'string',required:true},unit:{type:'string',required:true},
+          environment:{required:true},repeats:{type:'number',required:true},uncertainty:{required:true},
+        }}},
+      }},description:'One declared condition record per fixed result ref; differing or unknown baseline/workload/metric/unit/environment cannot be ranked.'},
+      reactivation_evidence:{type:'object',additionalProperties:true,properties:{},description:'Map deferred/excluded route_ref to {changed_conditions, evidence_refs:[fixed refs]}; preserve the prior negative result.'},
       supersede_intent_ids:{type:'array',items:{type:'string'}},
-      next_work:{type:'object',additionalProperties:false,properties:{
-        route_refs:{type:'array',required:true,items:{type:'string'}},question:{type:'string',required:true},
-        why_now:{type:'string',required:true},plan:{type:'string',required:true},root_reason:{type:'string'},
-        predecessors:{type:'array',items:{type:'object',additionalProperties:true,properties:{}}},
-        inputs:{type:'array',items:{type:'string'}},work_kind:{type:'string',enum:['scout','probe','deepen']},strategy:{type:'string',enum:['continue','redirect','anchor']},
-        anchor_ref:{type:'string'},question_ref:{type:'string'},
-      }}}, fields:same },
+      next_work:EXPLORATION_WORK,work_batch:{type:'array',items:EXPLORATION_WORK,description:'Mutually exclusive with next_work. A finite batch shares one common project budget; each entry needs a unique key.'}}, fields:same },
 )
 
 /** One specialist task; the names follow the DSH plugin's research_delegate. */

@@ -1,0 +1,587 @@
+[
+  {
+    "stage": 1,
+    "node": null,
+    "provider_emitted_tool": "research_scope",
+    "arguments": {
+      "changes": {
+        "objective": "Independent active scope 1",
+        "task_kind": "selection"
+      }
+    }
+  },
+  {
+    "stage": 1,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_31d83ada61d2496e922cb539e26dde2b",
+      "content": "{\n  \"scope_id\": \"ES-001\",\n  \"revision\": 1,\n  \"generation\": 1,\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215\"\n  },\n  \"created_at\": \"2026-11-01T09:30:55.483046+00:00\",\n  \"baseline_refs\": [],\n  \"budget_policy\": null,\n  \"comparison_basis\": null,\n  \"constraints\": null,\n  \"objective\": \"Independent active scope 1\",\n  \"parent_scope_ref\": null,\n  \"question_refs\": [],\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"state\": \"active\",\n  \"task_kind\": \"selection\",\n  \"ref\": \"explore/scope/ES-001@1\"\n}"
+    }
+  },
+  {
+    "stage": 2,
+    "node": null,
+    "provider_emitted_tool": "research_scope",
+    "arguments": {
+      "changes": {
+        "objective": "Independent active scope 2",
+        "task_kind": "selection"
+      }
+    }
+  },
+  {
+    "stage": 2,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_ef8c4dba7e8c4e9da6e3dfd048ac21a3",
+      "content": "{\n  \"scope_id\": \"ES-002\",\n  \"revision\": 1,\n  \"generation\": 1,\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215\"\n  },\n  \"created_at\": \"2026-11-01T09:30:55.507432+00:00\",\n  \"baseline_refs\": [],\n  \"budget_policy\": null,\n  \"comparison_basis\": null,\n  \"constraints\": null,\n  \"objective\": \"Independent active scope 2\",\n  \"parent_scope_ref\": null,\n  \"question_refs\": [],\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"state\": \"active\",\n  \"task_kind\": \"selection\",\n  \"ref\": \"explore/scope/ES-002@1\"\n}"
+    }
+  },
+  {
+    "stage": 3,
+    "node": null,
+    "provider_emitted_tool": "research_route",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "changes": {
+        "title": "Scope candidate",
+        "rationale": "Independent bounded work",
+        "critical_assumption": "The local fixture applies"
+      }
+    }
+  },
+  {
+    "stage": 3,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_b5f328b9717242ed8dd66be2e101663e",
+      "content": "{\n  \"route_id\": \"ER-001\",\n  \"revision\": 1,\n  \"scope_id\": \"ES-001\",\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215\"\n  },\n  \"created_at\": \"2026-11-01T09:30:55.529767+00:00\",\n  \"baseline_refs\": [],\n  \"component_refs\": [],\n  \"cost_estimate\": null,\n  \"critical_assumption\": \"The local fixture applies\",\n  \"disposition\": \"untried\",\n  \"disposition_reason\": null,\n  \"evidence_refs\": [],\n  \"hypothesis_refs\": [],\n  \"next_probe\": null,\n  \"rationale\": \"Independent bounded work\",\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"relations\": [],\n  \"title\": \"Scope candidate\",\n  \"ref\": \"explore/route/ER-001@1\"\n}"
+    }
+  },
+  {
+    "stage": 4,
+    "node": null,
+    "provider_emitted_tool": "research_route",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-002@1",
+      "changes": {
+        "title": "Scope candidate",
+        "rationale": "Independent bounded work",
+        "critical_assumption": "The local fixture applies"
+      }
+    }
+  },
+  {
+    "stage": 4,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_75f58407194944ebb411128c186d9c38",
+      "content": "{\n  \"route_id\": \"ER-002\",\n  \"revision\": 1,\n  \"scope_id\": \"ES-002\",\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215\"\n  },\n  \"created_at\": \"2026-11-01T09:30:55.553106+00:00\",\n  \"baseline_refs\": [],\n  \"component_refs\": [],\n  \"cost_estimate\": null,\n  \"critical_assumption\": \"The local fixture applies\",\n  \"disposition\": \"untried\",\n  \"disposition_reason\": null,\n  \"evidence_refs\": [],\n  \"hypothesis_refs\": [],\n  \"next_probe\": null,\n  \"rationale\": \"Independent bounded work\",\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"relations\": [],\n  \"title\": \"Scope candidate\",\n  \"ref\": \"explore/route/ER-002@1\"\n}"
+    }
+  },
+  {
+    "stage": 5,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384,
+      "scope_id": "ES-001"
+    }
+  },
+  {
+    "stage": 5,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_4e73a6029707419cace9eaa5efe8b378",
+      "content": "{\n  \"snapshot_id\": \"evidence-79f230ddc84b4a72a88773678a883101\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 16,\n  \"basis_digest\": \"8b415df82b04c3b97581db7d6c4eda1282b56a2eab5d3638ddaa49c2502076f8\",\n  \"manifest_digest\": \"4b12944b7abf69daeccf7531b1028779f23e85dbf93bf5ff28f4f322ab967ad2\",\n  \"offset\": 0,\n  \"end\": 1930,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.529767+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"untried\\\",\\\"disposition_reason\\\":null,\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/route/ER-001@1\\\",\\\"relations\\\":[],\\\"revision\\\":1,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":\\\"ES-001\\\",\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 1930,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 6,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@1"
+      ],
+      "snapshot_id": "evidence-79f230ddc84b4a72a88773678a883101",
+      "action": "probe",
+      "reason": "Independent active scope allocation",
+      "next_work": {
+        "key": "multi-a",
+        "route_refs": [
+          "explore/route/ER-001@1"
+        ],
+        "question": "E3:multi-a",
+        "why_now": "Controlled E3 engineering fixture",
+        "plan": "Publish the deterministic fixture measurement",
+        "root_reason": "Isolated test question multi-a",
+        "work_kind": "probe",
+        "budget_amount": 1,
+        "inputs": []
+      }
+    }
+  },
+  {
+    "stage": 6,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_24ca3696127b4430b5709086efd4a9dd",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-001\",\n  \"decision_id\": \"ED-001\",\n  \"route_refs\": [\n    \"explore/route/ER-001@2\"\n  ],\n  \"intent_id\": \"exploration-work:ED-001\",\n  \"intent_ids\": [\n    \"exploration-work:ED-001\"\n  ],\n  \"expected_missing\": [],\n  \"comparisons\": [],\n  \"work\": {\n    \"intent_id\": \"exploration-work:ED-001\",\n    \"state\": \"materialized\",\n    \"node_id\": \"X-001\",\n    \"task_id\": \"T-63533fad575bd65394ff\"\n  },\n  \"works\": [\n    {\n      \"intent_id\": \"exploration-work:ED-001\",\n      \"state\": \"materialized\",\n      \"node_id\": \"X-001\",\n      \"task_id\": \"T-63533fad575bd65394ff\"\n    }\n  ]\n}"
+    }
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384,
+      "scope_id": "ES-002"
+    }
+  },
+  {
+    "stage": 7,
+    "node": "X-001",
+    "provider_emitted_tool": "research_publish",
+    "arguments": {
+      "status": "complete",
+      "summary": "Controlled fixture multi-a",
+      "gaps": [],
+      "knowledge_refs": [],
+      "items": [
+        {
+          "item_id": "data",
+          "kind": "text",
+          "content": {
+            "fixture": "multi-a",
+            "latency_ms": 80,
+            "baseline": "shared frozen measurement",
+            "workload": "synthetic-fixed",
+            "environment": "isolated-host",
+            "repeats": 3,
+            "uncertainty": "deterministic fixture; not scientific evidence"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_2b9c5e1fcba240bca6aa15caf35d7a62",
+      "content": "{\n  \"snapshot_id\": \"evidence-156c56e8d0fb4125a178d2187bc384a6\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 29,\n  \"basis_digest\": \"08b49957919e2801e3248145c9f472596e58a14f41a11a2975b92b91d6712bc0\",\n  \"manifest_digest\": \"c8a897c5d11cb07a61caa6e5a07871dbdc8aa73e58a36b29d027104fa524caeb\",\n  \"offset\": 0,\n  \"end\": 1930,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.553106+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"untried\\\",\\\"disposition_reason\\\":null,\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/route/ER-002@1\\\",\\\"relations\\\":[],\\\"revision\\\":1,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-002\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":\\\"ES-002\\\",\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 1930,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-002@1",
+      "route_refs": [
+        "explore/route/ER-002@1"
+      ],
+      "snapshot_id": "evidence-156c56e8d0fb4125a178d2187bc384a6",
+      "action": "probe",
+      "reason": "Independent active scope allocation",
+      "next_work": {
+        "key": "multi-b",
+        "route_refs": [
+          "explore/route/ER-002@1"
+        ],
+        "question": "E3:multi-b",
+        "why_now": "Controlled E3 engineering fixture",
+        "plan": "Publish the deterministic fixture measurement",
+        "root_reason": "Isolated test question multi-b",
+        "work_kind": "probe",
+        "budget_amount": 1,
+        "inputs": []
+      }
+    }
+  },
+  {
+    "stage": 8,
+    "node": "X-001",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_42d92e819c314ca1acd87c3025c96522",
+      "content": "{\n  \"publication_id\": \"P-001\",\n  \"refs\": [\n    \"pub/P-001#data\"\n  ],\n  \"created_at\": \"2026-11-01T09:30:55.707742+00:00\",\n  \"check\": {\n    \"check_id\": \"CK-001\",\n    \"sequence_bound\": 29,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": "X-001",
+    "provider_emitted_tool": "research_finish",
+    "arguments": {
+      "state": "finished",
+      "summary": "Controlled fixture complete: multi-a"
+    }
+  },
+  {
+    "stage": 8,
+    "node": "X-001",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_9b3ad6ca7fe040ed8074be3c59612866",
+      "content": "{\n  \"message\": \"本轮结束后，节点本次执行结束，总结会交给主协调。\",\n  \"state\": \"finished\"\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_c69b5d8434ea4de788be53847660a893",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-002\",\n  \"decision_id\": \"ED-002\",\n  \"route_refs\": [\n    \"explore/route/ER-002@2\"\n  ],\n  \"intent_id\": \"exploration-work:ED-002\",\n  \"intent_ids\": [\n    \"exploration-work:ED-002\"\n  ],\n  \"expected_missing\": [],\n  \"comparisons\": [],\n  \"work\": {\n    \"intent_id\": \"exploration-work:ED-002\",\n    \"state\": \"materialized\",\n    \"node_id\": \"X-002\",\n    \"task_id\": \"T-2f6640d144cdb30be8af\"\n  },\n  \"works\": [\n    {\n      \"intent_id\": \"exploration-work:ED-002\",\n      \"state\": \"materialized\",\n      \"node_id\": \"X-002\",\n      \"task_id\": \"T-2f6640d144cdb30be8af\"\n    }\n  ]\n}"
+    }
+  },
+  {
+    "stage": 9,
+    "node": null,
+    "provider_emitted_tool": "research_wait",
+    "arguments": {
+      "task_ids": [
+        "T-63533fad575bd65394ff"
+      ]
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_emitted_tool": "research_publish",
+    "arguments": {
+      "status": "complete",
+      "summary": "Controlled fixture multi-b",
+      "gaps": [],
+      "knowledge_refs": [],
+      "items": [
+        {
+          "item_id": "data",
+          "kind": "text",
+          "content": {
+            "fixture": "multi-b",
+            "latency_ms": 70,
+            "baseline": "shared frozen measurement",
+            "workload": "synthetic-fixed",
+            "environment": "isolated-host",
+            "repeats": 3,
+            "uncertainty": "deterministic fixture; not scientific evidence"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_7a8903239af94e8b86c2e8e918e7a0af",
+      "content": "{\n  \"publication_id\": \"P-002\",\n  \"refs\": [\n    \"pub/P-002#data\"\n  ],\n  \"created_at\": \"2026-11-01T09:30:55.841193+00:00\",\n  \"check\": {\n    \"check_id\": \"CK-002\",\n    \"sequence_bound\": 48,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_emitted_tool": "research_finish",
+    "arguments": {
+      "state": "finished",
+      "summary": "Controlled fixture complete: multi-b"
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_10d89ff6e9ee46f6a420145c8fd00b55",
+      "content": "{\n  \"message\": \"本轮结束后，节点本次执行结束，总结会交给主协调。\",\n  \"state\": \"finished\"\n}"
+    }
+  },
+  {
+    "stage": 9,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_897e37b717f0463b9e146ecd674ea8ae",
+      "content": "{\n  \"waiting\": [\n    \"T-63533fad575bd65394ff\"\n  ],\n  \"message\": \"本轮结束后进入等待；任务有结果时会以【Research 自动推进】消息通知你。\"\n}"
+    }
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_emitted_tool": "research_wait",
+    "arguments": {
+      "task_ids": [
+        "T-2f6640d144cdb30be8af"
+      ]
+    }
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_c5dfcd93b60e43b4a35171265d8c42a0",
+      "content": "{\n  \"waiting\": [\n    \"T-2f6640d144cdb30be8af\"\n  ],\n  \"message\": \"本轮结束后进入等待；任务有结果时会以【Research 自动推进】消息通知你。\"\n}"
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384,
+      "scope_id": "ES-001"
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_ad669fd7ef6f4c73ab811ac19b743d28",
+      "content": "{\n  \"snapshot_id\": \"evidence-d3b0a28668574ed5b740b7dff3c366fa\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 64,\n  \"basis_digest\": \"ea16b5ff374d8e3da72d13728c38a046adef320db30f9b343b47e51ffbd0d85c\",\n  \"manifest_digest\": \"08c8e7f3dad396e100796e68d2367cbdafd9223209671ae5a957b3890bb84615\",\n  \"offset\": 0,\n  \"end\": 4004,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:30:55.707864+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-001\\\",\\\"route_ids\\\":[\\\"ER-001\\\"],\\\"summary\\\":\\\"Controlled fixture multi-a\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-0cfdbaa91998b55540e6\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"publication:P-001\\\",\\\"source_ref\\\":\\\"pub/P-001\\\",\\\"source_sequence\\\":31},{\\\"created_at\\\":\\\"2026-11-01T09:30:55.823383+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-001\\\",\\\"route_ids\\\":[\\\"ER-001\\\"],\\\"summary\\\":\\\"Controlled fixture complete: multi-a\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"finished\\\",\\\"result_id\\\":\\\"XR-80e158c9c4fbb8517d87\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"attempt:A-002\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":47}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.600761+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Independent active scope allocation\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Independent active scope allocation\\\",\\\"ref\\\":\\\"explore/route/ER-001@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:55.600830+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"probe\\\",\\\"basis_digest\\\":\\\"8b415df82b04c3b97581db7d6c4eda1282b56a2eab5d3638ddaa49c2502076f8\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@1\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":{\\\"budget_amount\\\":1,\\\"inputs\\\":[],\\\"key\\\":\\\"multi-a\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:multi-a\\\",\\\"root_reason\\\":\\\"Isolated test question multi-a\\\",\\\"route_refs\\\":[\\\"explore/route/ER-001@1\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Independent active scope allocation\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":16,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":6,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-001\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":\\\"ES-001\\\",\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 4004,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 12,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@2"
+      ],
+      "snapshot_id": "evidence-d3b0a28668574ed5b740b7dff3c366fa",
+      "result_ids": [
+        "XR-0cfdbaa91998b55540e6",
+        "XR-80e158c9c4fbb8517d87"
+      ],
+      "action": "propose_stop",
+      "reason": "Stop this independently measured scope",
+      "route_changes": [
+        {
+          "route_ref": "explore/route/ER-001@2",
+          "disposition": "adopted",
+          "reason": "Fixture execution completed"
+        }
+      ]
+    }
+  },
+  {
+    "stage": 12,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_3589b4bdb7984c2fb710a970154c26f0",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-003\",\n  \"decision_id\": \"ED-003\",\n  \"route_refs\": [\n    \"explore/route/ER-001@3\"\n  ],\n  \"intent_id\": null,\n  \"intent_ids\": [],\n  \"expected_missing\": [],\n  \"comparisons\": []\n}"
+    }
+  },
+  {
+    "stage": 13,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384,
+      "scope_id": "ES-002"
+    }
+  },
+  {
+    "stage": 13,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_ddfdc1dfc0334f078d49c8ab24a2f89b",
+      "content": "{\n  \"snapshot_id\": \"evidence-9715ec5785774ceca8ef768d62999a34\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 65,\n  \"basis_digest\": \"e7ae938d72a43e614e6e039ae0a63bd5e186d09fbca98d8eb0bffb7641e70c6c\",\n  \"manifest_digest\": \"fb3605ac5278ff53649b00bd4065e6f8e61ff5d46ead24863d2fce59f459bbf7\",\n  \"offset\": 0,\n  \"end\": 4004,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:30:55.924429+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-002\\\",\\\"route_ids\\\":[\\\"ER-002\\\"],\\\"summary\\\":\\\"Controlled fixture complete: multi-b\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"finished\\\",\\\"result_id\\\":\\\"XR-2a020b0084c0945c4b0f\\\",\\\"scope_id\\\":\\\"ES-002\\\",\\\"source_key\\\":\\\"attempt:A-003\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":58},{\\\"created_at\\\":\\\"2026-11-01T09:30:55.841320+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-002\\\",\\\"route_ids\\\":[\\\"ER-002\\\"],\\\"summary\\\":\\\"Controlled fixture multi-b\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-fb29cff4ad81e144f953\\\",\\\"scope_id\\\":\\\"ES-002\\\",\\\"source_key\\\":\\\"publication:P-002\\\",\\\"source_ref\\\":\\\"pub/P-002\\\",\\\"source_sequence\\\":50}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.728818+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Independent active scope allocation\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Independent active scope allocation\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-002\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:55.728883+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"probe\\\",\\\"basis_digest\\\":\\\"08b49957919e2801e3248145c9f472596e58a14f41a11a2975b92b91d6712bc0\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-002@1\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":{\\\"budget_amount\\\":1,\\\"inputs\\\":[],\\\"key\\\":\\\"multi-b\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:multi-b\\\",\\\"root_reason\\\":\\\"Isolated test question multi-b\\\",\\\"route_refs\\\":[\\\"explore/route/ER-002@1\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Independent active scope allocation\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"source_sequence\\\":29,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":9,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-002\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":\\\"ES-002\\\",\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 4004,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 14,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-002@1",
+      "route_refs": [
+        "explore/route/ER-002@2"
+      ],
+      "snapshot_id": "evidence-9715ec5785774ceca8ef768d62999a34",
+      "result_ids": [
+        "XR-2a020b0084c0945c4b0f",
+        "XR-fb29cff4ad81e144f953"
+      ],
+      "action": "propose_stop",
+      "reason": "Stop this independently measured scope",
+      "route_changes": [
+        {
+          "route_ref": "explore/route/ER-002@2",
+          "disposition": "adopted",
+          "reason": "Fixture execution completed"
+        }
+      ]
+    }
+  },
+  {
+    "stage": 14,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_0b73d8eac4654860b0c02deb428d199c",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-004\",\n  \"decision_id\": \"ED-004\",\n  \"route_refs\": [\n    \"explore/route/ER-002@3\"\n  ],\n  \"intent_id\": null,\n  \"intent_ids\": [],\n  \"expected_missing\": [],\n  \"comparisons\": []\n}"
+    }
+  },
+  {
+    "stage": 15,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 15,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_7c48595ee0234883bd971f578acef1b8",
+      "content": "{\n  \"snapshot_id\": \"evidence-1515b39003484231ac729ea6cf81d7df\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 66,\n  \"basis_digest\": \"2318857eeb014af9972eeaf87551ad116c8fa68848c5c6c76c2465531d63c210\",\n  \"manifest_digest\": \"631c59b8f2c674168c03c223fd8b58cb4875dcd543bb8289655d4d70cccb7c2c\",\n  \"offset\": 0,\n  \"end\": 5588,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:56.015407+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"adopted\\\",\\\"disposition_reason\\\":\\\"Fixture execution completed\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"ref\\\":\\\"explore/route/ER-001@3\\\",\\\"relations\\\":[],\\\"revision\\\":3,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Scope candidate\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:56.067563+00:00\\\",\\\"critical_assumption\\\":\\\"The local fixture applies\\\",\\\"disposition\\\":\\\"adopted\\\",\\\"disposition_reason\\\":\\\"Fixture execution completed\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Independent bounded work\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"ref\\\":\\\"explore/route/ER-002@3\\\",\\\"relations\\\":[],\\\"revision\\\":3,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-002\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:56.015465+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"propose_stop\\\",\\\"basis_digest\\\":\\\"ea16b5ff374d8e3da72d13728c38a046adef320db30f9b343b47e51ffbd0d85c\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Stop this independently measured scope\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-0cfdbaa91998b55540e6\\\",\\\"XR-80e158c9c4fbb8517d87\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[{\\\"disposition\\\":\\\"adopted\\\",\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"route_ref\\\":\\\"explore/route/ER-001@2\\\"}],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":64,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":18,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-003\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:56.067614+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"propose_stop\\\",\\\"basis_digest\\\":\\\"e7ae938d72a43e614e6e039ae0a63bd5e186d09fbca98d8eb0bffb7641e70c6c\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-002@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Stop this independently measured scope\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-2a020b0084c0945c4b0f\\\",\\\"XR-fb29cff4ad81e144f953\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[{\\\"disposition\\\":\\\"adopted\\\",\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"route_ref\\\":\\\"explore/route/ER-002@2\\\"}],\\\"scope_ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"source_sequence\\\":65,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":20,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-004\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 5588,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 16,
+    "node": null,
+    "provider_emitted_tool": "research_prepare_conclusion",
+    "arguments": {
+      "snapshot_id": "evidence-1515b39003484231ac729ea6cf81d7df",
+      "core_claim_refs": [],
+      "outcome": "partial",
+      "gaps": [
+        "The multi-scope fixture demonstrates engineering behavior only"
+      ],
+      "risk_judgments": [],
+      "review_requirements": [],
+      "delivery_mode": "paged",
+      "exploration_stop": {
+        "reason_kind": "sufficient_for_current_choice",
+        "reason": "Stop within the synthetic fixture only",
+        "scope_judgments": [
+          {
+            "scope_refs": [
+              "explore/scope/ES-001@1"
+            ],
+            "reason": "The bounded fixture has completed",
+            "remaining_work": "No external workload was measured",
+            "residual_uncertainty": "No real-model or scientific-quality inference",
+            "reactivation_condition": "A separately authorized real workload"
+          },
+          {
+            "scope_refs": [
+              "explore/scope/ES-002@1"
+            ],
+            "reason": "The bounded fixture has completed",
+            "remaining_work": "No external workload was measured",
+            "residual_uncertainty": "No real-model or scientific-quality inference",
+            "reactivation_condition": "A separately authorized real workload"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "stage": 16,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_751b97ea23534b3f99fb6e6ebee79d4e",
+      "content": "{\n  \"draft_id\": \"CD-001\",\n  \"generation\": 1,\n  \"basis_digest\": \"60df4b964b7efb87ee887e18c85e3e3d70cc7d9ea428b12063334ba321bcf814\",\n  \"manifest_digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n  \"outcome\": \"partial\",\n  \"gaps\": [\n    \"The multi-scope fixture demonstrates engineering behavior only\"\n  ],\n  \"core_claim_refs\": [],\n  \"evidence_closure\": {\n    \"status\": \"unknown\",\n    \"missing_core\": [],\n    \"unsupported_core\": [],\n    \"unclassified_risks\": [],\n    \"risk_judgments\": []\n  },\n  \"review_coverage\": {\n    \"status\": \"unreviewed\",\n    \"requirements\": [],\n    \"coverage\": [],\n    \"unassessed_refs\": [],\n    \"limitations\": []\n  },\n  \"exploration_stop\": {\n    \"reason_kind\": \"sufficient_for_current_choice\",\n    \"reason\": \"Stop within the synthetic fixture only\",\n    \"scope_judgments\": [\n      {\n        \"scope_refs\": [\n          \"explore/scope/ES-001@1\"\n        ],\n        \"reason\": \"The bounded fixture has completed\",\n        \"remaining_work\": \"No external workload was measured\",\n        \"residual_uncertainty\": \"No real-model or scientific-quality inference\",\n        \"reactivation_condition\": \"A separately authorized real workload\"\n      },\n      {\n        \"scope_refs\": [\n          \"explore/scope/ES-002@1\"\n        ],\n        \"reason\": \"The bounded fixture has completed\",\n        \"remaining_work\": \"No external workload was measured\",\n        \"residual_uncertainty\": \"No real-model or scientific-quality inference\",\n        \"reactivation_condition\": \"A separately authorized real workload\"\n      }\n    ],\n    \"pending_results\": [],\n    \"missing_expected_results\": [],\n    \"considered_scope_refs\": [\n      \"explore/scope/ES-001@1\",\n      \"explore/scope/ES-002@1\"\n    ],\n    \"unaccounted_routes\": [],\n    \"considered_route_refs\": [\n      \"explore/route/ER-001@3\",\n      \"explore/route/ER-002@3\"\n    ]\n  },\n  \"delivery_manifest\": {\n    \"protocol\": \"paged-decision-v1\",\n    \"offset_unit\": \"utf8_byte\",\n    \"total_bytes\": 6203,\n    \"digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n    \"page_bytes\": 16384,\n    \"pages\": [\n      {\n        \"offset\": 0,\n        \"end\": 6203,\n        \"digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\"\n      }\n    ],\n    \"requires\": \"complete_body_in_current_request\"\n  }\n}"
+    }
+  },
+  {
+    "stage": 17,
+    "node": null,
+    "provider_emitted_tool": "research_publish",
+    "arguments": {
+      "status": "complete",
+      "summary": "Isolated E3 engineering result",
+      "gaps": [],
+      "knowledge_refs": [],
+      "draft_id": "CD-001",
+      "report_item_id": "report",
+      "items": [
+        {
+          "item_id": "report",
+          "kind": "text",
+          "content": {
+            "text": "Synthetic fixture only: asynchronous revision, independent combination test, and frozen-input restoration completed."
+          }
+        }
+      ]
+    }
+  },
+  {
+    "stage": 17,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_5a9a75fbc2b64fd2a659431355965426",
+      "content": "{\n  \"publication_id\": \"P-003\",\n  \"refs\": [\n    \"pub/P-003#report\",\n    \"pub/P-003#evidence-appendix\"\n  ],\n  \"created_at\": \"2026-11-01T09:30:56.154439+00:00\",\n  \"draft_id\": \"CD-001\",\n  \"appendix_ref\": \"pub/P-003#evidence-appendix\",\n  \"check\": {\n    \"check_id\": \"CK-003\",\n    \"sequence_bound\": 68,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 18,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "draft_id": "CD-001",
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 18,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_bd66ce6fd39748189927d5571e00c08a",
+      "content": "{\n  \"snapshot_id\": \"evidence-d346f028a65c481b8c89c93abe39a7d3\",\n  \"project_id\": \"672a5e69-0fdc-4024-80e8-c1f7ac2088b5\",\n  \"generation\": 1,\n  \"source_sequence\": 67,\n  \"basis_digest\": \"60df4b964b7efb87ee887e18c85e3e3d70cc7d9ea428b12063334ba321bcf814\",\n  \"manifest_digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n  \"offset\": 0,\n  \"end\": 6203,\n  \"chunk\": \"{\\\"conclusion_decision\\\":{\\\"core_claim_refs\\\":[],\\\"evidence_closure\\\":{\\\"missing_core\\\":[],\\\"risk_judgments\\\":[],\\\"status\\\":\\\"unknown\\\",\\\"unclassified_risks\\\":[],\\\"unsupported_core\\\":[]},\\\"exploration_stop\\\":{\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@3\\\",\\\"explore/route/ER-002@3\\\"],\\\"considered_scope_refs\\\":[\\\"explore/scope/ES-001@1\\\",\\\"explore/scope/ES-002@1\\\"],\\\"missing_expected_results\\\":[],\\\"pending_results\\\":[],\\\"reason\\\":\\\"Stop within the synthetic fixture only\\\",\\\"reason_kind\\\":\\\"sufficient_for_current_choice\\\",\\\"scope_judgments\\\":[{\\\"reactivation_condition\\\":\\\"A separately authorized real workload\\\",\\\"reason\\\":\\\"The bounded fixture has completed\\\",\\\"remaining_work\\\":\\\"No external workload was measured\\\",\\\"residual_uncertainty\\\":\\\"No real-model or scientific-quality inference\\\",\\\"scope_refs\\\":[\\\"explore/scope/ES-001@1\\\"]},{\\\"reactivation_condition\\\":\\\"A separately authorized real workload\\\",\\\"reason\\\":\\\"The bounded fixture has completed\\\",\\\"remaining_work\\\":\\\"No external workload was measured\\\",\\\"residual_uncertainty\\\":\\\"No real-model or scientific-quality inference\\\",\\\"scope_refs\\\":[\\\"explore/scope/ES-002@1\\\"]}],\\\"unaccounted_routes\\\":[]},\\\"gaps\\\":[\\\"The multi-scope fixture demonstrates engineering behavior only\\\"],\\\"outcome\\\":\\\"partial\\\",\\\"review_coverage\\\":{\\\"coverage\\\":[],\\\"limitations\\\":[],\\\"requirements\\\":[],\\\"status\\\":\\\"unreviewed\\\",\\\"unassessed_refs\\\":[]}},\\\"conclusion_scope\\\":{\\\"generation\\\":1,\\\"refs\\\":[]},\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"history\\\":{\\\"collection\\\":\\\"review_history\\\",\\\"note\\\":\\\"Full structural view and historical review events remain in the draft.\\\"},\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"disposition\\\":\\\"adopted\\\",\\\"disposition_reason\\\":\\\"Fixture execution completed\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"reactivation_condition\\\":null,\\\"ref\\\":\\\"explore/route/ER-001@3\\\",\\\"relations\\\":[],\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Scope candidate\\\"},{\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"disposition\\\":\\\"adopted\\\",\\\"disposition_reason\\\":\\\"Fixture execution completed\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"reactivation_condition\\\":null,\\\"ref\\\":\\\"explore/route/ER-002@3\\\",\\\"relations\\\":[],\\\"scope_id\\\":\\\"ES-002\\\",\\\"title\\\":\\\"Scope candidate\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:56.015465+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"propose_stop\\\",\\\"basis_digest\\\":\\\"ea16b5ff374d8e3da72d13728c38a046adef320db30f9b343b47e51ffbd0d85c\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Stop this independently measured scope\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-0cfdbaa91998b55540e6\\\",\\\"XR-80e158c9c4fbb8517d87\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[{\\\"disposition\\\":\\\"adopted\\\",\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"route_ref\\\":\\\"explore/route/ER-001@2\\\"}],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":64,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":18,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-003\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"created_at\\\":\\\"2026-11-01T09:30:56.067614+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"propose_stop\\\",\\\"basis_digest\\\":\\\"e7ae938d72a43e614e6e039ae0a63bd5e186d09fbca98d8eb0bffb7641e70c6c\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-002@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Stop this independently measured scope\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-2a020b0084c0945c4b0f\\\",\\\"XR-fb29cff4ad81e144f953\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[{\\\"disposition\\\":\\\"adopted\\\",\\\"reason\\\":\\\"Fixture execution completed\\\",\\\"route_ref\\\":\\\"explore/route/ER-002@2\\\"}],\\\"scope_ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"source_sequence\\\":65,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":20,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-004\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.483046+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 1\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_fee52b5771164d59b3c568c78287d215\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:30:55.507432+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Independent active scope 2\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-002@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-002\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 6203,\n  \"part\": \"decision\",\n  \"offset_unit\": \"utf8_byte\",\n  \"total_bytes\": 6203,\n  \"draft_id\": \"CD-001\",\n  \"delivery_manifest\": {\n    \"digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n    \"offset_unit\": \"utf8_byte\",\n    \"page_bytes\": 16384,\n    \"pages\": [\n      {\n        \"digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n        \"end\": 6203,\n        \"offset\": 0\n      }\n    ],\n    \"protocol\": \"paged-decision-v1\",\n    \"requires\": \"complete_body_in_current_request\",\n    \"total_bytes\": 6203\n  },\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 19,
+    "node": null,
+    "provider_emitted_tool": "research_conclude",
+    "arguments": {
+      "draft_id": "CD-001",
+      "final_ref": "pub/P-003#report",
+      "summary": "The E3 engineering fixture completed within its declared synthetic scope"
+    }
+  },
+  {
+    "stage": 19,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_cbf60d3157a841ed87906930dc8c606e",
+      "content": "{\n  \"message\": \"研究执行已结束，结项记录已保存，自动推进停止。\",\n  \"conclusion_id\": \"C-001\",\n  \"operation_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215:msg_196729d3a001jDa1UddDqryN5t:call_cbf60d3157a841ed87906930dc8c606e:research_conclude\",\n  \"generation\": 1,\n  \"host_id\": \"opencode\",\n  \"session_id\": \"ses_e3_fee52b5771164d59b3c568c78287d215\",\n  \"summary\": \"The E3 engineering fixture completed within its declared synthetic scope\",\n  \"final_ref\": \"pub/P-003#report\",\n  \"outcome\": \"partial\",\n  \"gaps\": [\n    \"The multi-scope fixture demonstrates engineering behavior only\"\n  ],\n  \"review\": {\n    \"status\": \"unreviewed\",\n    \"refs\": [],\n    \"limitations\": []\n  },\n  \"created_at\": \"2026-11-01T09:30:56.212461+00:00\",\n  \"evidence\": {\n    \"outcome\": \"partial\",\n    \"gaps\": [\n      \"The multi-scope fixture demonstrates engineering behavior only\"\n    ],\n    \"core_claim_refs\": [],\n    \"evidence_closure\": {\n      \"status\": \"unknown\",\n      \"missing_core\": [],\n      \"unsupported_core\": [],\n      \"unclassified_risks\": [],\n      \"risk_judgments\": []\n    },\n    \"review_coverage\": {\n      \"status\": \"unreviewed\",\n      \"requirements\": [],\n      \"coverage\": [],\n      \"unassessed_refs\": [],\n      \"limitations\": []\n    },\n    \"exploration_stop\": {\n      \"reason\": \"Stop within the synthetic fixture only\",\n      \"reason_kind\": \"sufficient_for_current_choice\",\n      \"scope_judgments\": [\n        {\n          \"reactivation_condition\": \"A separately authorized real workload\",\n          \"reason\": \"The bounded fixture has completed\",\n          \"remaining_work\": \"No external workload was measured\",\n          \"residual_uncertainty\": \"No real-model or scientific-quality inference\",\n          \"scope_refs\": [\n            \"explore/scope/ES-001@1\"\n          ]\n        },\n        {\n          \"reactivation_condition\": \"A separately authorized real workload\",\n          \"reason\": \"The bounded fixture has completed\",\n          \"remaining_work\": \"No external workload was measured\",\n          \"residual_uncertainty\": \"No real-model or scientific-quality inference\",\n          \"scope_refs\": [\n            \"explore/scope/ES-002@1\"\n          ]\n        }\n      ],\n      \"pending_results\": [],\n      \"missing_expected_results\": [],\n      \"considered_scope_refs\": [\n        \"explore/scope/ES-001@1\",\n        \"explore/scope/ES-002@1\"\n      ],\n      \"unaccounted_routes\": [],\n      \"considered_route_refs\": [\n        \"explore/route/ER-001@3\",\n        \"explore/route/ER-002@3\"\n      ]\n    },\n    \"draft_id\": \"CD-001\",\n    \"basis_digest\": \"60df4b964b7efb87ee887e18c85e3e3d70cc7d9ea428b12063334ba321bcf814\",\n    \"versions\": {\n      \"backend_version\": \"0.1.1\",\n      \"conclusion_contract\": \"evidence-v1\",\n      \"context_policy\": \"memory-r1-v1\",\n      \"exploration_policy\": \"exploration-v1\",\n      \"last_recorded_context\": {\n        \"context_id\": 22,\n        \"exploration_context\": \"exploration-context-v1\",\n        \"plugin_version\": \"0.1.1\",\n        \"policy_version\": \"memory-r1-v1\"\n      }\n    },\n    \"manifest_digest\": \"69829bab58ad778e723902a1ae84f0714a128b92ad6f0b41baace8afdee42742\",\n    \"source_sequence\": 67,\n    \"report_ref\": \"pub/P-003#report\",\n    \"appendix_ref\": \"pub/P-003#evidence-appendix\"\n  }\n}"
+    }
+  }
+]

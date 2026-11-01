@@ -1,0 +1,20 @@
+{
+  "model": {
+    "provider": "SET_AUTHORIZED_PROVIDER",
+    "model": "SET_EXACT_MODEL",
+    "variant": "SET_EXACT_VARIANT"
+  },
+  "context_policy": "memory-r1-v1",
+  "tools": ["research", "read", "glob", "grep", "node execution tools"],
+  "limits": {
+    "max_model_requests": 30,
+    "max_tokens": 50000,
+    "max_cost": null,
+    "max_wall_seconds": 900,
+    "max_measurements": 4
+  },
+  "arms": {
+    "e1e2": {"revision": "84262f6", "command": null},
+    "e3": {"revision": "SET_E3_SOURCE_MANIFEST", "command": null}
+  }
+}

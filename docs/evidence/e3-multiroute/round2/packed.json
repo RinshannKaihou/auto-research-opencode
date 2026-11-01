@@ -1,0 +1,1 @@
+{"backend_from_extracted_package": true, "build_tree_deleted": true, "temporary_fault_injection": false, "dependencies": "local pinned SDK", "host_result": {"passed": true, "scenario": "full", "output": "<workspace>/docs/evidence/e3-multiroute/round2/host-packed-full.json", "used_external_model": false}}

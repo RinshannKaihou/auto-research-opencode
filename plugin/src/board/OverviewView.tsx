@@ -219,7 +219,12 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
             </text>
             <For each={model().notices}>{(notice) => <text fg={colors.warning}>{notice}</text>}</For>
             <Show when={model().exploration}>
-              {(exploration) => <text fg={colors.base}>{`当前选择  ${exploration().objective} · 候选 ${exploration().routesTotal} · 待处理结果 ${exploration().pendingTotal}`}</text>}
+              {(exploration) => <box flexDirection="column">
+                <text fg={colors.base}>{`当前选择  ${exploration().objective}`}</text>
+                <text fg={colors.muted}>{`范围 ${exploration().activeScopes} 活跃 / ${exploration().scopesTotal} 全部 · 候选 ${exploration().routesTotal} · 在途工作 ${exploration().pendingWork} · 待处理结果 ${exploration().pendingTotal}`}</text>
+                <For each={exploration().scopes}>{scope => <text fg={colors.base}>{`${scope.ref}  ${scope.state} · ${scope.objective}`}</text>}</For>
+                <For each={exploration().decisions.filter(item=>item.provisional)}>{decision => <text fg={colors.warning}>{`临时选择 ${decision.decision_id} · 预期 ${decision.expected_results_total} / 缺失 ${decision.missing_results_total}`}</text>}</For>
+              </box>}
             </Show>
             <text wrapMode="none" marginTop={1}>
               <For each={model().counts}>

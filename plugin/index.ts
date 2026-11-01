@@ -765,13 +765,18 @@ export default Plugin.define({
           return (async () => {
             const sid = needsSession(sessionID,action)
             if (args.limit) {
-              const names:Record<string,string> = {turns:'max_session_turns',nodes:'max_total_nodes',seconds:'max_wall_seconds',tokens:'max_tokens',cost:'max_cost'}
+              const names:Record<string,string> = {turns:'max_session_turns',nodes:'max_total_nodes',seconds:'max_wall_seconds',tokens:'max_tokens',cost:'max_cost',work:'shared_work_budget',resource:'resource_capacities'}
               if (!names[args.limit]) throw new Error('未知预算字段')
-              await research.call('runtime_budget_set',sid,{limits:{[names[args.limit]!]:args.value==='off'?null:Number(args.value)},reason:args.reason})
+              let value:any = args.value==='off' ? null : Number(args.value)
+              if (args.limit==='resource') {
+                const current = await research.call<any>('runtime_budget_status',sid)
+                value = {...(current.limits?.resource_capacities ?? {}),[String(args.resource)]:Number(args.value)}
+              }
+              await research.call('runtime_budget_set',sid,{limits:{[names[args.limit]!]:value},reason:args.reason})
               research.notifyChanged(research.rootOf(sid)!)
             }
             const budget = await research.call('runtime_budget_status',sid)
-            return {message:`自主调度预算（token/cost 为已观测停发阈值，外部进程未计量）\n${JSON.stringify(budget,null,2)}`}
+            return {message:`自主调度预算（work 为计划投入单位；token/cost 为已观测停发阈值，外部进程未计量）\n${JSON.stringify(budget,null,2)}`}
           })()
         }
         case "auto":
@@ -796,6 +801,7 @@ export default Plugin.define({
                 (eventGap ? ' 当前事件流需核对，可用 /research resume 重新订阅并核对。' : '核对后可显式 /research resume。') }
             }
             await bootstrap()
+            if (args.kind === 'resource') return engine.recoverResource(sid, String(args.task_id ?? ''), String(args.reason ?? ''))
             if (args.kind === 'task') return engine.recoverTask(sid, String(args.task_id ?? ''), String(args.reason ?? ''))
             if (args.kind === 'specialist') {
               await research.call('recovery_confirm_specialist', sid, { task_id: String(args.task_id ?? ''), reason: String(args.reason ?? '') })

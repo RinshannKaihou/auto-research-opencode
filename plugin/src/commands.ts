@@ -32,14 +32,14 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
       const controller = /^controller\s+(.+)$/.exec(tail)
       if (controller) return { kind: "rpc", action, args: { kind: "controller", reason: controller[1]! },
         confirm: "请确认已检查原控制器及其执行。仍在运行或状态不明的任务会保留为未核实；接管后项目保持暂停，不会自动重跑。继续吗？" }
-      const execution = /^(task|specialist)\s+(\S+)\s+(.+)$/.exec(tail)
+      const execution = /^(task|specialist|resource)\s+(\S+)\s+(.+)$/.exec(tail)
       if (execution) return { kind: "rpc", action, args: { kind: execution[1]!, task_id: execution[2]!, reason: execution[3]! },
         confirm: "请确认已独立核实该执行及其外部进程已经退出。此操作会记录你的核对结论，不会自动重新执行。继续吗？" }
       const delivery = /^delivery\s+(report|wake)\s+(\S+)\s+(delivered|not-sent)\s+(.+)$/.exec(tail)
       if (delivery) return { kind: "rpc", action, args: { kind: "delivery", delivery_kind: delivery[1]!,
         notification_id: delivery[2]!, disposition: delivery[3] === 'not-sent' ? 'not_sent' : 'delivered', reason: delivery[4]! },
         confirm: "请确认已核对宿主是否接受了这条消息。选择未发送会允许使用原消息 ID 重试；核对结论会被记录。继续吗？" }
-      return { kind: "error", message: "用法：/research recover controller <原因> | task|specialist <任务 ID> <原因> | delivery report|wake <通知 ID> delivered|not-sent <原因>" }
+      return { kind: "error", message: "用法：/research recover controller <原因> | task|specialist|resource <任务 ID> <原因> | delivery report|wake <通知 ID> delivered|not-sent <原因>" }
     }
     case "retry": {
       const match = /^(\S+)\s+(.+)$/.exec(tail)
@@ -63,9 +63,14 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
       return { kind: "rpc", action, args: { contract: tail || null } }
     case 'budget': {
       if (!tail) return {kind:'rpc',action,args:{}}
-      const match = /^(turns|nodes|seconds|tokens|cost)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
-      if (!match) return {kind:'error',message:'用法：/research budget turns|nodes|seconds|tokens|cost <正整数|off> <修改原因>'}
-      if(match[2]!=='off' && (!Number.isFinite(Number(match[2])) || Number(match[2])<=0 || match[1]!=='cost' && !/^[1-9]\d*$/.test(match[2]!)))return {kind:'error',message:'预算须为正整数；cost 可使用正小数'}
+      const resource = /^resource\s+(\S+)\s+((?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
+      if (resource) {
+        if (!Number.isSafeInteger(Number(resource[2])) || Number(resource[2])<=0) return {kind:'error',message:'资源容量须为正整数单位'}
+        return {kind:'rpc',action,args:{limit:'resource',resource:resource[1]!,value:resource[2]!,reason:resource[3]!}}
+      }
+      const match = /^(turns|nodes|seconds|tokens|cost|work)\s+(off|(?:0|[1-9]\d*)(?:\.\d+)?)\s+(.+)$/.exec(tail)
+      if (!match) return {kind:'error',message:'用法：/research budget turns|nodes|seconds|tokens|cost|work <正数|off> <修改原因>；resource <名称> <容量> <修改原因>'}
+      if(match[2]!=='off' && (!Number.isFinite(Number(match[2])) || Number(match[2])<=0 || !['cost','work'].includes(match[1]!) && !/^[1-9]\d*$/.test(match[2]!)))return {kind:'error',message:'预算须为正整数；cost/work 可使用正小数'}
       return {kind:'rpc',action,args:{limit:match[1]!,value:match[2]!,reason:match[3]!}}
     }
     case "guidance": {

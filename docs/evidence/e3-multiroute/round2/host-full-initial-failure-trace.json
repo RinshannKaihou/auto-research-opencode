@@ -1,0 +1,590 @@
+[
+  {
+    "stage": 1,
+    "node": null,
+    "provider_emitted_tool": "research_scope",
+    "arguments": {
+      "changes": {
+        "objective": "Controlled asynchronous strategy comparison",
+        "task_kind": "selection"
+      }
+    }
+  },
+  {
+    "stage": 1,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_f6326f13c27c49f99a3a5b83e86d845c",
+      "content": "{\n  \"scope_id\": \"ES-001\",\n  \"revision\": 1,\n  \"generation\": 1,\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\"\n  },\n  \"created_at\": \"2026-11-01T09:28:44.144281+00:00\",\n  \"baseline_refs\": [],\n  \"budget_policy\": null,\n  \"comparison_basis\": null,\n  \"constraints\": null,\n  \"objective\": \"Controlled asynchronous strategy comparison\",\n  \"parent_scope_ref\": null,\n  \"question_refs\": [],\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"state\": \"active\",\n  \"task_kind\": \"selection\",\n  \"ref\": \"explore/scope/ES-001@1\"\n}"
+    }
+  },
+  {
+    "stage": 2,
+    "node": null,
+    "provider_emitted_tool": "research_route",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "changes": {
+        "title": "Route A",
+        "rationale": "Compare controlled candidates",
+        "critical_assumption": "The same fixture conditions apply"
+      }
+    }
+  },
+  {
+    "stage": 2,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_d405b474c1d54cdfbd9b695a95c0ba82",
+      "content": "{\n  \"route_id\": \"ER-001\",\n  \"revision\": 1,\n  \"scope_id\": \"ES-001\",\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\"\n  },\n  \"created_at\": \"2026-11-01T09:28:44.172496+00:00\",\n  \"baseline_refs\": [],\n  \"component_refs\": [],\n  \"cost_estimate\": null,\n  \"critical_assumption\": \"The same fixture conditions apply\",\n  \"disposition\": \"untried\",\n  \"disposition_reason\": null,\n  \"evidence_refs\": [],\n  \"hypothesis_refs\": [],\n  \"next_probe\": null,\n  \"rationale\": \"Compare controlled candidates\",\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"relations\": [],\n  \"title\": \"Route A\",\n  \"ref\": \"explore/route/ER-001@1\"\n}"
+    }
+  },
+  {
+    "stage": 3,
+    "node": null,
+    "provider_emitted_tool": "research_route",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "changes": {
+        "title": "Route B",
+        "rationale": "Compare controlled candidates",
+        "critical_assumption": "The same fixture conditions apply"
+      }
+    }
+  },
+  {
+    "stage": 3,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_cc6c81c9c45443c28950450074b608c5",
+      "content": "{\n  \"route_id\": \"ER-002\",\n  \"revision\": 1,\n  \"scope_id\": \"ES-001\",\n  \"goal_version\": 1,\n  \"actor\": {\n    \"host_id\": \"opencode\",\n    \"session_id\": \"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\"\n  },\n  \"created_at\": \"2026-11-01T09:28:44.201383+00:00\",\n  \"baseline_refs\": [],\n  \"component_refs\": [],\n  \"cost_estimate\": null,\n  \"critical_assumption\": \"The same fixture conditions apply\",\n  \"disposition\": \"untried\",\n  \"disposition_reason\": null,\n  \"evidence_refs\": [],\n  \"hypothesis_refs\": [],\n  \"next_probe\": null,\n  \"rationale\": \"Compare controlled candidates\",\n  \"reactivation_condition\": null,\n  \"reason\": null,\n  \"relations\": [],\n  \"title\": \"Route B\",\n  \"ref\": \"explore/route/ER-002@1\"\n}"
+    }
+  },
+  {
+    "stage": 4,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 4,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_36b08fd67d4b4aabbd58a77b07830697",
+      "content": "{\n  \"snapshot_id\": \"evidence-8d3f6b4acf6d4556b59c1961aa3141a3\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 15,\n  \"basis_digest\": \"85af1a666f90ea01505a1358bbfad6d14efe6d0a98101e7f03cf0d9743571754\",\n  \"manifest_digest\": \"5895f2851fdaaab1c781c8fba677f519aedab7a7d4b36ce1d9f3673e8617e252\",\n  \"offset\": 0,\n  \"end\": 2549,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.172496+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"untried\\\",\\\"disposition_reason\\\":null,\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/route/ER-001@1\\\",\\\"relations\\\":[],\\\"revision\\\":1,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.201383+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"untried\\\",\\\"disposition_reason\\\":null,\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/route/ER-002@1\\\",\\\"relations\\\":[],\\\"revision\\\":1,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 2549,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 5,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@1",
+        "explore/route/ER-002@1"
+      ],
+      "snapshot_id": "evidence-8d3f6b4acf6d4556b59c1961aa3141a3",
+      "action": "probe",
+      "reason": "Share one public probe across both routes",
+      "next_work": {
+        "key": "shared",
+        "route_refs": [
+          "explore/route/ER-001@1",
+          "explore/route/ER-002@1"
+        ],
+        "question": "E3:shared",
+        "why_now": "Controlled E3 engineering fixture",
+        "plan": "Publish the deterministic fixture measurement",
+        "root_reason": "Isolated test question shared",
+        "work_kind": "probe",
+        "budget_amount": 1,
+        "inputs": []
+      }
+    }
+  },
+  {
+    "stage": 5,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_7e2e7a5ba7754081b9a093a447c71359",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-001\",\n  \"decision_id\": \"ED-001\",\n  \"route_refs\": [\n    \"explore/route/ER-001@2\",\n    \"explore/route/ER-002@2\"\n  ],\n  \"intent_id\": \"exploration-work:ED-001\",\n  \"intent_ids\": [\n    \"exploration-work:ED-001\"\n  ],\n  \"expected_missing\": [],\n  \"comparisons\": [],\n  \"work\": {\n    \"intent_id\": \"exploration-work:ED-001\",\n    \"state\": \"materialized\",\n    \"node_id\": \"X-001\",\n    \"task_id\": \"T-63533fad575bd65394ff\"\n  },\n  \"works\": [\n    {\n      \"intent_id\": \"exploration-work:ED-001\",\n      \"state\": \"materialized\",\n      \"node_id\": \"X-001\",\n      \"task_id\": \"T-63533fad575bd65394ff\"\n    }\n  ]\n}"
+    }
+  },
+  {
+    "stage": 6,
+    "node": null,
+    "provider_emitted_tool": "research_wait",
+    "arguments": {
+      "task_ids": [
+        "T-63533fad575bd65394ff"
+      ]
+    }
+  },
+  {
+    "stage": 6,
+    "node": "X-001",
+    "provider_emitted_tool": "research_publish",
+    "arguments": {
+      "status": "complete",
+      "summary": "Controlled fixture shared",
+      "gaps": [],
+      "knowledge_refs": [],
+      "items": [
+        {
+          "item_id": "data",
+          "kind": "text",
+          "content": {
+            "fixture": "shared",
+            "latency_ms": 100,
+            "baseline": "shared frozen measurement",
+            "workload": "synthetic-fixed",
+            "environment": "isolated-host",
+            "repeats": 3,
+            "uncertainty": "deterministic fixture; not scientific evidence"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "stage": 6,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_8f584e5c716b49a0b24c0b0916a2c293",
+      "content": "{\n  \"waiting\": [\n    \"T-63533fad575bd65394ff\"\n  ],\n  \"message\": \"本轮结束后进入等待；任务有结果时会以【Research 自动推进】消息通知你。\"\n}"
+    }
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 7,
+    "node": "X-001",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_36eca66192fc440485f65c2da101354b",
+      "content": "{\n  \"publication_id\": \"P-001\",\n  \"refs\": [\n    \"pub/P-001#data\"\n  ],\n  \"created_at\": \"2026-11-01T09:28:44.354489+00:00\",\n  \"check\": {\n    \"check_id\": \"CK-001\",\n    \"sequence_bound\": 29,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 7,
+    "node": "X-001",
+    "provider_emitted_tool": "research_finish",
+    "arguments": {
+      "state": "finished",
+      "summary": "Controlled fixture complete: shared"
+    }
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_265de540ff914174910487a593828421",
+      "content": "{\n  \"snapshot_id\": \"evidence-06c1dd3c7074493c83ab3c67eedb5a4c\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 31,\n  \"basis_digest\": \"7a327ad7ee97bc5e07d1a776cc19a10c08dd7d59ab50fa325e44b40c99dfd6f7\",\n  \"manifest_digest\": \"6e693af665b24a58a2f11094328da19b970193747c942ab364d1d8d993fcaf3c\",\n  \"offset\": 0,\n  \"end\": 4481,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:28:44.354625+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-001\\\",\\\"route_ids\\\":[\\\"ER-001\\\",\\\"ER-002\\\"],\\\"summary\\\":\\\"Controlled fixture shared\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-0cfdbaa91998b55540e6\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"publication:P-001\\\",\\\"source_ref\\\":\\\"pub/P-001\\\",\\\"source_sequence\\\":31}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256560+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-001@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256595+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"created_at\\\":\\\"2026-11-01T09:28:44.256654+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"probe\\\",\\\"basis_digest\\\":\\\"85af1a666f90ea01505a1358bbfad6d14efe6d0a98101e7f03cf0d9743571754\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@1\\\",\\\"explore/route/ER-002@1\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":{\\\"budget_amount\\\":1,\\\"inputs\\\":[],\\\"key\\\":\\\"shared\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:shared\\\",\\\"root_reason\\\":\\\"Isolated test question shared\\\",\\\"route_refs\\\":[\\\"explore/route/ER-001@1\\\",\\\"explore/route/ER-002@1\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":15,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":5,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-001\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 4481,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@2",
+        "explore/route/ER-002@2"
+      ],
+      "snapshot_id": "evidence-06c1dd3c7074493c83ab3c67eedb5a4c",
+      "result_ids": [
+        "XR-0cfdbaa91998b55540e6"
+      ],
+      "action": "deepen",
+      "reason": "Compare independent routes after one shared probe",
+      "work_batch": [
+        {
+          "key": "fast",
+          "route_refs": [
+            "explore/route/ER-001@2"
+          ],
+          "question": "E3:fast",
+          "why_now": "Controlled E3 engineering fixture",
+          "plan": "Publish the deterministic fixture measurement",
+          "root_reason": "Isolated test question fast",
+          "work_kind": "probe",
+          "budget_amount": 1,
+          "inputs": [
+            "pub/P-001#data"
+          ]
+        },
+        {
+          "key": "slow",
+          "route_refs": [
+            "explore/route/ER-002@2"
+          ],
+          "question": "E3:slow",
+          "why_now": "Controlled E3 engineering fixture",
+          "plan": "Publish the deterministic fixture measurement",
+          "root_reason": "Isolated test question slow",
+          "work_kind": "probe",
+          "budget_amount": 1,
+          "inputs": [
+            "pub/P-001#data"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "stage": 8,
+    "node": "X-001",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_830236e640c040fa8c0c8c2e3c7253e3",
+      "content": "{\n  \"message\": \"本轮结束后，节点本次执行结束，总结会交给主协调。\",\n  \"state\": \"finished\"\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_c3d8597eae6c45e6a3eac063a8b28151",
+      "content": "{\"error\":{\"type\":\"unknown\",\"message\":\"exploration_basis_changed: refresh evidence and pending results; changes={\\\"changed_refs\\\": [], \\\"changed_materials\\\": [], \\\"added_limitations\\\": [], \\\"removed_limitations\\\": [], \\\"changed_routes\\\": [], \\\"added_results\\\": [\\\"XR-80e158c9c4fbb8517d87\\\"], \\\"handled_results\\\": [], \\\"scope_before\\\": \\\"explore/scope/ES-001@1\\\", \\\"scope_after\\\": \\\"explore/scope/ES-001@1\\\", \\\"scopes_before\\\": [\\\"explore/scope/ES-001@1\\\"], \\\"scopes_after\\\": [\\\"explore/scope/ES-001@1\\\"], \\\"scope_exclusions_changed\\\": false, \\\"exploration_exclusions_changed\\\": false, \\\"scope_decisions_changed\\\": false, \\\"core_scope_before\\\": null, \\\"core_scope_after\\\": null, \\\"risks_changed\\\": false, \\\"reviews_changed\\\": false}\"},\"content\":[]}"
+    }
+  },
+  {
+    "stage": 8,
+    "retry": "late evidence changed the selection snapshot"
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 7,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_f23bc3e36d6148279e98a95704f04ceb",
+      "content": "{\n  \"snapshot_id\": \"evidence-75b7e1a143434ccba0750c528ec19407\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 39,\n  \"basis_digest\": \"c1316be7c1016b256572a2331514bd69357a388fac772fe5325e8a94e3473b85\",\n  \"manifest_digest\": \"b78a4d1cef618bbd9fe36dd5f980166b18261315868e292d720e49b9a598420f\",\n  \"offset\": 0,\n  \"end\": 4809,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:28:44.354625+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-001\\\",\\\"route_ids\\\":[\\\"ER-001\\\",\\\"ER-002\\\"],\\\"summary\\\":\\\"Controlled fixture shared\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-0cfdbaa91998b55540e6\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"publication:P-001\\\",\\\"source_ref\\\":\\\"pub/P-001\\\",\\\"source_sequence\\\":31},{\\\"created_at\\\":\\\"2026-11-01T09:28:44.442385+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-001\\\",\\\"route_ids\\\":[\\\"ER-001\\\",\\\"ER-002\\\"],\\\"summary\\\":\\\"Controlled fixture complete: shared\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"finished\\\",\\\"result_id\\\":\\\"XR-80e158c9c4fbb8517d87\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"attempt:A-002\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":34}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256560+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-001@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256595+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"created_at\\\":\\\"2026-11-01T09:28:44.256654+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"probe\\\",\\\"basis_digest\\\":\\\"85af1a666f90ea01505a1358bbfad6d14efe6d0a98101e7f03cf0d9743571754\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@1\\\",\\\"explore/route/ER-002@1\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":{\\\"budget_amount\\\":1,\\\"inputs\\\":[],\\\"key\\\":\\\"shared\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:shared\\\",\\\"root_reason\\\":\\\"Isolated test question shared\\\",\\\"route_refs\\\":[\\\"explore/route/ER-001@1\\\",\\\"explore/route/ER-002@1\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":15,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":5,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-001\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 4809,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@2",
+        "explore/route/ER-002@2"
+      ],
+      "snapshot_id": "evidence-75b7e1a143434ccba0750c528ec19407",
+      "result_ids": [
+        "XR-0cfdbaa91998b55540e6",
+        "XR-80e158c9c4fbb8517d87"
+      ],
+      "action": "deepen",
+      "reason": "Compare independent routes after one shared probe",
+      "work_batch": [
+        {
+          "key": "fast",
+          "route_refs": [
+            "explore/route/ER-001@2"
+          ],
+          "question": "E3:fast",
+          "why_now": "Controlled E3 engineering fixture",
+          "plan": "Publish the deterministic fixture measurement",
+          "root_reason": "Isolated test question fast",
+          "work_kind": "probe",
+          "budget_amount": 1,
+          "inputs": [
+            "pub/P-001#data"
+          ]
+        },
+        {
+          "key": "slow",
+          "route_refs": [
+            "explore/route/ER-002@2"
+          ],
+          "question": "E3:slow",
+          "why_now": "Controlled E3 engineering fixture",
+          "plan": "Publish the deterministic fixture measurement",
+          "root_reason": "Isolated test question slow",
+          "work_kind": "probe",
+          "budget_amount": 1,
+          "inputs": [
+            "pub/P-001#data"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "stage": 8,
+    "node": "X-002",
+    "provider_emitted_tool": "research_publish",
+    "arguments": {
+      "status": "complete",
+      "summary": "Controlled fixture fast",
+      "gaps": [],
+      "knowledge_refs": [],
+      "items": [
+        {
+          "item_id": "data",
+          "kind": "text",
+          "content": {
+            "fixture": "fast",
+            "latency_ms": 80,
+            "baseline": "shared frozen measurement",
+            "workload": "synthetic-fixed",
+            "environment": "isolated-host",
+            "repeats": 3,
+            "uncertainty": "deterministic fixture; not scientific evidence"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "stage": 8,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_022d96db8a844f649d3b051790e2a2fc",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-002\",\n  \"decision_id\": \"ED-002\",\n  \"route_refs\": [\n    \"explore/route/ER-001@2\",\n    \"explore/route/ER-002@2\"\n  ],\n  \"intent_id\": \"exploration-work:ED-002:1\",\n  \"intent_ids\": [\n    \"exploration-work:ED-002:1\",\n    \"exploration-work:ED-002:2\"\n  ],\n  \"expected_missing\": [],\n  \"comparisons\": [],\n  \"work\": {\n    \"intent_id\": \"exploration-work:ED-002:1\",\n    \"state\": \"materialized\",\n    \"node_id\": \"X-002\",\n    \"task_id\": \"T-354fae34eb87515727b4\"\n  },\n  \"works\": [\n    {\n      \"intent_id\": \"exploration-work:ED-002:1\",\n      \"state\": \"materialized\",\n      \"node_id\": \"X-002\",\n      \"task_id\": \"T-354fae34eb87515727b4\"\n    },\n    {\n      \"intent_id\": \"exploration-work:ED-002:2\",\n      \"state\": \"materialized\",\n      \"node_id\": \"X-003\",\n      \"task_id\": \"T-57e51c69932561903c22\"\n    }\n  ]\n}"
+    }
+  },
+  {
+    "stage": 9,
+    "node": null,
+    "provider_emitted_tool": "research_wait",
+    "arguments": {
+      "task_ids": [
+        "T-354fae34eb87515727b4"
+      ]
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_8215faa545b04fc8a8b3839b2d7d452b",
+      "content": "{\n  \"publication_id\": \"P-002\",\n  \"refs\": [\n    \"pub/P-002#data\"\n  ],\n  \"created_at\": \"2026-11-01T09:28:44.635394+00:00\",\n  \"check\": {\n    \"check_id\": \"CK-002\",\n    \"sequence_bound\": 59,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 9,
+    "node": "X-002",
+    "provider_emitted_tool": "research_finish",
+    "arguments": {
+      "state": "finished",
+      "summary": "Controlled fixture complete: fast"
+    }
+  },
+  {
+    "stage": 9,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_d313b9d125a64025bc923bef1ce74e43",
+      "content": "{\n  \"waiting\": [\n    \"T-354fae34eb87515727b4\"\n  ],\n  \"message\": \"本轮结束后进入等待；任务有结果时会以【Research 自动推进】消息通知你。\"\n}"
+    }
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 10,
+    "node": "X-002",
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_9087f2fac1e247278941e690966a2032",
+      "content": "{\n  \"message\": \"本轮结束后，节点本次执行结束，总结会交给主协调。\",\n  \"state\": \"finished\"\n}"
+    }
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_25bbbb23429a419b94e2f112bc3426bb",
+      "content": "{\n  \"snapshot_id\": \"evidence-9d90ad83111f46de865bae16441c4eca\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 63,\n  \"basis_digest\": \"50eca961d5c0a2d62b14c060c8bbdd21dea5b2a6fcaec3e08175305793db2af3\",\n  \"manifest_digest\": \"84b08feb7862c6b29e53d70ff886c58bc5d0b28704951dda35894a9414845706\",\n  \"offset\": 0,\n  \"end\": 5210,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:28:44.596851+00:00\\\",\\\"data\\\":{\\\"intent_id\\\":\\\"exploration-work:ED-002:2\\\",\\\"node_id\\\":\\\"X-003\\\",\\\"reason\\\":\\\"exploration_basis_changed\\\",\\\"route_ids\\\":[\\\"ER-002\\\"],\\\"task_id\\\":\\\"T-57e51c69932561903c22\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"stale\\\",\\\"result_id\\\":\\\"XR-026246d1e9412a7795dd\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"intent:exploration-work:ED-002:2:stale\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":56},{\\\"created_at\\\":\\\"2026-11-01T09:28:44.635538+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-002\\\",\\\"route_ids\\\":[\\\"ER-001\\\"],\\\"summary\\\":\\\"Controlled fixture fast\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-49287a29796168ae0ce1\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"publication:P-002\\\",\\\"source_ref\\\":\\\"pub/P-002\\\",\\\"source_sequence\\\":61}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256560+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-001@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256595+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"created_at\\\":\\\"2026-11-01T09:28:44.536864+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"deepen\\\",\\\"basis_digest\\\":\\\"c1316be7c1016b256572a2331514bd69357a388fac772fe5325e8a94e3473b85\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@2\\\",\\\"explore/route/ER-002@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Compare independent routes after one shared probe\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-0cfdbaa91998b55540e6\\\",\\\"XR-80e158c9c4fbb8517d87\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":39,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":13,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":[{\\\"budget_amount\\\":1,\\\"inputs\\\":[\\\"pub/P-001#data\\\"],\\\"key\\\":\\\"fast\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:fast\\\",\\\"root_reason\\\":\\\"Isolated test question fast\\\",\\\"route_refs\\\":[\\\"explore/route/ER-001@2\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},{\\\"budget_amount\\\":1,\\\"inputs\\\":[\\\"pub/P-001#data\\\"],\\\"key\\\":\\\"slow\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:slow\\\",\\\"root_reason\\\":\\\"Isolated test question slow\\\",\\\"route_refs\\\":[\\\"explore/route/ER-002@2\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"}]},\\\"decision_id\\\":\\\"ED-002\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 5210,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@2",
+        "explore/route/ER-002@2"
+      ],
+      "snapshot_id": "evidence-9d90ad83111f46de865bae16441c4eca",
+      "result_ids": [
+        "XR-026246d1e9412a7795dd",
+        "XR-18a5d16ccfa02c33fcc0",
+        "XR-49287a29796168ae0ce1"
+      ],
+      "action": "deepen",
+      "reason": "Fast route supports only a provisional choice while the slow measurement is missing",
+      "provisional": true,
+      "expected_results": [
+        "exploration-work:ED-002:1",
+        "exploration-work:ED-002:2"
+      ],
+      "route_changes": [
+        {
+          "route_ref": "explore/route/ER-001@2",
+          "disposition": "adopted",
+          "reason": "Provisional fixture choice"
+        }
+      ]
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_baf425035ed74bdd9044818b75d34efa",
+      "content": "{\"error\":{\"type\":\"unknown\",\"message\":\"exploration_basis_changed: refresh evidence and pending results; changes={\\\"changed_refs\\\": [], \\\"changed_materials\\\": [], \\\"added_limitations\\\": [], \\\"removed_limitations\\\": [], \\\"changed_routes\\\": [], \\\"added_results\\\": [\\\"XR-18a5d16ccfa02c33fcc0\\\"], \\\"handled_results\\\": [], \\\"scope_before\\\": \\\"explore/scope/ES-001@1\\\", \\\"scope_after\\\": \\\"explore/scope/ES-001@1\\\", \\\"scopes_before\\\": [\\\"explore/scope/ES-001@1\\\"], \\\"scopes_after\\\": [\\\"explore/scope/ES-001@1\\\"], \\\"scope_exclusions_changed\\\": false, \\\"exploration_exclusions_changed\\\": false, \\\"scope_decisions_changed\\\": false, \\\"core_scope_before\\\": null, \\\"core_scope_after\\\": null, \\\"risks_changed\\\": false, \\\"reviews_changed\\\": false}\"},\"content\":[]}"
+    }
+  },
+  {
+    "stage": 11,
+    "retry": "late evidence changed the selection snapshot"
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 10,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_5775360e781f40dea79e254defcbcc33",
+      "content": "{\n  \"snapshot_id\": \"evidence-c4973767e94d493389db522e9c6d8e38\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 70,\n  \"basis_digest\": \"e0314e58620c160c5254c058955c1782b856153a72e5e27f97dd6332c9e4ad81\",\n  \"manifest_digest\": \"a61731b115decfbd60fcff78794759980ef4c524ab57fe4cb39a8ba7645de89b\",\n  \"offset\": 0,\n  \"end\": 5527,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[{\\\"created_at\\\":\\\"2026-11-01T09:28:44.596851+00:00\\\",\\\"data\\\":{\\\"intent_id\\\":\\\"exploration-work:ED-002:2\\\",\\\"node_id\\\":\\\"X-003\\\",\\\"reason\\\":\\\"exploration_basis_changed\\\",\\\"route_ids\\\":[\\\"ER-002\\\"],\\\"task_id\\\":\\\"T-57e51c69932561903c22\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"stale\\\",\\\"result_id\\\":\\\"XR-026246d1e9412a7795dd\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"intent:exploration-work:ED-002:2:stale\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":56},{\\\"created_at\\\":\\\"2026-11-01T09:28:44.745027+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-002\\\",\\\"route_ids\\\":[\\\"ER-001\\\"],\\\"summary\\\":\\\"Controlled fixture complete: fast\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"finished\\\",\\\"result_id\\\":\\\"XR-18a5d16ccfa02c33fcc0\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"attempt:A-003\\\",\\\"source_ref\\\":null,\\\"source_sequence\\\":65},{\\\"created_at\\\":\\\"2026-11-01T09:28:44.635538+00:00\\\",\\\"data\\\":{\\\"node_id\\\":\\\"X-002\\\",\\\"route_ids\\\":[\\\"ER-001\\\"],\\\"summary\\\":\\\"Controlled fixture fast\\\"},\\\"handled_by_decision\\\":null,\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-49287a29796168ae0ce1\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"source_key\\\":\\\"publication:P-002\\\",\\\"source_ref\\\":\\\"pub/P-002\\\",\\\"source_sequence\\\":61}],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256560+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-001@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256595+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"created_at\\\":\\\"2026-11-01T09:28:44.536864+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"deepen\\\",\\\"basis_digest\\\":\\\"c1316be7c1016b256572a2331514bd69357a388fac772fe5325e8a94e3473b85\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@2\\\",\\\"explore/route/ER-002@2\\\"],\\\"expected_missing\\\":[],\\\"expected_results\\\":[],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":false,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Compare independent routes after one shared probe\\\",\\\"received_results\\\":[],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-0cfdbaa91998b55540e6\\\",\\\"XR-80e158c9c4fbb8517d87\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":39,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":13,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":[{\\\"budget_amount\\\":1,\\\"inputs\\\":[\\\"pub/P-001#data\\\"],\\\"key\\\":\\\"fast\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:fast\\\",\\\"root_reason\\\":\\\"Isolated test question fast\\\",\\\"route_refs\\\":[\\\"explore/route/ER-001@2\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"},{\\\"budget_amount\\\":1,\\\"inputs\\\":[\\\"pub/P-001#data\\\"],\\\"key\\\":\\\"slow\\\",\\\"plan\\\":\\\"Publish the deterministic fixture measurement\\\",\\\"question\\\":\\\"E3:slow\\\",\\\"root_reason\\\":\\\"Isolated test question slow\\\",\\\"route_refs\\\":[\\\"explore/route/ER-002@2\\\"],\\\"why_now\\\":\\\"Controlled E3 engineering fixture\\\",\\\"work_kind\\\":\\\"probe\\\"}]},\\\"decision_id\\\":\\\"ED-002\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 5527,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_emitted_tool": "research_decide",
+    "arguments": {
+      "scope_ref": "explore/scope/ES-001@1",
+      "route_refs": [
+        "explore/route/ER-001@2",
+        "explore/route/ER-002@2"
+      ],
+      "snapshot_id": "evidence-c4973767e94d493389db522e9c6d8e38",
+      "result_ids": [
+        "XR-026246d1e9412a7795dd",
+        "XR-18a5d16ccfa02c33fcc0",
+        "XR-49287a29796168ae0ce1"
+      ],
+      "action": "deepen",
+      "reason": "Fast route supports only a provisional choice while the slow measurement is missing",
+      "provisional": true,
+      "expected_results": [
+        "exploration-work:ED-002:1",
+        "exploration-work:ED-002:2"
+      ],
+      "route_changes": [
+        {
+          "route_ref": "explore/route/ER-001@2",
+          "disposition": "adopted",
+          "reason": "Provisional fixture choice"
+        }
+      ]
+    }
+  },
+  {
+    "stage": 11,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_21de45eef0304a40be21773785fddd00",
+      "content": "{\n  \"decision_ref\": \"explore/decision/ED-003\",\n  \"decision_id\": \"ED-003\",\n  \"route_refs\": [\n    \"explore/route/ER-001@3\",\n    \"explore/route/ER-002@2\"\n  ],\n  \"intent_id\": null,\n  \"intent_ids\": [],\n  \"expected_missing\": [\n    {\n      \"intent_id\": \"exploration-work:ED-002:2\",\n      \"state\": \"cancelled\",\n      \"reason\": \"No published result; execution state is not scientific refutation\"\n    }\n  ],\n  \"comparisons\": []\n}"
+    }
+  },
+  {
+    "stage": 12,
+    "node": null,
+    "provider_emitted_tool": "research_wait",
+    "arguments": {
+      "task_ids": [
+        "T-57e51c69932561903c22"
+      ]
+    }
+  },
+  {
+    "stage": 12,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_9cb8876dbec84f7da1ad1c87a03aa1fd",
+      "content": "{\n  \"waiting\": [\n    \"T-57e51c69932561903c22\"\n  ],\n  \"message\": \"本轮结束后进入等待；任务有结果时会以【Research 自动推进】消息通知你。\"\n}"
+    }
+  },
+  {
+    "stage": 13,
+    "node": null,
+    "provider_emitted_tool": "research_query",
+    "arguments": {
+      "collection": "evidence",
+      "refs": [],
+      "limit": 16384
+    }
+  },
+  {
+    "stage": 13,
+    "node": null,
+    "provider_visible_tool_message": {
+      "role": "tool",
+      "tool_call_id": "call_4d75dd02cafa42e58c29adf9e7db0bc1",
+      "content": "{\n  \"snapshot_id\": \"evidence-1204fdfd9b4c4093bc7729b26e038cf1\",\n  \"project_id\": \"125cb23f-1d4f-44d4-8f26-828e58fdef0f\",\n  \"generation\": 1,\n  \"source_sequence\": 72,\n  \"basis_digest\": \"a93c1c3ce836fc0133cd320eb0df7931ce700022efb7deeef816b3e46afd40b7\",\n  \"manifest_digest\": \"c9a351bdb1acc6aac7b1ea14c12949539315b304159bf018ef539bc5ebdbde81\",\n  \"offset\": 0,\n  \"end\": 4664,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"exploration_exclusions\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[],\\\"pending_results\\\":[],\\\"publication_checks\\\":[],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"retained_core_refs\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[],\\\"routes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.848852+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"adopted\\\",\\\"disposition_reason\\\":\\\"Provisional fixture choice\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Provisional fixture choice\\\",\\\"ref\\\":\\\"explore/route/ER-001@3\\\",\\\"relations\\\":[],\\\"revision\\\":3,\\\"route_id\\\":\\\"ER-001\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route A\\\"},{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"candidate_key\\\":null,\\\"component_refs\\\":[],\\\"cost_estimate\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.256595+00:00\\\",\\\"critical_assumption\\\":\\\"The same fixture conditions apply\\\",\\\"disposition\\\":\\\"investigating\\\",\\\"disposition_reason\\\":\\\"Share one public probe across both routes\\\",\\\"evidence_refs\\\":[],\\\"goal_version\\\":1,\\\"hypothesis_refs\\\":[],\\\"next_probe\\\":null,\\\"rationale\\\":\\\"Compare controlled candidates\\\",\\\"reactivation_condition\\\":null,\\\"reason\\\":\\\"Share one public probe across both routes\\\",\\\"ref\\\":\\\"explore/route/ER-002@2\\\",\\\"relations\\\":[],\\\"revision\\\":2,\\\"route_id\\\":\\\"ER-002\\\",\\\"scope_id\\\":\\\"ES-001\\\",\\\"title\\\":\\\"Route B\\\"}],\\\"scope\\\":{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"},\\\"scope_decisions\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"created_at\\\":\\\"2026-11-01T09:28:44.848914+00:00\\\",\\\"data\\\":{\\\"action\\\":\\\"deepen\\\",\\\"basis_digest\\\":\\\"e0314e58620c160c5254c058955c1782b856153a72e5e27f97dd6332c9e4ad81\\\",\\\"comparisons\\\":[],\\\"considered_route_refs\\\":[\\\"explore/route/ER-001@2\\\",\\\"explore/route/ER-002@2\\\"],\\\"expected_missing\\\":[{\\\"intent_id\\\":\\\"exploration-work:ED-002:2\\\",\\\"reason\\\":\\\"No published result; execution state is not scientific refutation\\\",\\\"state\\\":\\\"cancelled\\\"}],\\\"expected_results\\\":[\\\"exploration-work:ED-002:1\\\",\\\"exploration-work:ED-002:2\\\"],\\\"missing_results\\\":[],\\\"next_work\\\":null,\\\"provisional\\\":true,\\\"reactivation_evidence\\\":null,\\\"reason\\\":\\\"Fast route supports only a provisional choice while the slow measurement is missing\\\",\\\"received_results\\\":[{\\\"intent_id\\\":\\\"exploration-work:ED-002:1\\\",\\\"intent_state\\\":\\\"materialized\\\",\\\"results\\\":[{\\\"kind\\\":\\\"finished\\\",\\\"result_id\\\":\\\"XR-18a5d16ccfa02c33fcc0\\\",\\\"source_ref\\\":null},{\\\"kind\\\":\\\"published\\\",\\\"result_id\\\":\\\"XR-49287a29796168ae0ce1\\\",\\\"source_ref\\\":\\\"pub/P-002\\\"}],\\\"state\\\":\\\"finished\\\"},{\\\"intent_id\\\":\\\"exploration-work:ED-002:2\\\",\\\"intent_state\\\":\\\"stale\\\",\\\"results\\\":[{\\\"kind\\\":\\\"stale\\\",\\\"result_id\\\":\\\"XR-026246d1e9412a7795dd\\\",\\\"source_ref\\\":null}],\\\"state\\\":\\\"cancelled\\\"}],\\\"remaining_options\\\":[],\\\"result_ids\\\":[\\\"XR-026246d1e9412a7795dd\\\",\\\"XR-18a5d16ccfa02c33fcc0\\\",\\\"XR-49287a29796168ae0ce1\\\"],\\\"revises_decision_id\\\":null,\\\"route_changes\\\":[{\\\"disposition\\\":\\\"adopted\\\",\\\"reason\\\":\\\"Provisional fixture choice\\\",\\\"route_ref\\\":\\\"explore/route/ER-001@2\\\"}],\\\"scope_ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"source_sequence\\\":70,\\\"supersede_intent_ids\\\":[],\\\"versions\\\":{\\\"backend_version\\\":\\\"0.1.1\\\",\\\"conclusion_contract\\\":\\\"evidence-v1\\\",\\\"context_policy\\\":\\\"memory-r1-v1\\\",\\\"exploration_policy\\\":\\\"exploration-v1\\\",\\\"last_recorded_context\\\":{\\\"context_id\\\":21,\\\"exploration_context\\\":\\\"exploration-context-v1\\\",\\\"plugin_version\\\":\\\"0.1.1\\\",\\\"policy_version\\\":\\\"memory-r1-v1\\\"}},\\\"work_batch\\\":null},\\\"decision_id\\\":\\\"ED-003\\\",\\\"generation\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"scope_revision\\\":1}],\\\"scope_exclusions\\\":[],\\\"scope_id\\\":null,\\\"scopes\\\":[{\\\"actor\\\":{\\\"host_id\\\":\\\"opencode\\\",\\\"session_id\\\":\\\"ses_e3_db288a65f57c4b6ab9fa4aaa7d9864eb\\\"},\\\"baseline_refs\\\":[],\\\"budget_policy\\\":null,\\\"comparison_basis\\\":null,\\\"constraints\\\":null,\\\"created_at\\\":\\\"2026-11-01T09:28:44.144281+00:00\\\",\\\"generation\\\":1,\\\"goal_version\\\":1,\\\"objective\\\":\\\"Controlled asynchronous strategy comparison\\\",\\\"parent_scope_ref\\\":null,\\\"question_refs\\\":[],\\\"reactivation_condition\\\":null,\\\"reason\\\":null,\\\"ref\\\":\\\"explore/scope/ES-001@1\\\",\\\"revision\\\":1,\\\"scope_id\\\":\\\"ES-001\\\",\\\"state\\\":\\\"active\\\",\\\"task_kind\\\":\\\"selection\\\"}]}\",\n  \"total_chars\": 4664,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 0,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  }
+]

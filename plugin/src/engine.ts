@@ -75,7 +75,29 @@ export function oneLine(value: unknown, limit = 60): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
 }
 
+/** Rotate independent scope queues without letting a blocked resource hold up other scopes. */
+export function fairTaskOrder(tasks: any[], afterScope?: string): any[] {
+  const groups = new Map<string,any[]>()
+  for (const task of tasks) {
+    const scope = task.exploration_scope_id ?? '__ordinary__'
+    if (!groups.has(scope)) groups.set(scope,[])
+    groups.get(scope)!.push(task)
+  }
+  const scopes = [...groups.keys()]
+  const after = afterScope ? scopes.indexOf(afterScope) : -1
+  const order = after < 0 ? scopes : [...scopes.slice(after+1),...scopes.slice(0,after+1)]
+  const result = []
+  while (groups.size) for (const scope of order) {
+    const queue = groups.get(scope)
+    if (!queue) continue
+    result.push(queue.shift())
+    if (!queue.length) groups.delete(scope)
+  }
+  return result
+}
+
 export class Engine {
+  private lastScheduledScope: Map<string,string>
   private busy: Set<string>
   /** Interrupts the engine issued itself; OpenCode reports every interrupt as "user". */
   private ours: Set<string>
@@ -103,6 +125,7 @@ export class Engine {
   ) {
     this.busy = runtime.busy; this.ours = runtime.ours; this.wrote = runtime.wrote
     this.idle = runtime.idle; this.turns = runtime.turns; this.startedAt = runtime.startedAt; this.startedEvents = runtime.startedEvents
+    this.lastScheduledScope = runtime.lastScheduledScope ??= new Map()
     this.pendingInbox = runtime.pendingInbox
     this.inferredStart = runtime.inferredStart
     this.pendingStarts = runtime.pendingStarts
@@ -493,11 +516,14 @@ export class Engine {
     }
     const tasks = await this.allTasks(main, state.workflow)
     let active = tasks.filter((task) => ACTIVE_TASK.has(task.state)).length
-    for (const task of tasks.filter((item) => item.state === "queued")) {
+    for (const task of fairTaskOrder(tasks.filter((item) => item.state === "queued"),this.lastScheduledScope.get(root))) {
       if (active >= this.concurrency) break
       try {
         const result = await this.startTask(root, main, task)
-        if (result === 'started') active++
+        if (result === 'started') {
+          active++
+          this.lastScheduledScope.set(root,task.exploration_scope_id ?? '__ordinary__')
+        }
         if (result === 'settled') settled = true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -623,13 +649,18 @@ export class Engine {
     return this.serial(root, async () => {
       const decision = await this.call<any>('exploration_decide', sessionID, { fields, model_call: true }, operationID)
       this.research.notifyChanged(root)
-      if (!decision.intent_id) return decision
+      const intents: string[] = decision.intent_ids ?? (decision.intent_id ? [decision.intent_id] : [])
+      if (!intents.length) return decision
       const state = await this.state(sessionID)
-      if (state.workflow?.run?.state !== 'running') return {...decision, work:{state:'pending',reason:'awaiting_auto'}}
-      const work = await this.call<any>('exploration_materialize', sessionID, {intent_id:decision.intent_id})
-      if (work.state === 'materialized') await this.schedule(root)
-      else if (['stale','failed','cancelled'].includes(work.state)) await this.deliver(root)
-      return {...decision, work}
+      if (state.workflow?.run?.state !== 'running') {
+        const works = intents.map(intent_id => ({intent_id,state:'pending',reason:'awaiting_auto'}))
+        return {...decision,work:works[0],works}
+      }
+      const works = []
+      for (const intent_id of intents) works.push(await this.call<any>('exploration_materialize', sessionID, {intent_id}))
+      if (works.some(work => work.state === 'materialized')) await this.schedule(root)
+      if (works.some(work => ['stale','failed','cancelled'].includes(work.state))) await this.deliver(root)
+      return {...decision,work:works[0],works}
     })
   }
 
@@ -703,6 +734,16 @@ export class Engine {
       this.research.notifyChanged(root)
       await this.deliver(root).catch(() => {})
       return { message: `已记录任务 ${taskID} 的人工退出核对；如需重新执行，使用 /research retry ${taskID} <原因>。` }
+    })
+  }
+
+  recoverResource(sessionID: string, taskID: string, reason: string): Promise<CommandResult> {
+    const root = this.research.requireAssociated(sessionID)
+    return this.serial(root, async () => {
+      await this.call('runtime_resources_release', sessionID, {task_id:taskID,reason})
+      this.research.notifyChanged(root)
+      await this.schedule(root)
+      return {message:`已记录任务 ${taskID} 的外部进程退出核对并释放声明资源；未知用量仍保留。`}
     })
   }
 

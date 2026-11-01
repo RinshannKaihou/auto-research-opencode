@@ -15,6 +15,24 @@ from .workflow_store import encoded, now
 
 REVIEW_TYPES = {'citation_scope', 'semantic_inference', 'recompute', 'reimplementation', 'adversarial_test'}
 STOP_REASONS = {'goal_met', 'sufficient_for_current_choice', 'low_expected_value', 'resource_limited', 'user_requested'}
+PAGED_DECISION_MAX_BYTES = 1024 * 1024
+DECISION_PAGE_BYTES = 16384
+
+
+def delivery_manifest(body):
+    """A complete immutable layout; receiving this index alone grants no coverage."""
+    pages, start = [], 0
+    while start < len(body):
+        end = min(start + DECISION_PAGE_BYTES, len(body))
+        while end < len(body) and body[end] & 0xc0 == 0x80:
+            end -= 1
+        pages.append({'offset': start, 'end': end,
+                      'digest': hashlib.sha256(body[start:end]).hexdigest()})
+        start = end
+    return {'protocol': 'paged-decision-v1', 'offset_unit': 'utf8_byte',
+            'total_bytes': len(body), 'digest': hashlib.sha256(body).hexdigest(),
+            'page_bytes': DECISION_PAGE_BYTES, 'pages': pages,
+            'requires': 'complete_body_in_current_request'}
 
 
 def decision_package(view, result, fields=None):
@@ -47,8 +65,8 @@ def decision_package(view, result, fields=None):
         if content and not item.get('object'):
             selected['inline_content'] = content
         materials.append(selected)
-    routes = [{key:route.get(key) for key in ('ref','title','disposition','disposition_reason',
-               'reactivation_condition','evidence_refs')} for route in view['routes']]
+    routes = [{key:route.get(key) for key in ('ref','title','scope_id','goal_version','disposition','disposition_reason',
+               'reactivation_condition','evidence_refs','baseline_refs','relations','component_refs')} for route in view['routes']]
     pending = [{key:item.get(key) for key in ('result_id','kind','source_ref','handled_by_decision')}
                for item in view['pending_results']]
     decision = copy.deepcopy(result)
@@ -57,6 +75,7 @@ def decision_package(view, result, fields=None):
         # the coordinator actually supplied in the delivered decision package.
         decision['evidence_closure']['risk_judgments'] = copy.deepcopy(fields.get('risk_judgments', []))
     return {'roots':view['roots'], 'scope':view['scope'], 'conclusion_scope':view['conclusion_scope'],
+            **{key: view[key] for key in ('scopes', 'scope_id', 'scope_exclusions', 'exploration_exclusions', 'scope_decisions') if key in view},
             'records':records, 'edges':[edge for edge in view['edges'] if edge['user_ref'] in reachable],
             'materials':materials, 'risks':view['risks'], 'limitations':view['limitations'],
             'reviews':result['review_coverage']['coverage'], 'routes':routes, 'pending_results':pending,
@@ -118,6 +137,20 @@ def render_appendix(draft_id, basis_digest, data):
     if not result['review_coverage']['coverage']:
         lines.append('- 没有声明需要的审阅类型；不据此推导已审阅。')
     lines.extend(['', '## 探索与停止', f"- 停止理由：{result['exploration_stop']['reason']}"])
+    for scope in view.get('scopes', []):
+        lines.append(f"- 范围 {scope['ref']}：{scope['objective']}；{scope.get('state', 'active')}。")
+    for judgment in result['exploration_stop'].get('scope_judgments', []):
+        lines.append(f"- 范围处置 {', '.join(judgment['scope_refs'])}：{judgment['reason']}；"
+                     f"未做：{judgment['remaining_work']}；残余不确定性：{judgment['residual_uncertainty']}；"
+                     f"恢复条件：{judgment['reactivation_condition']}。")
+    for change in view.get('scope_exclusions', []):
+        lines.append(f"- 移出核心范围 {', '.join(change['removed'])}：{change['reason']}；"
+                     f"范围外影响：{change['excluded_impact']}。原风险保留，移出不表示已解决。")
+    for change in view.get('exploration_exclusions', []):
+        lines.append(f"- {change['before_ref']} → {change['after_ref']} 移出声明引用：{', '.join(change['removed_refs'])}；"
+                     f"原因：{change['reason'] or '未记录'}。相应科学风险仍纳入当前依据。")
+    for expected in result['exploration_stop'].get('missing_expected_results', []):
+        lines.append(f"- 范围 {expected['scope_id']} 的尚缺结果：{encoded(expected['missing_results'])}。")
     for route in view['routes']:
         lines.append(f"- {route['title']}（{route['ref']}）：{route['disposition']}；{route.get('disposition_reason') or '未记录处置理由'}。")
     for item in result['exploration_stop'].get('route_judgments', []):
@@ -291,6 +324,23 @@ def evaluate(store, db, view, fields):
     if not isinstance(stop, dict) or stop.get('reason_kind') not in STOP_REASONS:
         raise ValidationError('exploration_stop requires a recognized reason_kind')
     _text(stop.get('reason'), 'exploration_stop.reason')
+    scopes = {item['ref']: item for item in view.get('scopes', [])}
+    scope_judgments = stop.get('scope_judgments', [])
+    if not isinstance(scope_judgments, list):
+        raise ValidationError('scope_judgments must be a list')
+    accounted_scopes = set()
+    for judgment in scope_judgments:
+        if (not isinstance(judgment, dict) or not isinstance(judgment.get('scope_refs'), list)
+                or not judgment['scope_refs']):
+            raise ValidationError('A scope judgment needs scope_refs')
+        for key in ('reason', 'remaining_work', 'residual_uncertainty', 'reactivation_condition'):
+            _text(judgment.get(key), 'scope judgment ' + key)
+        for ref in judgment['scope_refs']:
+            if ref not in scopes or ref in accounted_scopes:
+                raise ValidationError('Scope judgments must identify distinct current scopes')
+            accounted_scopes.add(ref)
+    if len(scopes) > 1 and set(scopes) - accounted_scopes:
+        raise ConflictError('Every current scope needs an explicit stopping judgment')
     pending = [item['result_id'] for item in view['pending_results']]
     accounted = stop.get('unprocessed_results', [])
     if pending and (not isinstance(accounted, list) or set(pending) - set(accounted)):
@@ -319,10 +369,15 @@ def evaluate(store, db, view, fields):
     if any(item.get('target_ref') not in core for item in requirements if isinstance(item, dict)):
         raise ValidationError('Review requirements must target an exact core claim')
     coverage = review_coverage(view, requirements, core)
+    missing_expected = [{'scope_id': item['scope_id'], 'decision_id': item['decision_id'],
+                         'missing_results': [*item['data'].get('expected_missing', []), *item['data'].get('missing_results', [])]}
+                        for item in view.get('scope_decisions', []) if item['data'].get('expected_missing') or item['data'].get('missing_results')]
     return {'outcome': outcome, 'gaps': gaps, 'core_claim_refs': core,
             'evidence_closure': {'status': closure, 'missing_core': missing_core, 'unsupported_core': unsupported_core,
                                  'unclassified_risks': unclassified, 'risk_judgments': judgments},
             'review_coverage': coverage, 'exploration_stop': {**stop, 'pending_results': pending,
+                                                               'missing_expected_results': missing_expected,
+                                                               'considered_scope_refs': list(scopes),
                                                                'unaccounted_routes': unaccounted_routes,
                                                                'considered_route_refs': list(current_routes)}}
 
@@ -401,6 +456,8 @@ class EvidenceConclusionStore:
                 raise ConflictError('evidence_snapshot_expired: read the evidence again')
             if snapshot.get('host_id') != host or snapshot.get('session_id') != session:
                 raise ConflictError('evidence_snapshot_session_changed: read the evidence again in the current main session')
+            if snapshot['view'].get('scope_id') is not None:
+                raise ConflictError('project_evidence_required: read evidence without scope_id before preparing project conclusion')
             current = build_evidence_view(self, db, snapshot['view']['roots'])
             if current['basis_digest'] != snapshot['basis_digest']:
                 raise EvidenceBasisChanged('conclusion', basis_changes(snapshot['view'], current['view']))
@@ -440,22 +497,32 @@ class EvidenceConclusionStore:
                 result = evaluate(self, db, view, fields)
             package = decision_package(snapshot['view'], result, fields)
             body = json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
-            if len(body) > 32000:
+            mode = fields.get('delivery_mode', 'bounded')
+            if mode not in {'bounded', 'paged'}:
+                raise ValidationError('delivery_mode must be bounded or paged')
+            if mode == 'bounded' and len(body) > 32000:
                 counts = {key:len(package[key]) for key in ('records','edges','materials','risks','limitations')}
                 raise ValidationError(f'decision_package_too_large: {len(body)} bytes (limit 32000); '
                                       f'counts={encoded(counts)}; narrow the declared scope explicitly')
+            if mode == 'paged' and len(body) > PAGED_DECISION_MAX_BYTES:
+                raise ValidationError(f'paged_decision_package_too_large: {len(body)} bytes '
+                                      f'(limit {PAGED_DECISION_MAX_BYTES}); preserve all risks and explicitly revise scope')
+            manifest = delivery_manifest(body) if mode == 'paged' else None
             snapshot['manifest_digest'] = hashlib.sha256(body).hexdigest()
             draft_id = self._next(db, 'conclusion_draft', 'CD')
             data = {'format_version': 2, 'view': snapshot['view'], 'decision_package':package,
                     'evaluation': result, 'fields': fields, 'snapshot_id': snapshot['snapshot_id'],
                     'versions': contract_versions(self, db, host, session),
                     'material_content_in_snapshot': snapshot['view'].get('material_content_in_snapshot', [])}
+            if manifest:
+                data['delivery_manifest'] = manifest
             db.execute('INSERT INTO conclusion_drafts VALUES(?,?,?,?,?,?,?,?,?)',
                        (draft_id, run['generation'], host, session, snapshot['basis_digest'], snapshot['manifest_digest'],
                         snapshot['source_sequence'], encoded(data), now()))
             self._event(db, 'conclusion.prepared', {'draft_id': draft_id, 'basis_digest': snapshot['basis_digest']})
             return {'draft_id': draft_id, 'generation': run['generation'], 'basis_digest': snapshot['basis_digest'],
-                    'manifest_digest': snapshot['manifest_digest'], **result}
+                    'manifest_digest': snapshot['manifest_digest'], **result,
+                    **({'delivery_manifest': manifest} if manifest else {})}
         return self._mutate('conclusion.prepare', payload, operation, work)
 
     def evidence_conclusion_in_tx(self, db, host, session, fields, receipt_ids, instance_id):
@@ -491,6 +558,8 @@ class EvidenceConclusionStore:
             raise ConflictError('Final report does not match the conclusion evidence')
         body = json.dumps(data['decision_package'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         total_bytes = len(body.encode('utf-8'))
+        if data.get('delivery_manifest') and delivery_manifest(body.encode('utf-8')) != data['delivery_manifest']:
+            raise ConflictError('Conclusion draft delivery layout has changed')
         if not isinstance(instance_id, str) or not instance_id or not isinstance(receipt_ids, list) or not receipt_ids:
             raise EvidenceDeliveryIncomplete(draft_id, 0, total_bytes)
         ranges = []

@@ -30,13 +30,13 @@ def read_model(store, db, *, node_id=None, decision_refs=None, final_ref=None):
     run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
     if (node_id is None and run and db.execute('PRAGMA user_version').fetchone()[0] >= 13
             and store._project(db)['config'].get('exploration_policy') == 'exploration-v1'):
-        from .exploration_store import _current_scope
-        current_scope = _current_scope(db, run['generation'])
-        if current_scope:
+        from .exploration_store import _scopes
+        current_scopes = _scopes(db, run['generation'])
+        if current_scopes:
             route_refs = []
             for row in db.execute("SELECT r.data FROM exploration_routes r JOIN "
-                "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
-                "ON r.route_id=x.route_id AND r.revision=x.revision", (current_scope['scope_id'],)):
+                "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?) GROUP BY route_id) x "
+                "ON r.route_id=x.route_id AND r.revision=x.revision", (run['generation'],)):
                 route = json.loads(row['data'])
                 if route.get('disposition') in {'investigating', 'adopted'}:
                     route_refs.extend(route.get('evidence_refs', []))
@@ -316,6 +316,51 @@ def compact_risk(item):
     return value
 
 
+def exploration_overview(store, db, generation):
+    """Bounded multi-scope projection; complete objects remain in paged collections."""
+    from .exploration_store import _scopes, _decode
+    scopes = _scopes(db, generation)
+    if not scopes:
+        return None
+    active = [scope for scope in scopes if scope.get('state', 'active') == 'active']
+    routes = [_decode(row, 'route') for row in db.execute(
+        "SELECT r.* FROM exploration_routes r JOIN (SELECT route_id,MAX(revision) revision "
+        "FROM exploration_routes WHERE scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?) "
+        "GROUP BY route_id) x ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (generation,))]
+    pending = db.execute('SELECT COUNT(*) FROM exploration_results WHERE handled_by_decision IS NULL AND '
+        'scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?)', (generation,)).fetchone()[0]
+    intents = list(db.execute("SELECT state,details FROM workflow_intents WHERE kind='exploration_work' "
+        "AND json_extract(details,'$.generation')=? AND state IN ('pending','waiting_budget','materialized') ORDER BY rowid", (generation,)))
+    decisions = []
+    for scope in [*active, *[item for item in scopes if item not in active]][:3]:
+        row = db.execute('SELECT decision_id,data FROM exploration_decisions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1',
+                         (scope['scope_id'],)).fetchone()
+        if row:
+            data = json.loads(row['data'])
+            decisions.append({'scope_id': scope['scope_id'], 'decision_id': row['decision_id'],
+                'action': data.get('action'), 'provisional': data.get('provisional', False),
+                'expected_results_total': len(data.get('expected_results', [])),
+                'missing_results_total': len(data.get('missing_results', [])),
+                'revises_decision_id': data.get('revises_decision_id')})
+    selected = active[-1] if active else scopes[-1]
+    return {'scope_ref': selected['ref'], 'objective': selected['objective'],
+        'scopes_total': len(scopes), 'active_scopes_total': len(active),
+        'deferred_scopes_total': sum(item.get('state') == 'deferred' for item in scopes),
+        'closed_scopes_total': sum(item.get('state') == 'closed' for item in scopes),
+        'routes_total': len(routes), 'active_routes_total': sum(item.get('disposition') == 'investigating' for item in routes),
+        'pending_results_total': pending, 'pending_work_total': len(intents),
+        'waiting_budget_total': sum(row['state'] == 'waiting_budget' for row in intents),
+        'index_complete': False,
+        'scopes_index': {'collection':'exploration_scopes', 'generation':generation},
+        'routes_index': {'collection':'exploration_routes', 'generation':generation},
+        'results_index': {'collection':'exploration_results', 'generation':generation},
+        'work_index': {'collection':'exploration_intents', 'generation':generation},
+        'scopes': [{'ref': item['ref'], 'scope_id': item['scope_id'], 'objective': item['objective'][:100],
+                    'state': item.get('state', 'active')} for item in [*active, *[scope for scope in scopes if scope not in active]][:3]],
+        'routes': [{key: route[key] for key in ('ref','scope_id','title','disposition')} for route in routes[:3]],
+        'latest_decisions': decisions}
+
+
 def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None, final_ref=None):
     max_chars = max(500, min(int(max_chars), 12000))
     model = read_model(store, db, node_id=node_id, decision_refs=decision_refs, final_ref=final_ref)
@@ -333,26 +378,33 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     exploration_details = None
     if (block_map['identity']['role'] == 'main' and db.execute('PRAGMA user_version').fetchone()[0] >= 13
             and store._project(db)['config'].get('exploration_policy') == 'exploration-v1'):
-        from .exploration_store import _current_scope, _decode
         run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
-        selected_scope = _current_scope(db, run['generation']) if run else None
-        routes, results = [], []
-        if selected_scope:
-            for row in db.execute("SELECT r.* FROM exploration_routes r JOIN "
-                "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
-                "ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (selected_scope['scope_id'],)):
-                route = _decode(row, 'route')
-                routes.append({'ref': route['ref'], 'title': route['title'][:100], 'disposition': route['disposition']})
-            results = [r[0] for r in db.execute("SELECT result_id FROM exploration_results WHERE scope_id=? "
-                "AND handled_by_decision IS NULL ORDER BY rowid", (selected_scope['scope_id'],))]
-        views['exploration'] = {'scope_ref': selected_scope['ref'] if selected_scope else None,
-            'routes_total': len(routes), 'pending_results_total': len(results),
-            'details_omitted': True,
-            'routes': {'collection': 'exploration_routes'}, 'results': {'collection': 'exploration_results'}}
-        exploration_details = {'objective': selected_scope['objective'][:200] if selected_scope else None,
-            'route_sample': routes[:3], 'pending_result_ids': results[:3],
-            'instruction': ('Process new results and explicitly decide whether to probe, deepen, redirect, defer or stop.'
-                            if selected_scope else 'For a choice or discovery with a key unknown, create a scope and save possible routes; direct delivery need not invent alternatives.')}
+        overview = exploration_overview(store, db, run['generation']) if run else None
+        if overview:
+            views['exploration'] = {key: overview[key] for key in
+                ('scope_ref', 'scopes_total', 'active_scopes_total', 'routes_total', 'pending_results_total')}
+            views['exploration'].update({'details_omitted': True,
+                'scopes': {'collection':'exploration_scopes'}, 'routes': {'collection':'exploration_routes'},
+                'results': {'collection':'exploration_results'}, 'intents': {'collection':'exploration_intents'}})
+            exploration_details = {'objective':overview['objective'][:200], 'scope_sample':overview['scopes'],
+                'route_sample':overview['routes'], 'latest_decisions':overview['latest_decisions'],
+                'pending_work_total':overview['pending_work_total'], 'waiting_budget_total':overview['waiting_budget_total']}
+            from .runtime_budget import exploration_budget_view
+            budget = exploration_budget_view(store, db)
+            if budget.get('available'):
+                exploration_details['budget'] = {key:budget[key] for key in
+                    ('allocated', 'reserved', 'committed', 'limit', 'unit', 'actual_usage_status')}
+                exploration_details['resources'] = {'held_sample':dict(list(budget['resources_held'].items())[:3]),
+                    'capacity_sample':dict(list(budget['resource_capacities'].items())[:3]),
+                    'expand':{'collection':'exploration_budget'}, 'note':'Unverified external exit keeps resources held'}
+            exploration_details['instruction'] = ('Read evidence with scope_id before a local choice. Process late results, '
+                'explain provisional choices and missing results, and reassess a deferred route only with changed conditions. '
+                'For project conclusion omit scope_id and cover every scope, including deferred/closed scopes. '
+                'A shared probe binds multiple routes to one work allocation; failures are not refutations.')
+        else:
+            views['exploration'] = {'scopes_total': 0, 'active_scopes_total': 0,
+                'scopes': {'collection':'exploration_scopes'}, 'routes': {'collection':'exploration_routes'}}
+            exploration_details = {'instruction': 'For a choice or discovery with a key unknown, create a scope and save possible routes; direct delivery need not invent alternatives.'}
     for name in ('critical_now', 'findings'):
         views[name] = {'total': len(model[name]), 'items': [], 'index_complete': False,
                        'details_complete': False, 'expand_required': True,

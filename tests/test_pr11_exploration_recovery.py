@@ -50,7 +50,8 @@ def test_stale_unmaterialized_intent_has_no_fake_task_and_can_wake(tmp_path):
     host = Host(tmp_path)
     scope, _, _, decision = start(host)
     host.call('exploration_route', model_call=True, fields={'scope_ref':scope['ref'],
-        'changes':{'title':'Another idea','rationale':'Alternative','critical_assumption':'May work'}})
+        'route_ref':decision['route_refs'][0], 'reason':'The selected premise changed',
+        'changes':{'critical_assumption':'A different workload'}})
     host.call('workflow', action='session', fields={'pause_reason':'wait','waiting':['other-task']})
     outcome = host.call('exploration_materialize', intent_id=decision['intent_id'])
     assert outcome['state'] == 'stale' and outcome['task_id'] is None

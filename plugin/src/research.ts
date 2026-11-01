@@ -157,7 +157,7 @@ export class Research {
   ensureContract(): Promise<void> {
     this.contract ??= this.storage.request('capabilities').then(value => {
       if (value.memory_write_contract!=='r2-v1' || value.runtime_control_contract !== 'controller-launch-v1' ||
-          value.exploration_contract !== 'exploration-v1' || value.evidence_contract !== 'evidence-v1' ||
+          value.exploration_contract !== 'exploration-v1' || value.multiroute_contract !== 'multiroute-v1' || value.evidence_contract !== 'evidence-v1' ||
           value.evidence_read !== 'snapshot-delivery-v2') throw Object.assign(
         new Error('Research backend contract mismatch: install the matching plugin and bundled Python package.'),
         {code:'research_contract_mismatch'})
