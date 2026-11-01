@@ -8,7 +8,9 @@
  * assigned inputs: no workspace, no research records, none of OpenCode's prompt.
  */
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { join } from "node:path"
+import { wasNotSent } from './host-submission'
 import { oneLine, type ModelRef, type PermissionRule, type SessionHost } from "./engine"
 import type { Research } from "./research"
 
@@ -139,8 +141,8 @@ function verdict(exited: boolean, outcome: string | null, text: string, timedOut
 
 export class Specialists {
   /** Tools of each specialist session this process started, for the per-request filter. */
-  private tools = new Map<string, readonly string[]>()
-  private researchMode = new Set<string>()
+  private tools: Map<string, readonly string[]>
+  private researchMode: Set<string>
 
   constructor(
     private readonly research: Research,
@@ -148,7 +150,12 @@ export class Specialists {
     private readonly modelFor: (root: string) => ModelRef | undefined,
     private readonly fanout = 2,
     private readonly timeoutMs = 600_000,
-  ) {}
+    runtime?: { specialistTools: Map<string, readonly string[]>; specialistResearch: Set<string> },
+    private readonly current: () => boolean = () => true,
+  ) {
+    this.tools = runtime?.specialistTools ?? new Map()
+    this.researchMode = runtime?.specialistResearch ?? new Set()
+  }
 
   /** None for a specialist from before a restart; its session's permission rules still hold. */
   toolsOf(sessionID: string): readonly string[] {
@@ -183,12 +190,10 @@ export class Specialists {
       for (const [index, task] of tasks.entries()) reserved.push(await this.reserve(parent, task, `${operationID}:${index}`))
     } catch (error) {
       for (const item of reserved) {
-        await this.settle(
-          parent,
-          item.task_id,
-          { state: "cancelled", result: {}, error: "同批专家没能全部预占，未启动", exit_verified: true },
-          `${operationID}:${item.task_id}:cancel`,
-        ).catch(() => {})
+        // A replayed reservation may already have acquired its launch claim.
+        // Only a transaction that sees `prepared` may declare it unstarted.
+        await this.research.call('specialist_cancel_unstarted', parent, { task_id: item.task_id },
+          `${operationID}:${item.task_id}:cancel`).catch(() => {})
       }
       throw error
     }
@@ -204,7 +209,8 @@ export class Specialists {
 
   /** The ledger checks the caller's role, its live node attempt, the inputs and the node's specialist limit. */
   private reserve(parent: string, task: SpecialistTask, operationID: string): Promise<any> {
-    specialistTools(task)
+    const tools = specialistTools(task)
+    const digest = createHash('sha256').update(operationID).digest('hex').slice(0, 32)
     return this.research.call(
       "specialist_create",
       parent,
@@ -217,6 +223,8 @@ export class Specialists {
           ...(task.node_id ? { node_id: task.node_id } : {}),
           context_mode: task.context_mode ?? "research",
           fanout_limit: this.fanout,
+          launch: { tools: [...tools], deadline_at: Date.now() + this.timeoutMs,
+            session_id: `ses_research_${digest}`, message_id: `msg_research_${digest}` },
         },
         model_call: true,
       },
@@ -234,27 +242,38 @@ export class Specialists {
   ): Promise<unknown> {
     // A replayed call returns the recorded task instead of starting a second specialist.
     if (reserved.state !== "starting") return withoutPrompt(reserved)
-    const tools = specialistTools(task)
+    const launch = reserved.launch
+    if (!launch) return { task_id: reserved.task_id, state: 'unverified', error: '专家启动身份未记录，需先核对。' }
+    const claimed = await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'creating' })
+    if (!claimed.claimed) return withoutPrompt(await this.research.call('specialist_get', parent, { task_id: reserved.task_id }))
+    const tools: readonly string[] = launch.tools
     const controller = new AbortController()
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, this.timeoutMs)
+    }, Math.max(0, launch.deadline_at - Date.now()))
     const cancel = () => controller.abort()
     signal?.addEventListener("abort", cancel, { once: true })
     if (signal?.aborted) controller.abort()
     let child: string | undefined
+    let createAttempted = false
+    let kickoffAttempted = false
     try {
       const parentState = await this.research.call("status", parent)
       const workspace: string = parentState.workflow?.session?.cwd ?? root
       const kind = reserved.context_mode === "blind" ? "盲评" : "专家"
-      child = await this.host.create(
+      createAttempted = true
+      const created = await this.host.create(
         `${reserved.node_id ?? "项目"} · ${kind} · ${oneLine(reserved.label, 40)}`,
         root,
         this.modelFor(root),
         permissionsFor(tools),
+        launch.session_id,
       )
+      if (created !== launch.session_id) throw new Error('宿主没有确认预定的专家会话 ID')
+      child = created
+      await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'created' }, `${operationID}:created`)
       await this.research.call(
         "specialist_bind_child",
         parent,
@@ -264,9 +283,14 @@ export class Specialists {
       this.research.register(child, root, "specialist", reserved.node_id ?? undefined)
       this.tools.set(child, tools)
       if (reserved.context_mode !== "blind") this.researchMode.add(child)
+      await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'bound' }, `${operationID}:bound`)
       this.research.notifyChanged(root)
-      await this.host.synthetic(child, kickoff(reserved, workspace, tools), `专家任务 ${reserved.task_id}`, true)
+      kickoffAttempted = true
+      await this.host.synthetic(child, kickoff(reserved, workspace, tools), `专家任务 ${reserved.task_id}`, true,
+        launch.message_id, undefined, undefined, launch.intent_id)
+      await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'submitted' }, `${operationID}:submitted`)
       const exited = await this.finished(child, controller.signal)
+      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
       const { outcome, text } = sessionResult(await this.host.messages(child).catch(() => []))
       const { state, error } = verdict(exited, outcome, text, timedOut)
       let archiveError: string | undefined
@@ -294,7 +318,18 @@ export class Specialists {
         `${operationID}:finish`,
       )
     } catch (error) {
-      const exited = child ? await this.stop(child) : true
+      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
+      const stage = !child && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
+        : child && (!kickoffAttempted || wasNotSent(error, 'synthetic')) ? 'synthetic' : undefined
+      if (stage) {
+        const undone = await this.research.call('runtime_outbound_not_sent', parent, {
+          intent_id: launch.intent_id, stage, reason: message(error),
+        }).catch(() => null)
+        if (undone?.rolled_back) return withoutPrompt(await this.research.call('specialist_get', parent, { task_id: reserved.task_id }))
+      }
+      // An RPC/archive/bind failure can leave a live child too. The current
+      // owner must request its exit even when no timeout or abort occurred.
+      const exited = child ? await this.stop(child).catch(() => false) : false
       return this.settle(
         parent,
         reserved.task_id,
@@ -327,11 +362,12 @@ export class Specialists {
   }
 
   private async stop(child: string, idle: Promise<void> = this.host.wait(child)): Promise<boolean> {
+    const exited = idle.then(() => true, () => false)
     await this.host.interrupt(child).catch(() => {})
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), STOP_GRACE_MS)))
     try {
-      return await Promise.race([idle.then(() => true, () => false), late])
+      return await Promise.race([exited, late])
     } finally {
       clearTimeout(timer)
     }
@@ -366,24 +402,98 @@ export class Specialists {
     return withoutPrompt(value)
   }
 
-  /** OpenCode restarted: no tool call waits for a live specialist any more, so each is stopped and settled. */
+  private async activeTasks(root: string, includeUnverified = false): Promise<any[]> {
+    const tasks: any[] = []
+    let cursor: Record<string, unknown> | null = null
+    do {
+      if (tasks.length >= 10_000) throw new Error('专家任务过多，需先缩小恢复范围。')
+      const page: any = await this.research.storage.request('project_read',
+        { root, view: 'page', collection: 'specialists', limit: 100, ...(cursor ?? {}) })
+      tasks.push(...(page.items ?? []).filter((item: any) =>
+        ['starting', 'running', ...(includeUnverified ? ['unverified'] : [])].includes(item.state)))
+      cursor = page.cursor ?? null
+    } while (cursor)
+    return tasks
+  }
+
+  /** Stop requests are best-effort; a host interrupt is not proof of process exit. */
+  async interruptUnverified(root: string): Promise<void> {
+    const tasks = await this.activeTasks(root, true)
+    let failed = false
+    for (const session of new Set<string>(tasks.map(task => task.child_session_id).filter(Boolean))) {
+      try { await this.host.interrupt(session) } catch { failed = true }
+    }
+    if (failed) throw new Error('Some specialist interrupt requests failed')
+  }
+
+  /** Recreate watchers from persisted identities, scope and the original deadline. */
+  async recoverWarm(): Promise<void> {
+    await this.research.ready()
+    for (const root of this.research.roots().filter(item => this.research.inScope(item))) {
+      const main = this.research.sessionsIn(root).find(sid => this.research.roleOf(sid) === 'main')
+      if (!main) continue
+      for (const task of await this.activeTasks(root)) {
+        const launch = await this.research.call('specialist_launch_get', task.parent_session_id, { task_id: task.task_id })
+        if (!launch || launch.state !== 'submitted' || !task.child_session_id || task.child_session_id !== launch.session_id) {
+          await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
+            exit_verified: false, error: '重绑定时专家启动或退出状态未核实。' }, `${task.task_id}:warm-unverified`).catch(() => {})
+          continue
+        }
+        this.tools.set(launch.session_id, launch.tools)
+        if (launch.context_mode === 'blind') this.researchMode.delete(launch.session_id)
+        else this.researchMode.add(launch.session_id)
+        void this.watchRecovered(root, task, launch)
+      }
+    }
+  }
+
+  private async watchRecovered(root: string, task: any, launch: any): Promise<void> {
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; controller.abort() }, Math.max(0, launch.deadline_at - Date.now()))
+    try {
+      const exited = await this.finished(launch.session_id, controller.signal)
+      if (!this.current()) return
+      const messages = await this.host.messages(launch.session_id)
+      const start = messages.findIndex(item => item?.id === launch.message_id || item?.info?.id === launch.message_id)
+      const subsequent = start >= 0 ? messages.slice(start + 1) : []
+      const correlated = start >= 0 && !subsequent.some(item => item?.type === 'user' || item?.type === 'synthetic')
+      const { outcome, text } = sessionResult(messages)
+      if (!correlated || !outcome) {
+        await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
+          exit_verified: false, error: '无法把专家终态与原启动消息对应；需人工核对。' }, `${task.task_id}:warm-unknown`)
+        return
+      }
+      const { state, error } = verdict(exited, outcome, text, timedOut)
+      const operationID = `${task.task_id}:warm-result`
+      const artifact = text ? await this.archive(root, task.parent_session_id, task.task_id, outcome, text, operationID).catch(() => null) : null
+      await this.settle(task.parent_session_id, task.task_id, { state, error, exit_verified: exited,
+        result: { stop_reason: outcome, session_id: launch.session_id, preview: text.slice(0, PREVIEW_CHARS),
+          ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}) } }, `${operationID}:finish`)
+    } catch {
+      if (this.current()) await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
+        exit_verified: false, error: '专家恢复核对失败；需人工核对。' }, `${task.task_id}:warm-error`).catch(() => {})
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** A restarted host cannot prove that a previous specialist or its work exited. */
   async recover(): Promise<void> {
     await this.research.ready()
     for (const root of this.research.roots().filter((item) => this.research.inScope(item))) {
       const main = this.research.sessionsIn(root).find((sessionID) => this.research.roleOf(sessionID) === "main")
       if (!main) continue
-      const state = await this.research.call("status", main).catch(() => null)
-      for (const task of state?.specialists ?? []) {
-        const exited = task.child_session_id ? await this.stop(task.child_session_id) : true
+      for (const task of await this.activeTasks(root)) {
         await this.settle(
           task.parent_session_id,
           task.task_id,
           {
-            state: exited ? "incomplete" : "unverified",
+            state: "unverified",
             result: {},
             preserve_result: true,
-            exit_verified: exited,
-            error: "OpenCode 重启时这位专家还没有交回报告；需要时重新委派。",
+            exit_verified: false,
+            error: "OpenCode 重启后专家退出状态未核实；请先核对，不能自动重新委派。",
           },
           `${task.task_id}:restart`,
         ).catch(() => {})

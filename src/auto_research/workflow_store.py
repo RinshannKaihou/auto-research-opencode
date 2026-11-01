@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .errors import ConflictError, ValidationError, NotFoundError
+from .errors import ConflictError, ValidationError, NotFoundError, ResearchControlError
 
 
 def now():
@@ -89,7 +89,7 @@ def migrate_schema3(path: Path):
             )
             first = associations[0]["session_id"] if associations else None
             # Current control is deliberately retained; runtime activation is revoked.
-            db.execute("INSERT INTO workflow_project VALUES(1,?,'cold',0,?)", (first, now()))
+            db.execute("INSERT INTO workflow_project(id,main_session_id,state,generation,updated_at) VALUES(1,?,'cold',0,?)", (first, now()))
             seen = set()
             for row in associations:
                 sid = row["session_id"]
@@ -202,10 +202,30 @@ class WorkflowStore:
             "SELECT session_id,host_id,role,node_id,cwd,pause_reason,waiting,goal_id,goal_revision,detached,created_at,close_state,close_attempt_id,close_reason FROM workflow_sessions WHERE session_id=?",
             (session_id,),
         ).fetchone()
+        controller = db.execute("SELECT state,details FROM workflow_intents WHERE intent_id='controller-owner:v1' AND kind='controller_owner'").fetchone()
+        from .controller import CURRENT_CONTROLLER, candidate_id
+        token = CURRENT_CONTROLLER.get()
+        candidate = db.execute("SELECT 1 FROM workflow_intents WHERE intent_id=? AND kind='controller_candidate' AND state='pending'",
+                               (candidate_id(session_id, token.get('epoch'), token.get('binding')),)).fetchone() if isinstance(token, dict) else None
+        deliveries = []
+        for delivery in db.execute("SELECT kind,state,details FROM workflow_intents WHERE session_id=? AND kind IN ('notification_delivery','notification_wake') AND state='submitting' ORDER BY updated_at LIMIT 50", (session_id,)):
+            details = json.loads(delivery['details'])
+            deliveries.append({'kind': 'report' if delivery['kind'] == 'notification_delivery' else 'wake',
+                               'state': 'unverified', 'notification_id': details['notification_id'], 'message_id': details['message_id']})
+        unverified = {
+            'tasks': [dict(item) for item in db.execute("SELECT task_id,node_id FROM exploration_tasks WHERE state='unverified' ORDER BY updated_at,task_id LIMIT 50")],
+            'specialists': [dict(item) for item in db.execute("SELECT task_id,node_id FROM specialist_tasks WHERE state='unverified' ORDER BY updated_at,task_id LIMIT 50")],
+            'tasks_total': db.execute("SELECT COUNT(*) FROM exploration_tasks WHERE state='unverified'").fetchone()[0],
+            'specialists_total': db.execute("SELECT COUNT(*) FROM specialist_tasks WHERE state='unverified'").fetchone()[0],
+        }
         result.update(
             run=dict(row) if row else None,
             conclusion=self.conclusion_view(db),
             session=dict(current) if current else None,
+            controller=({"phase": 'recovery_required', 'reason': 'other_controller_alive_or_unknown', 'fence': token['fence']} if candidate else
+                        {"phase": controller["state"], "fence": json.loads(controller["details"]).get("fence")} if controller else {"phase": "unrecorded"}),
+            deliveries=deliveries,
+            unverified=unverified,
             cursors=next_cursors,
         )
         if current:
@@ -312,7 +332,7 @@ class WorkflowStore:
                     )
                 if not view["run"]:
                     db.execute(
-                        "INSERT INTO workflow_project VALUES(1,?,'manual',0,?)",
+                        "INSERT INTO workflow_project(id,main_session_id,state,generation,updated_at) VALUES(1,?,'manual',0,?)",
                         (session_id if role == "main" else None, at),
                     )
                 elif role == "main":
@@ -361,6 +381,12 @@ class WorkflowStore:
                         "UPDATE exploration_tasks SET state='cancelled',updated_at=? WHERE state='queued'",
                         (at,),
                     )
+                    db.execute(
+                        "UPDATE exploration_tasks SET state='unverified',error='stop: execution exit not verified',updated_at=? WHERE state IN ('starting','running','waiting','stopping')",
+                        (at,),
+                    )
+                    db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0,error='stop: execution exit not verified',updated_at=? WHERE state IN ('starting','running')", (at,))
+                    db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (at,))
             elif action == "session":
                 if not current:
                     raise NotFoundError("Session role is missing")
@@ -382,8 +408,10 @@ class WorkflowStore:
                     or current["detached"]
                 ):
                     raise ConflictError("Only research agents may dispatch")
-                if view["run"]["state"] != "running":
-                    raise ConflictError("Autonomous research is not running")
+                run_state = view["run"]["state"]
+                pause_reason = current["pause_reason"]
+                if run_state != "running" or pause_reason not in (None, "wait"):
+                    raise ResearchControlError(run_state, pause_reason, view["run"].get("control_revision"), view["controller"]["phase"])
                 node = next(
                     (
                         dict(n)
@@ -497,6 +525,19 @@ class WorkflowStore:
                 }
                 if fields["state"] not in allowed:
                     raise ValidationError("Invalid task state")
+                launch = db.execute("SELECT state,details FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? ORDER BY CAST(json_extract(details,'$.launch_no') AS INTEGER) DESC LIMIT 1",
+                                    (task['task_id'],)).fetchone()
+                if launch:
+                    if task['parent_session_id'] != session_id:
+                        raise ConflictError('Only the task owner may change its runtime state')
+                    target, prior = fields['state'], task['state']
+                    safe = (target == prior or target == 'unverified' and prior in {'starting', 'running', 'waiting', 'stopping'}
+                            or prior == 'queued' and target in {'failed', 'cancelled'}
+                            or prior == 'waiting' and target == 'running'
+                            or prior == 'starting' and target == 'queued' and launch['state'] == 'ready'
+                            and not json.loads(launch['details']).get('reservation_id') and view['run']['state'] == 'running')
+                    if not safe:
+                        raise ConflictError('Task transition requires its dedicated launch, finish, or user recovery operation')
                 db.execute(
                     "UPDATE exploration_tasks SET state=?,cwd=COALESCE(?,cwd),error=?,updated_at=? WHERE task_id=?",
                     (
@@ -511,6 +552,8 @@ class WorkflowStore:
                 task = db.execute(
                     "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
                 ).fetchone()
+                if task and db.execute("SELECT 1 FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? LIMIT 1", (task['task_id'],)).fetchone():
+                    raise ConflictError('Use the user-verified task recovery and retry operations')
                 if not task or task["state"] not in {
                     "failed",
                     "unverified",
@@ -536,6 +579,8 @@ class WorkflowStore:
                 task = db.execute(
                     "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
                 ).fetchone()
+                if task and db.execute("SELECT 1 FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? LIMIT 1", (task['task_id'],)).fetchone():
+                    raise ConflictError('Use the user-verified task recovery operation')
                 if not task:
                     raise NotFoundError("Unknown task")
                 if task["state"] == "failed":
@@ -582,6 +627,8 @@ class WorkflowStore:
                     (fields["state"], fields["notification_id"]),
                 )
             elif action == "intent":
+                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization"}:
+                    raise ValidationError("Typed runtime intents require their dedicated operation")
                 db.execute(
                     "INSERT INTO workflow_intents VALUES(?,?,?,?,?,?) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
                     (
@@ -707,7 +754,7 @@ class WorkflowStore:
                     (session_id, at),
                 )
             else:
-                db.execute("INSERT INTO workflow_project VALUES(1,?,'manual',0,?)", (session_id, at))
+                db.execute("INSERT INTO workflow_project(id,main_session_id,state,generation,updated_at) VALUES(1,?,'manual',0,?)", (session_id, at))
             self._event(db, "workflow.takeover", {
                 "session_id": session_id, "previous_session_id": retired, "previous_state": state,
             })

@@ -116,6 +116,7 @@ def test_turn_limits_are_durable_and_replays_do_not_spend_again(tmp_path):
     restarted=NativeStore(host.root)
     assert not restarted.runtime_reserve(host.host_id,'ses_main','third')['allowed']
     host.call('runtime_budget_set',limits={'max_session_turns':3},reason='explicit increase')
+    host.call('workflow',action='session',fields={'pause_reason':None})  # explicit resume
     assert host.call('runtime_reserve')['allowed']
     assert host.call('runtime_budget_status')['turns']==3
 
@@ -335,6 +336,7 @@ def test_budgeted_queue_can_be_redispatched_after_explicit_increase(tmp_path):
         assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?',(task['task_id'],)).fetchone()[0]=='cancelled'
     host.call('runtime_budget_set',limits={'max_wall_seconds':600},reason='increase')
     host.call('workflow',action='run',fields={'state':'running'})
+    host.call('workflow',action='session',fields={'pause_reason':None})  # explicit resume
     again=host.call('workflow',action='task',fields={'node_id':nid})
     assert again['task_id']==task['task_id'] and again['state']=='queued'
 

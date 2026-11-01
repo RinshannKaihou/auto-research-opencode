@@ -26,6 +26,8 @@ from .schema8 import ensure_schema8_columns, migrate_schema8
 from .schema9 import ensure_schema9, migrate_schema9
 from .schema10 import ensure_schema10, migrate_schema10
 from .schema11 import ensure_schema11, migrate_schema11
+from .schema12 import ensure_schema12, migrate_schema12
+from .controller import ControllerStore, require_controller, CURRENT_MODEL_CALL
 from .conclusion_store import ConclusionStore
 from .review_lifecycle import ReviewStore
 from .runtime_budget import RuntimeStore
@@ -33,7 +35,7 @@ from .adoption import AdoptionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -71,7 +73,7 @@ def _number(value: Any, label: str) -> float:
 from .workflow_store import WorkflowStore, DDL, migrate_schema3
 
 
-class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
+class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
     """Transactional store used only by the native DSH plugin."""
 
     def __init__(self, root: str | Path, *, readonly: bool = False):
@@ -82,8 +84,8 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
         self.db_path = self.meta / "state.sqlite3"
         if readonly:
             with self._connection() as db:
-                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, 10, SCHEMA_VERSION}:
-                    raise ValidationError(f"Read-only view requires schema 9, 10 or {SCHEMA_VERSION}")
+                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, 10, 11, SCHEMA_VERSION}:
+                    raise ValidationError(f"Read-only view requires schema 9, 10, 11 or {SCHEMA_VERSION}")
             return
         self.meta.mkdir(parents=True, exist_ok=True)
         if self.db_path.exists():
@@ -116,6 +118,9 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
             if version == 10:
                 migrate_schema11(self.db_path)
                 version = 11
+            if version == 11 and SCHEMA_VERSION >= 12:
+                migrate_schema12(self.db_path)
+                version = 12
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -249,7 +254,6 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
             CREATE TABLE IF NOT EXISTS counters (
                 name TEXT PRIMARY KEY, value INTEGER NOT NULL
             );
-            PRAGMA user_version=11;
             """
         )
         db.executescript(DDL)
@@ -283,7 +287,9 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
                 db.execute(statement)
         ensure_schema10(db)
         ensure_schema11(db)
-        db.execute("PRAGMA user_version=11")
+        if SCHEMA_VERSION >= 12:
+            ensure_schema12(db)
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -339,8 +345,18 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
                         self.rebuild_memory_projection()
                     return result
                 self.last_replayed = False
+                if (operation == 'workflow' or operation in {'propose', 'focus', 'finish', 'project.conclude'}
+                        or operation.startswith(('runtime.', 'specialist.'))) and operation not in {
+                            'runtime.controller_attach', 'runtime.controller_ready', 'runtime.controller_adopt'}:
+                    reconciling = (operation == 'workflow' and payload.get('action') in {'run', 'session', 'task_state'}
+                                   or operation == 'specialist.finish')
+                    require_controller(db, reconciling=reconciling)
+                model_call = CURRENT_MODEL_CALL.get()
+                if model_call and operation not in {'runtime.controller_attach', 'runtime.controller_ready'}:
+                    from .runtime_budget import require_model_drain
+                    require_model_drain(db, model_call['host'], model_call['session'], model_call['execution_token'])
                 result = work(db)
-                if operation in {'propose','consume','focus','finish','close_node','publish','relate',
+                if operation in {'propose','consume','focus','finish','runtime.node_finish_commit','runtime.controller_adopt','runtime.recovery_confirm_exit','close_node','publish','relate',
                         'knowledge.record','knowledge.revise','knowledge.dispose','knowledge.narrow_scope',
                         'memory.checkpoint','review.scope','relate.typed','project.conclude'} or (
                         operation == 'workflow' and (payload['action'] in {'run','register'} or
@@ -518,6 +534,7 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
         *,
         enforce_protocol: bool = False,
         asserted_at: dict | None = None,
+        control_actor: tuple[str, str] | None = None,
     ) -> dict:
         supplied_inputs = inputs is not None
         inputs = [] if inputs is None else inputs
@@ -590,6 +607,9 @@ class NativeStore(AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, Que
 
         def work(db: sqlite3.Connection) -> dict:
             self._project(db)
+            if control_actor:
+                from .runtime_budget import require_new_work
+                require_new_work(db, *control_actor, manual=True, waiting=True, role='main')
             from .runtime_budget import check_node
             check_node(self, db)
             node_id = self._next(db, "node", "X")

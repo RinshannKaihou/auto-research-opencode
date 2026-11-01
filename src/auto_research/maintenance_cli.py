@@ -88,8 +88,8 @@ def execute(args: argparse.Namespace) -> dict:
         return validate_project(root)
     if args.command == "export":
         result = validate_project(root)
-        if result["schema_version"] not in {9, SCHEMA_VERSION} or not result["ok"]:
-            raise ValueError("Export requires a valid schema-9/10 project")
+        if result["schema_version"] not in {9, 10, 11, SCHEMA_VERSION} or not result["ok"]:
+            raise ValueError("Export requires a valid supported project")
         output = args.output.expanduser().resolve()
         if output.exists():
             raise ValueError("Export output must not already exist")

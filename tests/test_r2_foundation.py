@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research import schema11
 from auto_research.service import NativeService
 
@@ -43,7 +43,7 @@ def test_migration_preserves_history_and_original_idempotent_response(tmp_path, 
     upgraded = NativeStore(tmp_path)
     assert upgraded.initialize("migration fixture", "init") == original
     with upgraded._read() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         candidate = dict(db.execute("SELECT * FROM review_candidates").fetchone())
         assert candidate["mapping_status"] == "unknown"
         assert json.loads(candidate["target_refs"]) == []

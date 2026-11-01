@@ -86,6 +86,17 @@ export function associatedStatus(state: any): string {
     `目标：${state.project?.goal ?? "未记录"}`,
     `项目：${state.project_root ?? ""}`,
     `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
+    state.workflow?.controller?.phase && state.workflow.controller.phase !== 'ready'
+      ? `控制器：${state.workflow.controller.phase}；需先核对执行状态${state.workflow.controller.phase === 'recovery_required' ? '，可用 /research recover controller <原因>' : ''}。` : '',
+    ...(state.workflow?.deliveries ?? []).map((delivery: any) =>
+      `通知未核实：${delivery.kind} ${delivery.notification_id}（消息 ${delivery.message_id}）；核对后用 /research recover delivery。`),
+    ...(state.workflow?.unverified?.tasks ?? []).map((task: any) =>
+      `节点执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ''}；核对后用 /research recover task。`),
+    ...(state.workflow?.unverified?.specialists ?? []).map((task: any) =>
+      `专家执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ''}；核对后用 /research recover specialist。`),
+    state.workflow?.unverified?.tasks_total > (state.workflow?.unverified?.tasks?.length ?? 0) ||
+      state.workflow?.unverified?.specialists_total > (state.workflow?.unverified?.specialists?.length ?? 0)
+      ? '还有未核实执行，请使用 /research board 查看完整列表。' : '',
     state.schema_version>=11 ? `写入契约：R2 · schema ${state.schema_version}` : '',
     work,
     ...conclusionLines(state.workflow?.conclusion, state.workflow?.run?.state),
@@ -117,8 +128,12 @@ export const USAGE = [
   "/research auto [目标或指令]   建立项目并开始自主研究；已有项目时文字作为补充指令，目标不变",
   "/research pause               暂停自主研究（当前这一轮会做完）",
   "/research resume              恢复自主研究",
-  "/research stop                停止自主研究，取消节点任务（需确认）",
+  "/research stop                停止新工作并请求中断；在途执行需核实（需确认）",
   "/research status              查看项目和本会话状态",
+  "/research recover controller <原因>  人工核对后接管身份不明的控制器（需确认）",
+  "/research recover task|specialist <任务 ID> <原因>  核实执行已退出（需确认）",
+  "/research recover delivery report|wake <通知 ID> delivered|not-sent <原因>  核对投递（需确认）",
+  "/research retry <任务 ID> <原因>  重新执行已核实退出的节点（需确认）",
   "/research budget [turns|nodes|seconds|tokens|cost <正数|off> <原因>]  查看或改额；仅 cost 允许小数",
   "/research board               打开研究看板（只读）",
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",

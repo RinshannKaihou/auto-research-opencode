@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
@@ -7,7 +8,10 @@ import { parseResearchCommand } from "../src/commands"
 import { decodeChunk, kindChips, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
 import { associatedStatus } from "../src/format"
 import { StorageClient } from "../src/storage"
+import { Research } from "../src/research"
+import { keepsTool } from "../src/tools"
 import { TOOL_NAMES } from "../src/tools"
+import { forgetControllerForTest } from "../src/controller-lifecycle"
 
 type Hook = (request: any) => Promise<void> | void
 
@@ -15,7 +19,19 @@ type Hook = (request: any) => Promise<void> | void
 class EventStream implements AsyncIterable<any> {
   private queue: any[] = []
   private waiter: ((value: IteratorResult<any>) => void) | null = null
+  private sequence = new Map<string, number>()
+  end() {
+    if (this.waiter) {
+      const waiter = this.waiter
+      this.waiter = null
+      waiter({ value: undefined, done: true })
+    } else this.queue.push(null)
+  }
   push(event: any) {
+    const session = event.data?.sessionID ?? ''
+    const seq = (this.sequence.get(session) ?? 0) + 1
+    this.sequence.set(session, seq)
+    event.durable ??= { aggregateID: session, seq, version: 1 }
     if (this.waiter) {
       const waiter = this.waiter
       this.waiter = null
@@ -26,13 +42,24 @@ class EventStream implements AsyncIterable<any> {
     return {
       next: () =>
         this.queue.length
-          ? Promise.resolve({ value: this.queue.shift(), done: false })
+          ? (() => { const value = this.queue.shift(); return Promise.resolve({ value, done: value === null }) })()
           : new Promise((resolve) => (this.waiter = resolve)),
     }
+  }
+  subscribe(signal?: AbortSignal): AsyncIterable<any> {
+    const iterator = this[Symbol.asyncIterator]()
+    let resolveNext: ((value: IteratorResult<any>) => void) | undefined
+    signal?.addEventListener('abort', () => resolveNext?.({ value: undefined, done: true }), { once: true })
+    return { [Symbol.asyncIterator]: () => ({ next: () => signal?.aborted
+      ? Promise.resolve({ value: undefined, done: true })
+      : new Promise(resolve => { resolveNext = resolve; void iterator.next().then(resolve) }) }) }
   }
 }
 
 /** The slice of OpenCode's plugin context the server half uses. */
+const nativeSessions = new Map<string, {
+  transcripts: Map<string, any[]>; busy: Set<string>; waiters: Map<string, (() => void)[]>
+}>()
 function fakeHost(registryPath: string, directory: string, python?: string) {
   const tools = new Map<string, any>()
   const hooks = new Map<string, Hook>()
@@ -42,10 +69,12 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
   const models: any[] = []
   const permissions = new Map<string, any[]>()
   const events = new EventStream()
+  let subscriptions = 0
   // A session is busy from a resuming message until its turn ends; wait() resolves then.
-  const transcripts = new Map<string, any[]>()
-  const busy = new Set<string>()
-  const waiters = new Map<string, (() => void)[]>()
+  // Reloading the plugin does not reset the native host's sessions or history.
+  let native = nativeSessions.get(registryPath)
+  if (!native) nativeSessions.set(registryPath, native = { transcripts: new Map(), busy: new Set(), waiters: new Map() })
+  const { transcripts, busy, waiters } = native
   const endTurn = (sessionID: string, text: string, outcome: string) => {
     const content = text ? [{ type: "assistant", content: [{ type: "text", text }] }] : []
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), ...content, { type: "idle", outcome }])
@@ -71,7 +100,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
       },
       get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, location: { directory } }),
       create: async (input: any) => {
-        const id = `ses_node_${created.length + 1}`
+        const id = input.id ?? `ses_node_${created.length + 1}`
         created.push(id)
         models.push({ sessionID: id, model: input.model, via: "create" })
         if (input.permissions) permissions.set(id, input.permissions)
@@ -80,8 +109,12 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
       switchModel: async (input: any) => void models.push({ sessionID: input.sessionID, model: input.model, via: "switch" }),
       synthetic: async (input: any) => {
         synthetic.push(input)
-        transcripts.set(input.sessionID, [...(transcripts.get(input.sessionID) ?? []), { type: "synthetic", text: input.text }])
-        if (input.resume) busy.add(input.sessionID)
+        transcripts.set(input.sessionID, [...(transcripts.get(input.sessionID) ?? []), { type: "synthetic", id: input.id, text: input.text }])
+        if (input.resume) {
+          busy.add(input.sessionID)
+          events.push({ type: 'session.inbox.delivered', data: { sessionID: input.sessionID, inboxID: input.id } })
+        }
+        return { id: input.id }
       },
       interrupt: async ({ sessionID }: { sessionID: string }) => {
         interrupted.push(sessionID)
@@ -94,7 +127,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
           : Promise.resolve(),
       context: async ({ sessionID }: { sessionID: string }) => transcripts.get(sessionID) ?? [],
     },
-    event: { subscribe: () => events },
+    event: { subscribe: (options?: { signal?: AbortSignal }) => { subscriptions++; return events.subscribe(options?.signal) } },
     rpc: {
       register: async (_definition: unknown, registered: any) => {
         handlers = registered
@@ -104,7 +137,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
   }
   /** The model of `sessionID` ends its turn with a final text reply. */
   const reply = (sessionID: string, text: string, outcome = "succeeded") => endTurn(sessionID, text, outcome)
-  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, rpc: () => handlers }
+  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, subscriptions: () => subscriptions, rpc: () => handlers }
 }
 
 function modelRequest(sessionID: string) {
@@ -138,7 +171,15 @@ let project: string
 let registry: string
 const cleanups: (() => void)[] = []
 
+function simulateDeadHost(): void {
+  forgetControllerForTest(project, registry)
+  const script = `import json,sqlite3,sys\ndb=sqlite3.connect(sys.argv[1])\nrow=db.execute("SELECT details FROM workflow_intents WHERE intent_id='controller-owner:v1'").fetchone()\nassert row\ndetails=json.loads(row[0]); details['pid']=2147483647\ndb.execute("UPDATE workflow_intents SET details=? WHERE intent_id='controller-owner:v1'", (json.dumps(details),)); db.commit()`
+  const result = spawnSync('python3', ['-c', script, join(project, '.research', 'state.sqlite3')], { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stderr)
+}
+
 beforeEach(() => {
+  nativeSessions.clear()
   dir = mkdtempSync(join(tmpdir(), "ari-opencode-"))
   project = join(dir, "project")
   mkdirSync(project)
@@ -150,8 +191,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-async function load(options: { python?: string; directory?: string } = {}) {
+async function load(options: { python?: string; directory?: string; hostSetup?: (host: ReturnType<typeof fakeHost>) => void } = {}) {
   const host = fakeHost(registry, options.directory ?? project, options.python)
+  options.hostSetup?.(host)
   cleanups.push((await plugin.setup(host.ctx)) as () => void)
   let calls = 0
   const call = async (tool: string, sessionID: string, input: any, signal?: AbortSignal) => {
@@ -172,6 +214,367 @@ async function load(options: { python?: string; directory?: string } = {}) {
   const said = (sessionID: string) => host.synthetic.filter((item) => item.sessionID === sessionID)
   return { ...host, call, command, turn, summary, page, said }
 }
+
+test('an attachment that saw no registry discovers a later research association', async () => {
+  const firstStorage = new StorageClient({ registryPath: registry })
+  const secondStorage = new StorageClient({ registryPath: registry })
+  try {
+    const observer = new Research(firstStorage, project, () => existsSync(registry))
+    const creator = new Research(secondStorage, project, () => existsSync(registry))
+    await observer.confirmMembership('ses_main')
+    expect(observer.isAssociated('ses_main')).toBe(false)
+    await creator.init('ses_main', project, 'membership fixture')
+    await observer.confirmMembership('ses_main')
+    expect(observer.roleOf('ses_main')).toBe('main')
+    expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(true)
+    await observer.confirmMembership('ordinary')
+    expect(observer.isAssociated('ordinary')).toBe(false)
+  } finally {
+    firstStorage.close()
+    secondStorage.close()
+  }
+})
+
+test('negative membership cache skips repeated misses and invalidates on registry writes', async () => {
+  const first = new StorageClient({ registryPath: registry })
+  const second = new StorageClient({ registryPath: registry })
+  try {
+    const creator = new Research(second, project, () => existsSync(registry))
+    await creator.init('ses_main', project, 'cache fixture')
+    const observer = new Research(first, project, () => existsSync(registry))
+    await observer.ready()
+    const original = first.request.bind(first)
+    let lookups = 0
+    first.request = ((method, fields, operation) => {
+      if (method === 'session_membership') lookups++
+      return original(method, fields, operation)
+    }) as typeof first.request
+    await observer.confirmMembership('ses_later')
+    await observer.confirmMembership('ses_later')
+    expect(lookups).toBe(1)
+    await second.request('open', { host_id: 'opencode', session_id: 'ses_later', root: project, cwd: project, session_role: 'node_core' })
+    await observer.confirmMembership('ses_later')
+    expect(observer.roleOf('ses_later')).toBe('node_core')
+    expect(lookups).toBe(2)
+  } finally { first.close(); second.close() }
+})
+
+test('a lost execution-start response retries the same token and retains inbox authorization', async () => {
+  const original = StorageClient.prototype.request
+  const tokens: string[] = []
+  let lost = false
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'runtime_execution_start') {
+      tokens.push(String(fields?.execution_token))
+      if (!lost) { lost = true; throw new Error('lost start response') }
+    }
+    return result
+  })
+  try {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'event retry' })
+    await until(() => tokens.length >= 2, 'same event retried')
+    expect(new Set(tokens).size).toBe(1)
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'authorized continuation')
+  } finally { spy.mockRestore() }
+})
+
+test('a lost execution-end response retries persistence without losing or duplicating continuation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'terminal retry' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let lost = false
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'runtime_execution_end' && !lost) { lost = true; throw new Error('lost terminal response') }
+    return result
+  })
+  try {
+    host.events.push({ id: 'end-with-lost-response', type: 'session.execution.succeeded', data: { sessionID: 'ses_main' } })
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'one continuation')
+    host.events.push({ id: 'end-with-lost-response', type: 'session.execution.succeeded', data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+    expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+    await host.call('research_note', 'ses_main', { body: 'second turn is still writable' })
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 3, 'duplicate did not poison the next turn')
+  } finally { spy.mockRestore() }
+})
+
+test('unrelated native telemetry cannot poison research event control', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'unrelated telemetry' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let unrelatedLookups = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === 'ordinary') { unrelatedLookups++; return Promise.reject(new Error('unrelated lookup')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    for (let i = 0; i < 1000; i++) host.events.push({ type: 'session.step.started', data: { sessionID: 'ordinary' } })
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'research remains active')
+    expect(unrelatedLookups).toBe(0)
+  } finally { spy.mockRestore() }
+})
+
+test('failed event persistence still permits pause and stop', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'event failure control' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'runtime_execution_end') { failures++; return Promise.reject(new Error('event store down')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ses_main')
+    await until(() => failures === 3, 'bounded retries exhausted')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+    expect((await host.summary()).run.state).toBe('paused')
+    // The same reducing path must also reach the host when an event is held.
+    host.turn.start('ses_main')
+    expect((await host.command('stop', 'ses_main')).error).toBeUndefined()
+    expect(host.interrupted).toContain('ses_main')
+    expect((await host.summary()).run.state).toBe('stopped')
+  } finally { spy.mockRestore() }
+})
+
+test('explicit resume replays a held terminal after storage recovers and continues once', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'retry a held event' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'runtime_execution_end') { failures++; return Promise.reject(new Error('temporary event store failure')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ses_main')
+    await until(() => failures === 3, 'terminal held after three attempts')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await host.call('research_note', 'ses_main', { body: 'control recovered' })
+  expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+})
+
+test('a disconnected event subscription can be re-established by explicit resume', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'event stream reconnect' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  host.events.end()
+  await Bun.sleep(30)
+  expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(host.subscriptions()).toBe(2)
+  host.turn.end('ses_main')
+  await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'new subscription processes terminal')
+})
+
+test('resume reconciles a coordinator terminal missed during an event-stream disconnect', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'missed coordinator terminal' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  host.events.end()
+  await Bun.sleep(30)
+  host.reply('ses_main', 'coordinator turn ended while disconnected')
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'recovered coordinator continues once')
+  await Bun.sleep(50)
+  expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+})
+
+test('a failure before session creation leaves one queued task that can be resumed', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'pre-host failure' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const original = StorageClient.prototype.request
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'task_context') return Promise.reject(new Error('context temporarily unavailable'))
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    expect(host.created).toHaveLength(0)
+    expect((await host.page('tasks')).items[0].state).toBe('queued')
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(host.created).toHaveLength(1)
+  expect((await host.page('tasks')).items).toHaveLength(1)
+  expect((await host.page('tasks')).items[0].state).toBe('running')
+})
+
+test('workspace aliases of the same project share a single live controller', async () => {
+  const first = await load({ hostSetup: host => { host.ctx.location.workspaceID = 'workspace-a' } })
+  await first.command('auto', 'ses_main', { goal: 'workspace aliases' })
+  const second = await load({ hostSetup: host => { host.ctx.location.workspaceID = 'workspace-b' } })
+  await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'one owner for both workspaces')
+  expect((await second.summary()).run.state).toBe('running')
+  expect((await first.command('pause', 'ses_main')).error).toBeUndefined()
+  expect((await second.summary()).run.state).toBe('paused')
+})
+
+for (const check of [1, 2]) test(`continuation preflight check ${check} failure preserves the task and refunds only the unsent turn`, async () => {
+  const first = await load()
+  await first.command('auto', 'ses_main', { goal: 'unsent continuation' })
+  await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = first.created[0]!
+  await first.call('research_note', child, { body: 'work started' })
+  const original = StorageClient.prototype.request
+  let checks = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'controller_check' && fields?.session_id === child && ++checks === check) return Promise.reject(new Error('transient preflight storage failure'))
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    first.reply(child, 'current turn ended')
+    first.turn.end(child)
+    await until(async () => (await first.rpc().session({ sessionID: child })).pauseReason === 'fault', 'safe continuation pause')
+    expect((await first.page('tasks')).items[0].state).toBe('running')
+    expect(first.said(child).filter(item => item.resume)).toHaveLength(1)
+    expect((await first.command('budget', child)).message).toContain('"turns": 1')
+  } finally { spy.mockRestore() }
+  cleanups.pop()!()
+  const second = await load()
+  await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm controller ready')
+  expect((await second.page('tasks')).items[0].state).toBe('running')
+  expect((await second.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(second.said(child).filter(item => item.resume)).toHaveLength(1)
+})
+
+test('an accepted continuation with a lost host response remains unverified and charged', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'uncertain continuation' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_note', child, { body: 'work started' })
+  const original = host.ctx.session.synthetic
+  host.ctx.session.synthetic = async (input: any) => {
+    const result = await original(input)
+    if (input.sessionID === child && input.resume) throw new Error('host response lost after acceptance')
+    return result
+  }
+  host.reply(child, 'first turn ended')
+  host.turn.end(child)
+  await until(async () => (await host.page('tasks')).items[0].state === 'unverified', 'uncertain continuation retained')
+  expect((await host.command('budget', child)).message).toContain('"turns": 2')
+})
+
+test('a terminal with unresolved membership is retained and visible until replay', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'retain an unclassified terminal' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_finish', child, { state: 'finished', summary: 'saved result' })
+  const associated = Research.prototype.isAssociated
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const membership = spyOn(Research.prototype, 'isAssociated').mockImplementation(function(sid) { return sid === child ? false : associated.call(this, sid) })
+  const storage = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === child) { failures++; return Promise.reject(new Error('membership unavailable')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.reply(child, 'finished')
+    host.turn.end(child)
+    await until(() => failures >= 3, 'membership retries exhausted')
+    await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.held === 1, 'held event visible in sidebar state')
+    expect((await host.command('status', 'ses_main')).message).toContain('/research resume')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  } finally { storage.mockRestore(); membership.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'retained terminal settled')
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.state).toBe('ready')
+})
+
+test('unresolved ordinary membership is bounded and cannot freeze known research continuation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'unknown ordinary event' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === 'ordinary') { failures++; return Promise.reject(new Error('unresolved membership')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ordinary')
+    await until(() => failures === 3, 'unknown event held')
+    await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.unresolved === 1, 'unknown classification visible')
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'known research not blocked')
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.state).toBe('ready')
+})
+
+test('three consecutive unsent launches pause scheduling instead of creating an endless retry stream', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'bounded preflight failure' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const original = StorageClient.prototype.request
+  let attempts = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'task_context') { attempts++; return Promise.reject(new Error('persistent invalid context')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.command('resume', 'ses_main')
+    await host.command('resume', 'ses_main')
+    expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('fault')
+    expect((await host.page('tasks')).items[0].state).toBe('queued')
+    host.turn.end('ses_main')
+    await host.call('research_query', 'ses_main', { collection: 'nodes' })
+    expect(attempts).toBe(3)
+    expect(host.created).toHaveLength(0)
+    await expect(host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })).rejects.toMatchObject({ code: 'research_control_paused', details: { allow_fallback: false } })
+  } finally { spy.mockRestore() }
+})
+
+test('finish mismatch selects the active task when session history contains an older finished task', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'active finish mismatch' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_finish', child, { state: 'finished', summary: 'saved' })
+  const original = StorageClient.prototype.request
+  const mutations: any[] = []
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    if (method === 'workflow' && fields?.action === 'task_state') mutations.push(fields.fields)
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'node_finish_pending' && result) return { ...result, turn_token: 'mismatched-token' }
+    if (method === 'status' && result.workflow?.tasks?.length) return { ...result, workflow: { ...result.workflow,
+      tasks: [{ ...result.workflow.tasks[0], task_id: 'T_history', session_id: child, state: 'finished' }, ...result.workflow.tasks] } }
+    return result
+  })
+  try {
+    host.turn.end(child)
+    await until(() => mutations.length > 0, 'finish mismatch recorded')
+    expect(mutations[0]).toMatchObject({ task_id: task.task_id, state: 'unverified', error: 'finish execution mismatch: reconciliation required' })
+    expect(mutations.some(item => item.task_id === 'T_history')).toBe(false)
+  } finally { spy.mockRestore() }
+})
+
+test('wait while paused returns the structured control error with no fallback permission', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'structured wait refusal' })
+  await host.command('pause', 'ses_main')
+  await expect(host.call('research_wait', 'ses_main', { task_ids: ['T_unknown'] })).rejects.toMatchObject({
+    code: 'research_control_paused', details: { run_state: 'paused', retryable: false, recovery: 'explicit_resume', allow_fallback: false },
+  })
+})
 
 test("R2 dispatch observes local and backend rejection without recording input text", async () => {
   const host = await load()
@@ -253,6 +656,8 @@ test('autonomous turns stop at the durable cap; duplicate end events and restart
   await host.command('resume','ses_main')
   expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(2)
   expect(host.said('ses_main').length).toBeGreaterThan(before)
+  cleanups.pop()!()
+  simulateDeadHost()
   const restarted=await load()
   await until(async () => (await restarted.summary()).run.state==='paused','cold recovery')
   expect((await restarted.command('resume','ses_main')).error).toContain('预算已到限')
@@ -275,8 +680,8 @@ test('native usage records actual variant once and external observations omit co
   expect(page.items[0].provider).toBe('actual-provider')
   expect(page.items[0].model).toBe('actual-model')
   expect(page.items[0].details.variant).toBe('high')
-  await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:'ses_main',id:'external',input:{command:'PRIVATE_COMMAND_BODY'}})
-  await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:'ses_main',id:'external',status:'completed'})
+  await host.hooks.get('tool.execute.before')!({tool:'read',sessionID:'ses_main',id:'external',input:{path:'PRIVATE_COMMAND_BODY'}})
+  await host.hooks.get('tool.execute.after')!({tool:'read',sessionID:'ses_main',id:'external',status:'completed'})
   const directory=join(project,'.research','observations')
   const text=readdirSync(directory).map(name=>readFileSync(join(directory,name),'utf8')).join('')
   expect(text).not.toContain('PRIVATE_COMMAND_BODY')
@@ -290,6 +695,7 @@ test('wall deadline interrupts an active native session without waiting for a mo
   await host.command('auto','ses_main',{goal:'deadline fixture'})
   await host.command('budget','ses_main',{limit:'seconds',value:'1',reason:'bounded fixture'})
   await until(async()=> (await host.summary()).run.state==='paused','wall-clock monitor pause')
+  await until(()=>host.interrupted.includes('ses_main'),'wall-clock interrupt')
   expect(host.interrupted).toContain('ses_main')
   expect((await host.rpc().session({sessionID:'ses_main'})).pauseReason).toBe('budget')
   expect(host.said('ses_main').filter(row=>row.resume)).toHaveLength(1)
@@ -314,6 +720,7 @@ test('a failed deadline refresh keeps the existing stop timer armed',async()=>{
     fail=true
     await host.command('budget','ses_main',{limit:'turns',value:'5',reason:'trigger failed refresh'})
     await until(async()=> (await host.summary()).run.state==='paused','original deadline still stops')
+    await until(()=>host.interrupted.includes('ses_main'),'original deadline interrupt')
     expect(host.interrupted).toContain('ses_main')
   }finally{spy.mockRestore()}
 })
@@ -339,13 +746,35 @@ test('slow workspace metadata leaves backend queries responsive and remains opti
   }finally{release(undefined);spy.mockRestore()}
 })
 
+test('wall deadline during node launch keeps its execution unverified', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'deadline during launch' })
+  const node = await host.call('research_propose', 'ses_main', { question: 'Q', why_now: 'now', plan: 'measure', root_reason: 'first' })
+  const original = StorageClient.prototype.request
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(this: StorageClient, method: string, fields?: any, id?: string): any {
+    if (method === 'runtime_reserve' && fields?.launch_intent_id) {
+      const code = "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); db.execute(\"UPDATE runtime_budgets SET deadline_at='2000-01-01T00:00:00+00:00'\"); db.commit()"
+      const result = spawnSync('python3', ['-c', code, join(project, '.research', 'state.sqlite3')], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    return original.call(this, method, fields, id)
+  })
+  try {
+    const result = await host.call('research_dispatch', 'ses_main', { node_id: node.node_id })
+    expect(result).toMatchObject({ accepted: true, state: 'unverified', reason: 'delivery_unverified' })
+    expect((await host.summary()).run.state).toBe('paused')
+    expect((await host.page('tasks')).items[0].state).toBe('unverified')
+    expect(host.said(host.created[0]!).filter(row => row.resume)).toHaveLength(0)
+  } finally { spy.mockRestore() }
+})
+
 test('real node source edits prevent idle pauses while the turn budget still stops continuation',async()=>{
   const host=await load()
   await host.command('auto','ses_main',{goal:'source activity and independent budget'})
   await host.command('budget','ses_main',{limit:'turns',value:'5',reason:'bounded node fixture'})
   const node=await host.call('research_propose','ses_main',{question:'Q',why_now:'now',plan:'measure',root_reason:'first'})
   await host.call('research_dispatch','ses_main',{node_id:node.node_id})
-  const session='ses_node_1'
+  const session=host.created[0]!
   const workspace=/工作目录：(.+?)。/.exec(host.said(session).at(-1).text)![1]!
   const resumed=()=>host.said(session).filter(row=>row.resume).length
   for(let turn=0;turn<4;turn++){
@@ -463,8 +892,8 @@ describe("autonomous research", () => {
     await host.call("research_propose", "ses_main", { question: "Q1?", why_now: "start", plan: "p1", root_reason: "first" })
     await host.call("research_propose", "ses_main", { question: "Q2?", why_now: "next", plan: "p2", root_reason: "second" })
     const task1 = await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
-    expect(host.created).toEqual(["ses_node_1"])
-    const kickoff = host.said("ses_node_1").at(-1)
+    expect(host.created).toHaveLength(1)
+    const kickoff = host.said(host.created[0]!).at(-1)
     expect(kickoff).toMatchObject({ resume: true })
     expect(kickoff.text).toContain("你是节点 X-001 的执行会话")
     await host.call("research_wait", "ses_main", { task_ids: [task1.task_id] })
@@ -477,25 +906,25 @@ describe("autonomous research", () => {
     const workspace = /工作目录：(.+?)。/.exec(kickoff.text)![1]!
     mkdirSync(join(workspace, "output"), { recursive: true })
     writeFileSync(join(workspace, "output", "report.md"), "# X-001\nresult\n")
-    host.turn.start("ses_node_1")
-    const pub = await host.call("research_publish", "ses_node_1", {
+    host.turn.start(host.created[0]!)
+    const pub = await host.call("research_publish", host.created[0]!, {
       status: "complete", summary: "node 1 result", items: [{ item_id: "report", kind: "report", source_path: "output/report.md" }],
     })
-    await host.call("research_memory", "ses_node_1", {
+    await host.call("research_memory", host.created[0]!, {
       action: "record", kind: "observation", statement: "X holds under A", evidence_refs: [`pub/${pub.publication_id}#report`],
     })
-    const seen = await host.call("research_query", "ses_node_1", { collection: "checkpoint" })
-    const checkpoint = await host.call("research_memory", "ses_node_1", { action: "checkpoint", base: seen.base, state: { next: "finish" } })
+    const seen = await host.call("research_query", host.created[0]!, { collection: "checkpoint" })
+    const checkpoint = await host.call("research_memory", host.created[0]!, { action: "checkpoint", base: seen.base, state: { next: "finish" } })
     expect(checkpoint.node_id).toBe("X-001")
-    await host.call("research_finish", "ses_node_1", { state: "finished", summary: "X holds under A" })
-    host.turn.end("ses_node_1")
-    await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-001 已完成")), "coordinator wake-up")
-    const wake = host.said("ses_main").at(-1)
-    expect(wake.text).toContain(`pub/${pub.publication_id}`)
+    await host.call("research_finish", host.created[0]!, { state: "finished", summary: "X holds under A" })
+    host.turn.end(host.created[0]!)
+    await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("等待的节点有了结果")), "coordinator wake-up")
+    const report = host.said("ses_main").find((item) => item.text.includes("节点 X-001 已完成"))
+    expect(report.text).toContain(`pub/${pub.publication_id}`)
     const request = modelRequest("ses_main")
     await host.hooks.get("context")!(request)
     if (policy === "r1") {
-      expect(wake.text).toContain("发现：knowledge/")
+      expect(report.text).toContain("发现：knowledge/")
       expect(JSON.stringify(request.system)).toContain("X holds under A")
       expect(JSON.stringify(request.system)).toContain("## findings")
       await until(async () => {
@@ -513,17 +942,17 @@ describe("autonomous research", () => {
     await host.call("research_wait", "ses_main", { task_ids: [task2.task_id] })
     host.turn.end("ses_main")
     await until(() => host.created.length === 2, "second node session")
-    host.turn.start("ses_node_2")
+    host.turn.start(host.created[1]!)
     let tentative: any
-    if (policy === "r1") tentative = await host.call("research_memory", "ses_node_2", {
+    if (policy === "r1") tentative = await host.call("research_memory", host.created[1]!, {
       action: "record", kind: "hypothesis", statement: "Tentative explanation only",
     })
-    await host.call("research_publish", "ses_node_2", {
+    await host.call("research_publish", host.created[1]!, {
       status: "complete", summary: "node 2 result", items: [{ item_id: "note", kind: "text", content: { text: "Q2 answered" } }],
     })
-    await host.call("research_finish", "ses_node_2", { state: "finished", summary: "Q2 answered" })
-    host.turn.end("ses_node_2")
-    await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-002 已完成")), "second wake-up")
+    await host.call("research_finish", host.created[1]!, { state: "finished", summary: "Q2 answered" })
+    host.turn.end(host.created[1]!)
+    await until(() => host.said("ses_main").some((item) => item.text.includes("节点 X-002 已完成")), "second wake-up")
 
     if (policy === "r1") {
       expect(host.said("ses_main").some((value) => value.text.includes("未登记发现"))).toBe(true)
@@ -559,14 +988,43 @@ describe("autonomous research", () => {
     host.turn.start("ses_main")
     host.turn.end("ses_main")
     await until(async () => (await host.rpc().session({ sessionID: "ses_main" })).pauseReason === "wait", "implicit wait")
-    host.turn.start("ses_node_1")
-    await host.call("research_publish", "ses_node_1", {
+    host.turn.start(host.created[0]!)
+    await host.call("research_publish", host.created[0]!, {
       status: "partial", summary: "r", items: [{ item_id: "r", kind: "text", content: { text: "r" } }],
     })
-    await host.call("research_finish", "ses_node_1", { state: "finished", summary: "done" })
-    host.turn.end("ses_node_1")
-    await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("节点 X-001 已完成")), "wake-up")
+    await host.call("research_finish", host.created[0]!, { state: "finished", summary: "done" })
+    host.turn.end(host.created[0]!)
+    await until(() => host.said("ses_main").some((item) => item.resume && item.text.includes("等待的节点有了结果")), "wake-up")
     expect(host.said("ses_main").some((item) => item.text.includes("没有写入"))).toBe(false)
+  })
+
+  test('queued dispatch distinguishes capacity from a pause after acceptance', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'queue semantics' })
+    await host.call('research_propose', 'ses_main', { question: 'Q1?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_propose', 'ses_main', { question: 'Q2?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const queued = await host.call('research_dispatch', 'ses_main', { node_id: 'X-002' })
+    expect(queued).toMatchObject({ accepted: true, state: 'queued', reason: 'capacity', recovery: { action: 'wait' } })
+  })
+
+  test('a pause after task acceptance leaves it queued without launching', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'acceptance race' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(this: StorageClient, method: string, fields?: any, id?: string): Promise<any> {
+      const value = await original.call(this, method, fields, id)
+      if (method === 'workflow' && fields?.action === 'task') {
+        await original.call(this, 'workflow', { ...fields, action: 'run', fields: { state: 'paused' } }, 'test-pause-after-acceptance')
+      }
+      return value
+    })
+    try {
+      const result = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+      expect(result).toMatchObject({ accepted: true, state: 'queued', reason: 'control_paused', recovery: { action: 'explicit_resume' } })
+      expect(host.created).toHaveLength(0)
+    } finally { spy.mockRestore() }
   })
 
   test("autonomous turns use the model selected in the TUI, for the coordinator and every node", async () => {
@@ -576,7 +1034,7 @@ describe("autonomous research", () => {
     expect(host.models).toContainEqual({ sessionID: "ses_main", model, via: "switch" })
     await host.call("research_propose", "ses_main", { question: "Q1?", why_now: "w", plan: "p", root_reason: "r" })
     await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
-    expect(host.models).toContainEqual({ sessionID: "ses_node_1", model, via: "create" })
+    expect(host.models).toContainEqual({ sessionID: host.created[0]!, model, via: "create" })
   })
 
   test("roles see only their own tools and their own research context", async () => {
@@ -589,11 +1047,11 @@ describe("autonomous research", () => {
     expect(Object.keys(main.tools)).toContain("research_dispatch")
     expect(Object.keys(main.tools)).not.toContain("research_finish")
     expect(main.system.at(-1)!.text).toContain("research_conclude")
-    const node = modelRequest("ses_node_1")
+    const node = modelRequest(host.created[0]!)
     await host.hooks.get("context")!(node)
     expect(Object.keys(node.tools)).toContain("research_finish")
     expect(Object.keys(node.tools)).not.toContain("research_dispatch")
-    await expect(host.call("research_dispatch", "ses_node_1", { node_id: "X-001" })).rejects.toThrow("不属于本会话的角色")
+    await expect(host.call("research_dispatch", host.created[0]!, { node_id: "X-001" })).rejects.toThrow("不属于本会话的角色")
   })
 
   test("research sessions never get the built-in subagent and question tools", async () => {
@@ -601,7 +1059,7 @@ describe("autonomous research", () => {
     await host.command("auto", "ses_main", { goal: "Find X" })
     await host.call("research_propose", "ses_main", { question: "Q1?", why_now: "w", plan: "p", root_reason: "r" })
     await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
-    for (const sessionID of ["ses_main", "ses_node_1"]) {
+    for (const sessionID of ["ses_main", host.created[0]!]) {
       const request = modelRequest(sessionID)
       await host.hooks.get("context")!(request)
       expect(Object.keys(request.tools)).not.toContain("subagent")
@@ -672,15 +1130,315 @@ describe("autonomous research", () => {
     expect(host.said("ses_main").at(-1)).toMatchObject({ resume: true })
   })
 
+  test("a paused node finishes its current turn without waking the coordinator", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "pause fixture" })
+    await host.call("research_propose", "ses_main", { question: "Q?", why_now: "w", plan: "p", root_reason: "r" })
+    const task = await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    await host.call("research_wait", "ses_main", { task_ids: [task.task_id] })
+    host.turn.start(host.created[0]!)
+    await host.command("pause", "ses_main")
+    await host.call("research_finish", host.created[0]!, { state: "finished", summary: "existing work finished" })
+    const before = host.said("ses_main").filter(item => item.resume).length
+    host.turn.end(host.created[0]!)
+    await until(async () => (await host.page("tasks")).items[0].state === "finished", "paused node finish")
+    expect((await host.summary()).run.state).toBe("paused")
+    expect(host.said("ses_main").filter(item => item.resume)).toHaveLength(before)
+  })
+
+  test("a first-turn inbox event can authorize a paused node finish without a visible started event", async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'first turn event' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    await host.command('pause', 'ses_main')
+    await host.call('research_finish', child, { state: 'finished', summary: 'first turn drained' })
+    host.turn.end(child)
+    await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'first turn finish')
+  })
+
+  test("a new node turn after pause cannot inherit the previous drain authorization", async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'drain boundary' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    host.turn.start(child)
+    await host.command('pause', 'ses_main')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'old-turn', input: {} })
+    host.turn.end(child)
+    host.turn.start(child)
+    await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'new-turn', input: {} }))
+      .rejects.toMatchObject({ metadata: { code: 'research_control_paused', allow_fallback: false } })
+    await expect(host.call('research_finish', child, { state: 'finished', summary: 'not authorized' })).rejects.toThrow('不能开始新工作')
+  })
+
+  test("a new user message during pause revokes the existing turn's drain authorization", async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'steered pause boundary' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    host.turn.start(child)
+    await host.command('pause', 'ses_main')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'before-steer', input: {} })
+    host.events.push({ type: 'session.inbox.delivered', data: { sessionID: child, inboxID: 'msg_unapproved_user' } })
+    await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'after-steer', input: {} }))
+      .rejects.toMatchObject({ metadata: { code: 'research_control_paused' } })
+  })
+
+  test("paused context replaces continue instructions and cannot propose new work", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "control fixture" })
+    await host.command("pause", "ses_main")
+    await host.hooks.get("prompt")!({ sessionID: "ses_main", prompt: { text: "为何停止了？" } })
+    const request = modelRequest("ses_main")
+    await host.hooks.get("context")!(request)
+    expect(Object.keys(request.tools)).not.toContain("research_dispatch")
+    expect(Object.keys(request.tools)).not.toContain("research_propose")
+    expect(JSON.stringify(request.system)).toContain("Only an explicit /research resume")
+    expect(JSON.stringify(request.system)).not.toContain("decide and continue")
+    await expect(host.call("research_propose", "ses_main", { question: "new?", why_now: "w", plan: "p", root_reason: "r" }))
+      .rejects.toThrow("研究已暂停")
+    expect((await host.summary()).run.state).toBe("paused")
+  })
+
   test("a restart leaves a running project paused until the user resumes it", async () => {
     const first = await load()
     await first.command("auto", "ses_main", { goal: "Find X" })
     cleanups.pop()!()
+    simulateDeadHost()
     const second = await load()
     await until(async () => (await second.summary()).run.state === "paused", "cold pause")
     expect((await second.rpc().session({ sessionID: "ses_main" })).pauseReason).toBe("cold")
     await second.command("resume", "ses_main")
     expect((await second.summary()).run.state).toBe("running")
+  })
+
+  for (const outcome of ['failed', 'interrupted']) test(`a ${outcome} finish turn can finish in the next authorized turn`, async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'retry a finish turn' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    await host.call('research_finish', child, { state: 'finished', summary: 'first result' })
+    const turns = host.said(child).filter(item => item.resume).length
+    host.turn.end(child, outcome)
+    if (outcome === 'interrupted') {
+      await until(async () => (await host.rpc().session({ sessionID: child })).pauseReason === 'native_stop', 'interrupted finish pause')
+      await host.command('resume', 'ses_main')
+    }
+    await until(() => host.said(child).filter(item => item.resume).length > turns, 'next node turn')
+    await host.call('research_finish', child, { state: 'finished', summary: 'rechecked result' })
+    host.turn.end(child)
+    await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'finish after retry')
+    expect(host.created).toHaveLength(1)
+  })
+
+  test('warm reload correlates the second node turn instead of the original kickoff', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'multiple turns across reload' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    const kickoff = first.said(child).find(item => item.resume).id
+    first.turn.end(child)
+    await until(() => first.said(child).filter(item => item.resume).length === 2, 'second turn nudge')
+    const currentMessage = first.said(child).filter(item => item.resume).at(-1).id
+    await first.call('research_finish', child, { state: 'finished', summary: 'second turn result' })
+    cleanups.pop()!()
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
+      host.ctx.session.wait = async (input: any) => input.sessionID === child ? undefined : nativeWait(input)
+      host.ctx.session.context = async ({ sessionID }: any) => sessionID === child
+        ? [{ type: 'synthetic', id: kickoff }, { type: 'idle', outcome: 'succeeded' },
+           { type: 'synthetic', id: currentMessage }, { type: 'assistant', content: [{ type: 'text', text: 'done' }] },
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
+    } })
+    await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'second turn recovered')
+    expect((await second.summary()).run.state).toBe('running')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+  })
+
+  test('warm reload preserves a node paused after a verified terminal event', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'idle paused node reload' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    first.turn.end(child, 'interrupted')
+    await until(async () => (await first.rpc().session({ sessionID: child })).pauseReason === 'native_stop', 'node pause')
+    cleanups.pop()!()
+    const second = await load()
+    await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm ready')
+    expect((await second.page('tasks')).items[0].state).toBe('running')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+    await second.command('resume', 'ses_main')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(1)
+  })
+
+  test('warm reload settles a saved finish when its terminal was persisted before handoff', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'handoff after terminal persistence' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    await first.call('research_finish', child, { state: 'finished', summary: 'saved before handoff' })
+    const original = StorageClient.prototype.request
+    let release: (() => void) | undefined
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (method === 'node_finish_commit' && !release) return new Promise((_resolve, reject) => {
+        release = () => reject(new Error('old attachment closed'))
+      })
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      first.turn.end(child)
+      await until(() => !!release, 'terminal saved before finish settlement')
+      cleanups.pop()!()
+      const second = await load()
+      release!()
+      await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'durable finish settled by successor')
+      expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+      expect((await second.page('tasks')).items).toHaveLength(1)
+      expect(second.created).toHaveLength(0)
+    } finally { release?.(); spy.mockRestore() }
+  })
+
+  test("same-process plugin reload preserves running research and a pending node finish", async () => {
+    const first = await load()
+    await first.command("auto", "ses_main", { goal: "reload fixture" })
+    await first.call("research_propose", "ses_main", { question: "Q?", why_now: "w", plan: "p", root_reason: "r" })
+    await first.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    first.turn.start(first.created[0]!)
+    await first.call("research_finish", first.created[0]!, { state: "finished", summary: "completed before reload" })
+    cleanups.pop()!()
+    let releaseWait!: () => void
+    const waitForTerminal = new Promise<void>(resolve => { releaseWait = resolve })
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => {
+        if (sessionID === first.created[0]) await waitForTerminal
+        else await nativeWait({ sessionID })
+      }
+    } })
+    expect((await second.summary()).run.state).toBe("running")
+    second.turn.end(first.created[0]!)
+    await until(async () => (await second.page("tasks")).items[0].state === "finished", "finish after reload")
+    releaseWait()
+    expect((await second.summary()).run.state).toBe("running")
+  })
+
+  test("a still-live prior attachment forwards role checks and research tools to the new controller", async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'parallel attachment fixture' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    let release!: () => void
+    const idle = new Promise<void>(resolve => { release = resolve })
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => { if (sessionID === child) await idle; else await nativeWait({ sessionID }) }
+    } })
+    await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'new controller')
+    const request = modelRequest(child)
+    await first.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_finish')
+    expect(Object.keys(request.tools)).not.toContain('research_dispatch')
+    await first.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'old-main', input: {} })
+    const nodes = await first.call('research_query', child, { collection: 'nodes' })
+    expect(nodes.items.some((item: any) => item.node_id === 'X-001')).toBe(true)
+    release()
+  })
+
+  test("a missed terminal event is reconciled once from the exact kickoff", async () => {
+    const first = await load()
+    await first.command("auto", "ses_main", { goal: "event gap fixture" })
+    await first.call("research_propose", "ses_main", { question: "Q?", why_now: "w", plan: "p", root_reason: "r" })
+    await first.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    const child = first.created[0]!
+    const kickoff = first.said(child).find(item => item.resume).id
+    first.turn.start(child)
+    await first.call("research_finish", child, { state: "finished", summary: "finished in the gap" })
+    cleanups.pop()!()
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
+      host.ctx.session.wait = async (input: any) => input.sessionID === child ? undefined : nativeWait(input)
+      host.ctx.session.context = async ({ sessionID }: { sessionID: string }) => sessionID === child
+        ? [{ type: 'synthetic', id: kickoff }, { type: 'assistant', content: [{ type: 'text', text: 'done' }] },
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
+    } })
+    await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'recovered node terminal')
+    const sentBefore = second.said(child).filter(item => item.resume).length
+    second.events.push({ id: 'late-terminal', type: 'session.execution.succeeded', data: { sessionID: child } })
+    await Bun.sleep(100)
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(sentBefore)
+    expect((await second.page('tasks')).items[0].state).toBe('finished')
+  })
+
+  test("a lost kickoff response leaves one unverified launch without a second session", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "uncertain delivery" })
+    await host.call("research_propose", "ses_main", { question: "Q?", why_now: "w", plan: "p", root_reason: "r" })
+    const original = host.ctx.session.synthetic
+    host.ctx.session.synthetic = async (input: any) => {
+      const value = await original(input)
+      if (input.sessionID !== "ses_main" && input.resume) throw new Error("host response lost")
+      return value
+    }
+    const first = await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    expect(first.accepted).toBe(true)
+    expect(first.state).toBe("unverified")
+    expect(host.created).toHaveLength(1)
+    expect(host.said(host.created[0]!).filter(item => item.resume)).toHaveLength(1)
+    const retry = await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    expect(retry.state).toBe("unverified")
+    expect(host.created).toHaveLength(1)
+    expect(host.said(host.created[0]!).filter(item => item.resume)).toHaveLength(1)
+    host.turn.end(host.created[0]!)
+    await Bun.sleep(100)
+    expect(host.said(host.created[0]!).filter(item => item.resume)).toHaveLength(1)
+    const originalMessage = host.said(host.created[0]!).find(item => item.resume).id
+    host.ctx.session.synthetic = original
+    const checked = await host.command("recover", "ses_main", { kind: "task", task_id: first.task_id, reason: "host exit inspected" })
+    expect(checked.message).toContain("人工退出核对")
+    const restarted = await host.command("retry", "ses_main", { task_id: first.task_id, reason: "repeat after check" })
+    expect(restarted.message).toContain("重新受理")
+    const messages = host.said(host.created[0]!).filter(item => item.resume)
+    expect(messages).toHaveLength(2)
+    expect(messages[1].id).not.toBe(originalMessage)
+  })
+
+  test("a restarted host does not start a second turn for an unverified node", async () => {
+    const first = await load()
+    await first.command("auto", "ses_main", { goal: "restart fixture" })
+    await first.call("research_propose", "ses_main", { question: "Q?", why_now: "w", plan: "p", root_reason: "r" })
+    await first.call("research_dispatch", "ses_main", { node_id: "X-001" })
+    const child = first.created[0]!
+    cleanups.pop()!()
+    simulateDeadHost()
+    const second = await load()
+    await until(async () => (await second.page("tasks")).items[0].state === "unverified", "unverified node")
+    await second.command("resume", "ses_main")
+    expect((await second.page("tasks")).items[0].state).toBe("unverified")
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+  })
+
+  test("a real restart also reconciles in-flight work when the project was already paused", async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'paused restart fixture' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await first.command('pause', 'ses_main')
+    cleanups.pop()!()
+    simulateDeadHost()
+    const second = await load()
+    await until(async () => (await second.page('tasks')).items[0].state === 'unverified', 'paused restart reconciliation')
+    expect((await second.summary()).run.state).toBe('paused')
   })
 
   test("a user message in a research session is kept as guidance", async () => {
@@ -702,6 +1460,8 @@ describe("autonomous research", () => {
       summary: "ended", final_ref: `pub/${pub.publication_id}#report`, outcome: "partial", gaps: ["Y untested"],
       review: { status: "unreviewed", refs: [], limitations: ["Not reviewed"] },
     })
+    host.turn.end("ses_main")
+    await host.call("research_query", "ses_main", { collection: "nodes" })
     const restarted = await host.command("auto", "ses_main", { goal: "重点验证 Y，放弃 Z" })
     expect(restarted.message).toContain("补充指令已记为用户指导")
     const summary = await host.summary()
@@ -826,7 +1586,7 @@ describe("node specialists", () => {
     await host.command("auto", "ses_main", { goal: "Find X" })
     await host.call("research_propose", "ses_main", { question: "Q1?", why_now: "w", plan: "p", root_reason: "r" })
     await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
-    return /工作目录：(.+?)。/.exec(host.said("ses_node_1").at(-1).text)![1]!
+    return /工作目录：(.+?)。/.exec(host.said(host.created[0]!).at(-1).text)![1]!
   }
 
   /** The n-th session created after the node, once it has received its task. */
@@ -835,11 +1595,43 @@ describe("node specialists", () => {
     return host.created[index]!
   }
 
+  for (const mode of ['membership-error', 'membership-timeout', 'handoff']) test(`blind system stays private during ${mode}`, async () => {
+    const first = await load()
+    const workspace = await nodeAtWork(first)
+    mkdirSync(join(workspace, 'output'), { recursive: true })
+    writeFileSync(join(workspace, 'output', 'blind.md'), 'assigned evidence')
+    const publication = await first.call('research_publish', first.created[0]!, { status: 'complete', summary: 'report',
+      items: [{ item_id: 'report', kind: 'report', source_path: 'output/blind.md' }] })
+    const pending = first.call('research_delegate', first.created[0]!, { ...TASK, context_mode: 'blind', inputs: [`pub/${publication.publication_id}#report`] })
+    const child = await specialist(first, 1)
+    const original = StorageClient.prototype.request
+    let release: (() => void) | undefined
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (mode === 'handoff' && method === 'controller_attach' || mode !== 'handoff' && method === 'session_membership' && fields?.session_id === child) {
+        if (mode === 'membership-error') return Promise.reject(new Error('membership unavailable'))
+        return new Promise((_resolve, reject) => { release = () => reject(new Error('injected unavailable control')) })
+      }
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      if (mode === 'handoff') await load()
+      const request = modelRequest(child)
+      request.system.push({ type: 'text', text: 'PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS' })
+      await first.hooks.get('context')!(request)
+      expect(JSON.stringify(request.system)).not.toContain('PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS')
+      expect(Object.keys(request.tools)).not.toContain('shell')
+    } finally {
+      release?.(); spy.mockRestore()
+      first.reply(child, 'partial report')
+      await pending
+    }
+  })
+
   test("a node delegates a read-only specialist and gets its report back", async () => {
     const host = await load()
     const workspace = await nodeAtWork(host)
-    host.turn.start("ses_node_1")
-    const pending = host.call("research_delegate", "ses_node_1", TASK)
+    host.turn.start(host.created[0]!)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
     const child = await specialist(host, 1)
 
     // Read-only twice: the session's own rules, and the filter on every request.
@@ -878,25 +1670,66 @@ describe("node specialists", () => {
     const host = await load()
     await nodeAtWork(host)
     const controller = new AbortController()
-    const pending = host.call("research_delegate", "ses_node_1", TASK, controller.signal)
+    const pending = host.call("research_delegate", host.created[0]!, TASK, controller.signal)
     const child = await specialist(host, 1)
     controller.abort()
     const result = await pending
     expect(result.state).toBe("cancelled")
     expect(host.interrupted).toContain(child)
-    const again = host.call("research_delegate", "ses_node_1", TASK)
+    const again = host.call("research_delegate", host.created[0]!, TASK)
     host.reply(await specialist(host, 2), "第二次复核的报告")
     expect((await again).state).toBe("completed")
+  })
+
+  test('an unexpected host error after specialist submission still interrupts the live child', async () => {
+    const host = await load()
+    await nodeAtWork(host)
+    const original = host.ctx.session.synthetic
+    host.ctx.session.synthetic = async (input: any) => {
+      const result = await original(input)
+      if (input.sessionID !== host.created[0] && input.resume) throw new Error('lost specialist submission response')
+      return result
+    }
+    const result = await host.call('research_delegate', host.created[0]!, TASK)
+    expect(host.interrupted).toContain(host.created[1]!)
+    expect(result).toMatchObject({ state: 'incomplete', exit_verified: true })
+  })
+
+  test('specialist pre-create failure is incomplete with no unknown executor or occupied slot', async () => {
+    const host = await load()
+    await nodeAtWork(host)
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (method === 'status' && fields?.session_id === host.created[0]) return Promise.reject(new Error('parent context unavailable'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const result = await host.call('research_delegate', host.created[0]!, TASK)
+      expect(result).toMatchObject({ state: 'incomplete', exit_verified: true })
+      expect(host.created).toHaveLength(1)
+    } finally { spy.mockRestore() }
+  })
+
+  test("stopping research also requests interruption of a running specialist", async () => {
+    const host = await load()
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK).catch(() => null)
+    const child = await specialist(host, 1)
+    const result = await host.command('stop', 'ses_main')
+    expect(result.error).toBeUndefined()
+    expect(host.interrupted).toContain(child)
+    expect((await host.summary()).run.state).toBe('stopped')
+    await pending
   })
 
   test("a batch runs specialists side by side up to the node's limit; beyond it nothing starts", async () => {
     const host = await load()
     await nodeAtWork(host)
-    await expect(host.call("research_delegate_batch", "ses_node_1", { tasks: [TASK, TASK, TASK] })).rejects.toThrow("1 到 2")
+    await expect(host.call("research_delegate_batch", host.created[0]!, { tasks: [TASK, TASK, TASK] })).rejects.toThrow("1 到 2")
     expect(host.created).toHaveLength(1)
-    const pending = host.call("research_delegate_batch", "ses_node_1", { tasks: [TASK, { ...TASK, label: "另一视角" }] })
+    const pending = host.call("research_delegate_batch", host.created[0]!, { tasks: [TASK, { ...TASK, label: "另一视角" }] })
     const [one, two] = [await specialist(host, 1), await specialist(host, 2)]
-    await expect(host.call("research_delegate", "ses_node_1", TASK)).rejects.toThrow("fan-out limit")
+    await expect(host.call("research_delegate", host.created[0]!, TASK)).rejects.toThrow("fan-out limit")
     host.reply(two, "报告二")
     host.reply(one, "报告一")
     const result = await pending
@@ -912,16 +1745,16 @@ describe("node specialists", () => {
     await host.command("context-policy", "ses_main", { policy: "r1" })
     mkdirSync(join(workspace, "output"), { recursive: true })
     writeFileSync(join(workspace, "output", "report.md"), "# 结果\nWAL 快 3 倍\n")
-    const pub = await host.call("research_publish", "ses_node_1", {
+    const pub = await host.call("research_publish", host.created[0]!, {
       status: "complete", summary: "r", items: [{ item_id: "report", kind: "report", source_path: "output/report.md" }],
     })
     const input = `pub/${pub.publication_id}#report`
     const blind = { ...TASK, label: "盲评结果", context_mode: "blind" }
-    await expect(host.call("research_delegate", "ses_node_1", { ...blind, inputs: [] })).rejects.toThrow("Blind review requires")
-    await expect(host.call("research_delegate", "ses_node_1", { ...blind, inputs: [input], tool_scope: ["read"] })).rejects.toThrow("tool_scope")
+    await expect(host.call("research_delegate", host.created[0]!, { ...blind, inputs: [] })).rejects.toThrow("Blind review requires")
+    await expect(host.call("research_delegate", host.created[0]!, { ...blind, inputs: [input], tool_scope: ["read"] })).rejects.toThrow("tool_scope")
     expect(host.created).toHaveLength(1)
 
-    const pending = host.call("research_delegate", "ses_node_1", { ...blind, inputs: [input] })
+    const pending = host.call("research_delegate", host.created[0]!, { ...blind, inputs: [input] })
     const child = await specialist(host, 1)
     const rules = host.permissions.get(child)!
     expect(rules.filter((rule) => rule.effect === "allow").map((rule) => rule.action)).toEqual(["research_read_input"])
@@ -949,16 +1782,59 @@ describe("node specialists", () => {
     expect((await pending).state).toBe("completed")
   })
 
-  test("a restart stops and settles specialists that were still working", async () => {
+  test("a restart keeps an active specialist unverified until its exit is checked", async () => {
     const first = await load()
     await nodeAtWork(first)
-    void first.call("research_delegate", "ses_node_1", TASK).catch(() => {})
+    void first.call("research_delegate", first.created[0]!, TASK).catch(() => {})
     const child = await specialist(first, 1)
     cleanups.pop()!()
+    simulateDeadHost()
     const second = await load()
-    await until(async () => (await second.page("specialists")).items[0]?.state === "incomplete", "settled after restart")
-    expect(second.interrupted).toContain(child)
+    await until(async () => (await second.page("specialists")).items[0]?.state === "unverified", "unverified after restart")
+    expect(second.interrupted).not.toContain(child)
     expect((await second.rpc().session({ sessionID: child })).role).toBe("specialist")
+  })
+
+  test("warm reload reattaches a specialist with its original scope and deadline", async () => {
+    const first = await load()
+    await nodeAtWork(first)
+    const pending = first.call("research_delegate", first.created[0]!, { ...TASK, tool_scope: ['read'] }).catch(() => {})
+    const child = await specialist(first, 1)
+    const kickoffID = first.said(child).find(item => item.resume).id
+    const launchState = () => {
+      const code = `import json,sqlite3,sys\ndb=sqlite3.connect(sys.argv[1])\nr=db.execute("SELECT state,details FROM workflow_intents WHERE kind='specialist_launch' AND json_extract(details,'$.session_id')=?", (sys.argv[2],)).fetchone()\nprint(json.dumps({'state':r[0], **json.loads(r[1])}) if r else '{}')`
+      const result = spawnSync('python3', ['-c', code, join(project, '.research', 'state.sqlite3'), child], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return JSON.parse(result.stdout)
+    }
+    await until(() => launchState().state === 'submitted', 'specialist kickoff receipt')
+    const originalLaunch = launchState()
+    let watched = false
+    let complete!: () => void
+    const waiting = new Promise<void>(resolve => { complete = resolve })
+    cleanups.pop()!()
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
+      host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => {
+        if (sessionID === child) { watched = true; await waiting }
+        else await nativeWait({ sessionID })
+      }
+      host.ctx.session.context = async ({ sessionID }: { sessionID: string }) => sessionID === child
+        ? [{ type: 'synthetic', id: kickoffID }, { type: 'assistant', content: [{ type: 'text', text: '恢复后的专家报告' }] },
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
+    } })
+    await until(() => watched, 'reattached specialist watcher')
+    expect(launchState().deadline_at).toBe(originalLaunch.deadline_at)
+    expect(launchState().tools).toEqual(['read'])
+    const request = modelRequest(child)
+    await second.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toEqual(['read'])
+    complete()
+    await until(async () => (await second.page('specialists')).items[0]?.state === 'completed', 'reattached specialist result')
+    expect(second.interrupted).not.toContain(child)
+    first.reply(child, 'original waiter unwinds')
+    await pending
   })
 })
 
@@ -988,6 +1864,15 @@ describe("command parsing", () => {
 })
 
 describe("board text", () => {
+  test("status identifies unverified execution and its recovery command", () => {
+    const text = associatedStatus({ workflow: { run: { state: 'paused' }, session: { role: 'main' },
+      unverified: { tasks: [{ task_id: 'T-001', node_id: 'X-001' }], tasks_total: 1,
+        specialists: [{ task_id: 'S-001', node_id: 'X-001' }], specialists_total: 1 } } })
+    expect(text).toContain('T-001（X-001）')
+    expect(text).toContain('/research recover task')
+    expect(text).toContain('S-001（X-001）')
+    expect(text).toContain('/research recover specialist')
+  })
   test("historical completion reports a missing contract, not an inferred review", () => {
     const overview = overviewModel({ project: { goal: "old" }, counts: {}, run: { state: "complete" } }, null)!
     expect(overview.notices).toEqual(["结项记录：未记录；审阅情况未知。"])

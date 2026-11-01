@@ -708,6 +708,17 @@ class NativeService:
         raise ValueError(f"Unknown project view: {view}")
 
     def handle(self, request: dict) -> dict:
+        from .controller import CURRENT_CONTROLLER, CURRENT_MODEL_CALL
+        token = CURRENT_CONTROLLER.set(request.get('control_owner') if isinstance(request, dict) else None)
+        model_token = CURRENT_MODEL_CALL.set({'host': request.get('host_id'), 'session': request.get('session_id'),
+                                              'execution_token': request.get('execution_token')} if isinstance(request, dict) and request.get('model_call') else None)
+        try:
+            return self._handle(request)
+        finally:
+            CURRENT_MODEL_CALL.reset(model_token)
+            CURRENT_CONTROLLER.reset(token)
+
+    def _handle(self, request: dict) -> dict:
         transport_id = request.get("transport_id", request.get("request_id"))
         store = None
         invocation = None
@@ -726,6 +737,7 @@ class NativeService:
                 "knowledge_revisions": True,
                 "checkpoint_base": "receipt-cas-v1",
                 'memory_write_contract':'r2-v1',
+                'runtime_control_contract':'controller-launch-v1',
                 'review_lifecycle':'candidate-obligation-v1',
                 'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered',
                 "native_specialists": "foreground-one-shot",
@@ -738,6 +750,18 @@ class NativeService:
             if not isinstance(host_id, str) or not host_id:
                 raise ValueError("host_id is required")
             value = self.registry.live_sessions(host_id)
+        elif method == "session_membership":
+            host_id, session_id = self._identity(request)
+            try:
+                root = self.registry.root_for(host_id, session_id)
+            except ValueError:
+                value = {'associated': False}
+            else:
+                readonly = NativeStore(root, readonly=True)
+                with readonly._read() as db:
+                    row = db.execute('SELECT session_id,role,node_id,detached FROM workflow_sessions WHERE host_id=? AND session_id=?', (host_id, session_id)).fetchone()
+                    main = db.execute("SELECT session_id,role,node_id,detached FROM workflow_sessions WHERE host_id=? AND role='main' AND detached=0", (host_id,)).fetchone()
+                value = {'associated': True, 'root': str(root), 'session': dict(row) if row else None, 'main': dict(main) if main else None}
         elif method == "project_read":
             value = self.project_read(request)
         elif method == "takeover_main":
@@ -859,7 +883,7 @@ class NativeService:
                 )
             if method == "guidance_register" and (not role or role["role"] != "main"):
                 raise ValueError("Only the research main session may configure method guidance")
-            if request.get("model_call") and method not in writes | {"query", "status", "specialist_read_input"}:
+            if request.get("model_call") and method not in writes | {"query", "status", "conclude", "specialist_read_input"}:
                 raise ValueError("This operation requires the host controller")
             if request.get("model_call") and method in {"note", "publish", "snapshot"}:
                 with store._connection() as db:
@@ -1132,7 +1156,8 @@ class NativeService:
                     max_chars=request.get("max_chars", 12000), profile=request.get("profile"),
                     decision_refs=request.get("decision_refs"), final_ref=request.get("final_ref"))
             elif method == "conclude":
-                value = store.conclude(host_id, session_id, request.get("fields", {}), self._operation(request))
+                value = store.conclude(host_id, session_id, request.get("fields", {}), self._operation(request),
+                                       enforce_control=bool(request.get('model_call')))
             elif method == "context_record":
                 value = store.record_context_request(
                     {**request.get("fields", {}), "host_id": host_id, "session_id": session_id,},
@@ -1154,19 +1179,78 @@ class NativeService:
                 value = store.runtime_budget_set(host_id,session_id,request['limits'],request['reason'],self._operation(request))
             elif method == 'runtime_budget_status':
                 value = store.runtime_budget_status(host_id,session_id)
+            elif method == 'runtime_unverified':
+                value = store.runtime_unverified(host_id, session_id)
+            elif method == 'controller_attach':
+                value = store.controller_attach(host_id, session_id, request.get('epoch'), request.get('binding'), request.get('pid'), self._operation(request))
+            elif method == 'controller_ready':
+                value = store.controller_ready(host_id, session_id, self._operation(request))
+            elif method == 'controller_check':
+                value = store.controller_check(host_id, session_id)
+            elif method == 'controller_adopt':
+                value = store.controller_adopt(host_id, session_id, request.get('reason'), self._operation(request))
+            elif method == 'recovery_confirm_exit':
+                value = store.recovery_confirm_exit(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
+            elif method == 'recovery_retry_task':
+                value = store.recovery_retry_task(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
+            elif method == 'recovery_confirm_specialist':
+                value = store.recovery_confirm_specialist(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
+            elif method == 'recovery_resolve_delivery':
+                value = store.recovery_resolve_delivery(host_id, session_id, request['notification_id'], request['kind'], request['disposition'], request.get('reason'), self._operation(request))
             elif method == 'runtime_source_owner':
                 value = store.runtime_source_owner(host_id,session_id)
             elif method == 'runtime_deadline':
                 value = store.runtime_deadline()
             elif method == 'runtime_reserve':
-                value = store.runtime_reserve(host_id,session_id,self._operation(request),request.get('source_snapshot'))
+                value = store.runtime_reserve(host_id,session_id,self._operation(request),request.get('source_snapshot'),
+                                              request.get('wake_intent_id'), request.get('launch_intent_id'), request.get('specialist_launch_id'), request.get('message_id'))
+            elif method == 'runtime_execution_start':
+                value = store.runtime_execution_start(host_id, session_id, request['execution_token'], self._operation(request), request.get('event_seq'), request.get('ambiguous', False))
+            elif method == 'runtime_execution_bind':
+                value = store.runtime_execution_bind(host_id, session_id, request['execution_token'], request['message_id'], self._operation(request), request.get('event_seq'))
+            elif method == 'runtime_drain_check':
+                value = store.runtime_drain_check(host_id, session_id, request.get('execution_token'))
+            elif method == 'runtime_execution_view':
+                value = store.runtime_execution_view(host_id, session_id, request.get('execution_token'))
+            elif method == 'runtime_outbound_not_sent':
+                value = store.runtime_outbound_not_sent(host_id, session_id, request['intent_id'], request['stage'], request['reason'], self._operation(request))
+            elif method == 'runtime_turn_not_sent':
+                value = store.runtime_turn_not_sent(host_id, session_id, request['message_id'], self._operation(request))
             elif method == 'runtime_budget_stop':
                 value = store.runtime_budget_stop(host_id,session_id,self._operation(request))
             elif method == 'runtime_turn_finished':
                 value = store.runtime_turn_finished(host_id,session_id,request['turn'],self._operation(request),request.get('source_snapshot'))
             elif method == 'runtime_execution_end':
-                value = store.runtime_execution_end(host_id,session_id,request['turn'],request['outcome'],self._operation(request))
-                value = {**value,'claimed':not store.last_replayed}
+                value = store.runtime_execution_end(host_id,session_id,request['turn'],request['outcome'],self._operation(request),request.get('execution_token'),request.get('event_seq'))
+                value = {**value,'claimed':value.get('claimed',True) and not store.last_replayed}
+            elif method == 'node_finish_request':
+                value = store.node_finish_request(host_id, session_id, request['state'], request['summary'], request.get('turn_token'), self._operation(request))
+            elif method == 'node_launch_claim':
+                value = store.node_launch_claim(host_id, session_id, request['task_id'], request['concurrency'], self._operation(request))
+            elif method == 'node_launch_get':
+                value = store.node_launch_get(host_id, session_id, request['task_id'])
+            elif method == 'specialist_launch_get':
+                value = store.specialist_launch_get(host_id, session_id, request['task_id'])
+            elif method == 'specialist_launch_phase':
+                value = store.specialist_launch_phase(host_id, session_id, request['intent_id'], request['phase'], self._operation(request))
+            elif method == 'specialist_cancel_unstarted':
+                value = store.specialist_cancel_unstarted(host_id, session_id, request['task_id'], self._operation(request))
+            elif method == 'node_launch_phase':
+                value = store.node_launch_phase(host_id, session_id, request['intent_id'], request['phase'], self._operation(request))
+            elif method == 'node_launch_submitted':
+                value = store.node_launch_submitted(host_id, session_id, request['intent_id'], request['message_id'], request['cwd'], self._operation(request))
+            elif method == 'notification_begin':
+                value = store.notification_begin(host_id, session_id, request['notification_id'], self._operation(request), request.get('text'))
+            elif method == 'notification_confirm':
+                value = store.notification_confirm(host_id, session_id, request['intent_id'], request['message_id'], self._operation(request))
+            elif method == 'notification_wake_begin':
+                value = store.notification_wake_begin(host_id, session_id, request['notification_id'], self._operation(request))
+            elif method == 'notification_wake_confirm':
+                value = store.notification_wake_confirm(host_id, session_id, request['intent_id'], request['message_id'], self._operation(request))
+            elif method == 'node_finish_pending':
+                value = store.node_finish_pending(host_id, session_id)
+            elif method == 'node_finish_commit':
+                value = store.node_finish_commit(host_id, session_id, request['intent_id'], request['turn_token'], request['terminal'], self._operation(request))
             elif method == 'runtime_submitted':
                 value = store.runtime_submitted(host_id,session_id,request['reservation_id'],self._operation(request))
             elif method == 'runtime_native_event':
@@ -1253,6 +1337,7 @@ class NativeService:
                         "attempt_id": attempt["attempt_id"] if attempt else None,
                     },
                     self._operation(request),
+                    control_actor=(host_id, session_id) if request.get('model_call') else None,
                 )
             elif method == "specialist_result_import":
                 task = store.specialist_get(request.get("task_id"))
@@ -1357,6 +1442,7 @@ class NativeService:
                     request.get("predecessors"),
                     enforce_protocol=bool(request.get("model_call")),
                     asserted_at=self._asserted_at(store, request, host_id, session_id),
+                    control_actor=(host_id, session_id) if request.get('model_call') else None,
                 )
             elif method == "consume":
                 value = store.consume(
