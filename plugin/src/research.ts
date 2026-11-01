@@ -592,12 +592,21 @@ export class Research {
 
   async confirmMaterialDelivery(sessionID:string,messageID:string): Promise<void> {
     if (this.roleOf(sessionID)!=='main') return
-    await this.evidenceDelivery.confirmMaterials(sessionID,messageID,async pages => {
+    await this.evidenceDelivery.confirmMaterials(sessionID,messageID,async (pages,onBatch) => {
       const requestID=randomUUID()
       const batches=Array.from({length:Math.ceil(pages.length/100)},(_,i)=>pages.slice(i*100,(i+1)*100))
-      const results=await Promise.all(batches.map((batch,index)=>this.call<{receipt_ids:string[];rejected?:{reason:string}[]}>(
-        'evidence_observed',sessionID,{pages:batch},`material-observed:${requestID}:${index}`)))
-      return {receipt_ids:results.flatMap(item=>item.receipt_ids),rejected:results.flatMap(item=>item.rejected ?? [])}
+      await Promise.all(batches.map(async (batch,index) => {
+        let result:{receipt_ids:string[];rejected:{index:number;reason:string}[]}
+        try {
+          const response=await this.call<{receipt_ids:string[];rejected?:{index:number;reason:string}[]}>(
+            'evidence_observed',sessionID,{pages:batch},`material-observed:${requestID}:${index}`)
+          result={receipt_ids:response.receipt_ids,
+            rejected:(response.rejected ?? []).map(item=>({...item,index:item.index+index*100}))}
+        } catch {
+          result={receipt_ids:[],rejected:batch.map((_,offset)=>({index:index*100+offset,reason:'backend_unavailable'}))}
+        }
+        onBatch(batch.map((_,offset)=>index*100+offset),result)
+      }))
     })
   }
 }

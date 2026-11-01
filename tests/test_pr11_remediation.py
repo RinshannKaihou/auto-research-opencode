@@ -15,6 +15,93 @@ from test_evidence_conclusion import prepare_and_publish, fields, deliver_draft,
 from auto_research.service import NativeService
 
 
+def test_grouped_risks_remain_grouped_in_delivered_package_and_expanded_in_audit(completed):
+    host, store, _, _, claim, _ = completed
+    host.call('conclusion_contract', contract='evidence-v1')
+    refs = [claim['ref'], *[f'knowledge/K-{400 + number}@1' for number in range(26)]]
+    page = host.call('query', collection='evidence', refs=refs)
+    snapshot = host.service.evidence.get(store, page['snapshot_id'])
+    limits = [item for item in snapshot['view']['limitations'] if item['reason'] == 'knowledge_missing']
+    assert len(limits) == 26
+    risk_ids = [item['risk_id'] for item in limits]
+    group = {'risk_ids':risk_ids[:25], 'core_impact':'no', 'disposition':'unresolved',
+             'reason':'These missing items concern a separate comparison', 'evidence_refs':[claim['ref']],
+             'gap':'The separate comparison remains unverified'}
+    individual = {**{key:value for key,value in group.items() if key != 'risk_ids'},
+                  'risk_id':risk_ids[-1], 'reason':'This separate missing item has a different impact'}
+    declaration = {**fields([claim['ref']]), 'snapshot_id':page['snapshot_id'], 'risk_judgments':[group,individual]}
+    duplicated = {**group, 'risk_ids':[risk_ids[0], risk_ids[0]]}
+    assert 'distinct risks' in host.error('conclusion_prepare', model_call=True,
+        fields={**declaration, 'risk_judgments':[duplicated]})
+    assert 'distinct risks' in host.error('conclusion_prepare', model_call=True,
+        fields={**declaration, 'risk_judgments':[{**group, 'risk_ids':[*risk_ids[:25], 'not-a-risk']},individual]})
+    assert 'Core evidence' in host.error('conclusion_prepare', model_call=True,
+        fields={**declaration, 'risk_judgments':[{**group, 'risk_ids':risk_ids[:24]},individual]})
+    draft = host.call('conclusion_prepare', model_call=True, fields=declaration)
+    assert draft['evidence_closure']['status'] == 'qualified'
+    with store._read() as db:
+        data = json.loads(db.execute('SELECT data FROM conclusion_drafts WHERE draft_id=?', (draft['draft_id'],)).fetchone()[0])
+    package = data['decision_package']
+    assert package['conclusion_decision']['evidence_closure']['risk_judgments'] == [group,individual]
+    expanded = data['evaluation']['evidence_closure']['risk_judgments']
+    assert [item['risk_id'] for item in expanded] == risk_ids
+    assert len({item['risk_id'] for item in expanded}) == 26
+    from auto_research.evidence_conclusion import decision_package
+    old = decision_package(data['view'], data['evaluation'])
+    size = lambda value: len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode())
+    assert size(old) - size(package) > 3000
+    final = host.call('publish', model_call=True, status='complete', summary='qualified result', gaps=[], knowledge_refs=[claim['ref']],
+        items=[{'item_id':'report','kind':'text','content':{'text':'Qualified synthetic result'}}],
+        draft_id=draft['draft_id'], report_item_id='report')
+    appendix = host.call('reference_content', ref=final['appendix_ref'])
+    import base64
+    appendix_text = base64.b64decode(appendix['chunk']).decode()
+    assert all(risk_id in appendix_text for risk_id in risk_ids)
+    result = host.call('conclude', fields={'draft_id':draft['draft_id'],
+        'final_ref':f"pub/{final['publication_id']}#report", 'summary':'Qualified result'},
+        delivery_receipts=deliver_draft(host, draft['draft_id']), plugin_instance_id='plugin-1')
+    assert result['evidence']['evidence_closure']['risk_judgments'] == expanded
+
+
+def test_existing_expanded_draft_remains_readable_and_concludable(completed, monkeypatch):
+    from auto_research import evidence_conclusion
+    host, _, _, _, claim, _ = completed
+    original = evidence_conclusion.decision_package
+    with monkeypatch.context() as before_upgrade:
+        before_upgrade.setattr(evidence_conclusion, 'decision_package', lambda view, result, fields: original(view, result))
+        draft, publication = prepare_and_publish(host, claim)
+    result = host.call('conclude', fields={'draft_id':draft['draft_id'],
+        'final_ref':f"pub/{publication['publication_id']}#report", 'summary':'Existing draft'},
+        delivery_receipts=deliver_draft(host, draft['draft_id']), plugin_instance_id='plugin-1')
+    assert result['outcome'] == 'answered'
+
+
+def test_material_metadata_is_deduplicated_without_mutating_the_evidence_view():
+    import copy
+    from auto_research.evidence_conclusion import decision_package
+    identity = {'snapshot_id':'fixed', 'digest':'abc', 'total_bytes':123,
+                'object':{'digest':'abc'}, 'subpath':'part.txt'}
+    materials = [
+        {'ref':'pub/P-1#file', 'outcome':'resolved', 'object':{'digest':'abc'}, 'subpath':'part.txt',
+         'material_identity':identity, 'material_read':{'complete':True}},
+        {'ref':'pub/P-1#unavailable', 'outcome':'unavailable', 'object':{'digest':'other'},
+         'material_identity':{'object':{'digest':'different'}}, 'read_error':'material_unavailable'},
+        {'ref':'pub/P-1#inline', 'outcome':'resolved', 'item':{'content':{'text':'inline data'}}},
+    ]
+    view = {'roots':[], 'scope':None, 'conclusion_scope':None, 'records':[], 'edges':[],
+            'materials':materials, 'risks':[], 'limitations':[], 'routes':[], 'pending_results':[],
+            'graph_complete':True, 'raw_material_read':{}}
+    result = {'core_claim_refs':[], 'evidence_closure':{'risk_judgments':[]}, 'review_coverage':{'coverage':[]}}
+    original = copy.deepcopy(view)
+    package = decision_package(view, result)
+    assert view == original
+    selected = package['materials']
+    assert 'object' not in selected[0] and 'subpath' not in selected[0]
+    assert selected[0]['material_identity'] == identity and selected[0]['material_read']['complete']
+    assert selected[1]['object'] == {'digest':'other'} and selected[1]['read_error'] == 'material_unavailable'
+    assert selected[2]['inline_content'] == {'text':'inline data'}
+
+
 def test_generation_contract_changes_without_rewriting_previous_generation(tmp_path):
     host = Host(tmp_path)
     host.open()

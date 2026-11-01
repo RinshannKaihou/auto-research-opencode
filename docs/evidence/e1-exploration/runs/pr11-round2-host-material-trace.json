@@ -1,0 +1,66 @@
+[
+  {
+    "stage": 1,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_8751d82b140e4a909bbc3cc8a82ddf01",
+      "content": "{\n  \"publication_id\": \"P-001\",\n  \"refs\": [\n    \"pub/P-001#good\",\n    \"pub/P-001#missing\"\n  ],\n  \"created_at\": \"2026-11-01T08:25:54.927556+00:00\",\n  \"check\": {\n    \"check_id\": \"CK-001\",\n    \"sequence_bound\": 11,\n    \"status\": \"coverage unknown\",\n    \"flagged\": [],\n    \"targets_complete\": false,\n    \"targets_truncated\": false,\n    \"paths_truncated\": false\n  }\n}"
+    }
+  },
+  {
+    "stage": 2,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_f549b3caafa74561b36c53508c751f46",
+      "content": "{\n  \"part\": \"material\",\n  \"offset_unit\": \"utf8_byte\",\n  \"material_ref\": \"pub/P-001#good\",\n  \"snapshot_id\": \"material-8ca7d15fb3428ccd383b967d06d257ea0b46b9a6ff603684d265960324effd61\",\n  \"manifest_digest\": \"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\",\n  \"offset\": 0,\n  \"end\": 25,\n  \"total_bytes\": 25,\n  \"chunk\": \"Valid synthetic material.\",\n  \"cursor\": null\n}"
+    }
+  },
+  {
+    "stage": 3,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_9c89d23133b049e598f5494872c6acbd",
+      "content": "{\n  \"part\": \"material\",\n  \"offset_unit\": \"utf8_byte\",\n  \"material_ref\": \"pub/P-001#missing\",\n  \"snapshot_id\": \"material-84b9d7b1688f772e6acf6b7849275f785a1d9321d94a14e0e4381bbcdfad9ef3\",\n  \"manifest_digest\": \"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\",\n  \"offset\": 0,\n  \"end\": 51,\n  \"total_bytes\": 51,\n  \"chunk\": \"Synthetic material that is temporarily unavailable.\",\n  \"cursor\": null\n}"
+    }
+  },
+  {
+    "stage": 4,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_ce5a985e7b4e4e5ab6e3509ce4ac4a43",
+      "content": "{\n  \"snapshot_id\": \"evidence-b4101401ccdf4570ab2e843426808811\",\n  \"project_id\": \"39e05fa2-f31d-4e7e-a307-8ef0e5b83d49\",\n  \"generation\": 1,\n  \"source_sequence\": 12,\n  \"basis_digest\": \"a6f3f02968fa699cc971da32e25341257eafdbe622b30d795b96e20692c16233\",\n  \"manifest_digest\": \"244db2f3b9b42e10096e8c7b169740d91d60e0abfd272129473e079f46bea7e1\",\n  \"offset\": 0,\n  \"end\": 1848,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"graph_complete\\\":false,\\\"limitations\\\":[{\\\"reason\\\":\\\"object_missing\\\",\\\"ref\\\":\\\"pub/P-001#missing\\\",\\\"risk_id\\\":\\\"limit-56d1458dfc98bf3fc8831267\\\"}],\\\"materials\\\":[{\\\"integrity\\\":\\\"unverified\\\",\\\"item\\\":{\\\"content\\\":{},\\\"kind\\\":\\\"text\\\",\\\"knowledge_refs\\\":[],\\\"object_kind\\\":\\\"file\\\",\\\"object_version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\",\\\"source_path\\\":\\\"good.txt\\\"},\\\"item_id\\\":\\\"good\\\",\\\"kind\\\":\\\"publication_item\\\",\\\"material_identity\\\":{\\\"digest\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\"},\\\"snapshot_id\\\":\\\"material-8ca7d15fb3428ccd383b967d06d257ea0b46b9a6ff603684d265960324effd61\\\",\\\"subpath\\\":null,\\\"total_bytes\\\":25},\\\"material_read\\\":{\\\"complete\\\":true,\\\"covered_bytes\\\":25},\\\"message\\\":\\\"pub/P-001#good: resolved\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\"},\\\"outcome\\\":\\\"resolved\\\",\\\"publication_id\\\":\\\"P-001\\\",\\\"reason\\\":null,\\\"ref\\\":\\\"pub/P-001#good\\\",\\\"source_path\\\":\\\"good.txt\\\"},{\\\"integrity\\\":null,\\\"item_id\\\":\\\"missing\\\",\\\"kind\\\":\\\"publication_item\\\",\\\"message\\\":\\\"pub/P-001#missing: object_missing\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\\\"},\\\"outcome\\\":\\\"unavailable\\\",\\\"publication_id\\\":\\\"P-001\\\",\\\"reason\\\":\\\"object_missing\\\",\\\"ref\\\":\\\"pub/P-001#missing\\\",\\\"source_path\\\":\\\"missing.txt\\\"}],\\\"pending_results\\\":[],\\\"publication_checks\\\":[{\\\"check_scope\\\":{\\\"coverage\\\":\\\"unknown\\\",\\\"declared_refs\\\":[]},\\\"paths_truncated\\\":false,\\\"publication_id\\\":\\\"P-001\\\",\\\"ref\\\":\\\"pub/P-001#good\\\",\\\"result\\\":{\\\"status\\\":\\\"coverage unknown\\\",\\\"versions\\\":{}},\\\"targets_complete\\\":false,\\\"targets_truncated\\\":false}],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[\\\"pub/P-001#good\\\",\\\"pub/P-001#missing\\\"],\\\"routes\\\":[],\\\"scope\\\":null}\",\n  \"total_chars\": 1848,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 2,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 1\n  },\n  \"graph_complete\": false,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 5,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_578b34db6bc54657ad6e71a937ae9706",
+      "content": "{\n  \"part\": \"material\",\n  \"offset_unit\": \"utf8_byte\",\n  \"material_ref\": \"pub/P-001#missing\",\n  \"snapshot_id\": \"material-84b9d7b1688f772e6acf6b7849275f785a1d9321d94a14e0e4381bbcdfad9ef3\",\n  \"manifest_digest\": \"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\",\n  \"offset\": 0,\n  \"end\": 51,\n  \"total_bytes\": 51,\n  \"chunk\": \"Synthetic material that is temporarily unavailable.\",\n  \"cursor\": null\n}"
+    }
+  },
+  {
+    "stage": 6,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_806ca2f313e742de98012d06e970b6d8",
+      "content": "{\n  \"snapshot_id\": \"evidence-2cf283fa57d44b5e9da05126d9f40b4f\",\n  \"project_id\": \"39e05fa2-f31d-4e7e-a307-8ef0e5b83d49\",\n  \"generation\": 1,\n  \"source_sequence\": 12,\n  \"basis_digest\": \"80c82e78f0b289d840bf7e292ab3287c26fb00a3abc1d89417989c8d74f45674\",\n  \"manifest_digest\": \"9808573b80457bd7a1c67f697b3513669d7c2e361beea785b428251d9d1d8eeb\",\n  \"offset\": 0,\n  \"end\": 2539,\n  \"chunk\": \"{\\\"conclusion_scope\\\":null,\\\"edges\\\":[],\\\"graph_complete\\\":true,\\\"limitations\\\":[],\\\"materials\\\":[{\\\"integrity\\\":\\\"unverified\\\",\\\"item\\\":{\\\"content\\\":{},\\\"kind\\\":\\\"text\\\",\\\"knowledge_refs\\\":[],\\\"object_kind\\\":\\\"file\\\",\\\"object_version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\",\\\"source_path\\\":\\\"good.txt\\\"},\\\"item_id\\\":\\\"good\\\",\\\"kind\\\":\\\"publication_item\\\",\\\"material_identity\\\":{\\\"digest\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\"},\\\"snapshot_id\\\":\\\"material-8ca7d15fb3428ccd383b967d06d257ea0b46b9a6ff603684d265960324effd61\\\",\\\"subpath\\\":null,\\\"total_bytes\\\":25},\\\"material_read\\\":{\\\"complete\\\":true,\\\"covered_bytes\\\":25},\\\"message\\\":\\\"pub/P-001#good: resolved\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"bd468c0f9c8a9cb6616fb4261bb172d01955f79446450c5377dabf821fe81fd1\\\"},\\\"outcome\\\":\\\"resolved\\\",\\\"publication_id\\\":\\\"P-001\\\",\\\"reason\\\":null,\\\"ref\\\":\\\"pub/P-001#good\\\",\\\"source_path\\\":\\\"good.txt\\\"},{\\\"integrity\\\":\\\"unverified\\\",\\\"item\\\":{\\\"content\\\":{},\\\"kind\\\":\\\"text\\\",\\\"knowledge_refs\\\":[],\\\"object_kind\\\":\\\"file\\\",\\\"object_version\\\":\\\"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\\\",\\\"source_path\\\":\\\"missing.txt\\\"},\\\"item_id\\\":\\\"missing\\\",\\\"kind\\\":\\\"publication_item\\\",\\\"material_identity\\\":{\\\"digest\\\":\\\"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\\\"},\\\"snapshot_id\\\":\\\"material-84b9d7b1688f772e6acf6b7849275f785a1d9321d94a14e0e4381bbcdfad9ef3\\\",\\\"subpath\\\":null,\\\"total_bytes\\\":51},\\\"material_read\\\":{\\\"complete\\\":true,\\\"covered_bytes\\\":51},\\\"message\\\":\\\"pub/P-001#missing: resolved\\\",\\\"object\\\":{\\\"kind\\\":\\\"file\\\",\\\"version\\\":\\\"585eeed36384503aeb1c923c59c7b9163dfb98bb94744b6d1c9035ba1bf7151e\\\"},\\\"outcome\\\":\\\"resolved\\\",\\\"publication_id\\\":\\\"P-001\\\",\\\"reason\\\":null,\\\"ref\\\":\\\"pub/P-001#missing\\\",\\\"source_path\\\":\\\"missing.txt\\\"}],\\\"pending_results\\\":[],\\\"publication_checks\\\":[{\\\"check_scope\\\":{\\\"coverage\\\":\\\"unknown\\\",\\\"declared_refs\\\":[]},\\\"paths_truncated\\\":false,\\\"publication_id\\\":\\\"P-001\\\",\\\"ref\\\":\\\"pub/P-001#good\\\",\\\"result\\\":{\\\"status\\\":\\\"coverage unknown\\\",\\\"versions\\\":{}},\\\"targets_complete\\\":false,\\\"targets_truncated\\\":false},{\\\"check_scope\\\":{\\\"coverage\\\":\\\"unknown\\\",\\\"declared_refs\\\":[]},\\\"paths_truncated\\\":false,\\\"publication_id\\\":\\\"P-001\\\",\\\"ref\\\":\\\"pub/P-001#missing\\\",\\\"result\\\":{\\\"status\\\":\\\"coverage unknown\\\",\\\"versions\\\":{}},\\\"targets_complete\\\":false,\\\"targets_truncated\\\":false}],\\\"raw_material_read\\\":\\\"not_assessed\\\",\\\"records\\\":[],\\\"review_history\\\":[],\\\"reviews\\\":[],\\\"risks\\\":[],\\\"roots\\\":[\\\"pub/P-001#good\\\",\\\"pub/P-001#missing\\\"],\\\"routes\\\":[],\\\"scope\\\":null}\",\n  \"total_chars\": 2539,\n  \"draft_id\": null,\n  \"cursor\": null,\n  \"counts\": {\n    \"records\": 0,\n    \"edges\": 0,\n    \"materials\": 2,\n    \"risks\": 0,\n    \"reviews\": 0,\n    \"limitations\": 0\n  },\n  \"graph_complete\": true,\n  \"raw_material_read\": \"not_assessed\"\n}"
+    }
+  },
+  {
+    "stage": 7,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_68977dd05dc34edc8331c24476d82e48",
+      "content": "{\n  \"collection\": \"nodes\",\n  \"items\": [],\n  \"cursor\": null,\n  \"upper_id\": 0,\n  \"has_more\": false\n}"
+    }
+  },
+  {
+    "stage": 8,
+    "last_tool_result": {
+      "role": "tool",
+      "tool_call_id": "call_68977dd05dc34edc8331c24476d82e48",
+      "content": "{\n  \"collection\": \"nodes\",\n  \"items\": [],\n  \"cursor\": null,\n  \"upper_id\": 0,\n  \"has_more\": false\n}"
+    }
+  }
+]

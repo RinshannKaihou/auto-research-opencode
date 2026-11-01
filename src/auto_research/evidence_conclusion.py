@@ -17,7 +17,7 @@ REVIEW_TYPES = {'citation_scope', 'semantic_inference', 'recompute', 'reimplemen
 STOP_REASONS = {'goal_met', 'sufficient_for_current_choice', 'low_expected_value', 'resource_limited', 'user_requested'}
 
 
-def decision_package(view, result):
+def decision_package(view, result, fields=None):
     """Select the facts needed for the current decision; retain the full view separately."""
     core = set(result['core_claim_refs'])
     reachable = set(core)
@@ -39,6 +39,10 @@ def decision_package(view, result):
     for item in view['materials']:
         selected = {key:item[key] for key in ('ref','outcome','reason','object','subpath','inline_digest',
                     'material_identity','material_read','read_error') if key in item}
+        identity = selected.get('material_identity') or {}
+        for key in ('object', 'subpath'):
+            if key in selected and key in identity and selected[key] == identity[key]:
+                del selected[key]
         content = (item.get('item') or {}).get('content')
         if content and not item.get('object'):
             selected['inline_content'] = content
@@ -47,12 +51,17 @@ def decision_package(view, result):
                'reactivation_condition','evidence_refs')} for route in view['routes']]
     pending = [{key:item.get(key) for key in ('result_id','kind','source_ref','handled_by_decision')}
                for item in view['pending_results']]
+    decision = copy.deepcopy(result)
+    if fields is not None:
+        # evaluate() validates every member individually; retain only the groups
+        # the coordinator actually supplied in the delivered decision package.
+        decision['evidence_closure']['risk_judgments'] = copy.deepcopy(fields.get('risk_judgments', []))
     return {'roots':view['roots'], 'scope':view['scope'], 'conclusion_scope':view['conclusion_scope'],
             'records':records, 'edges':[edge for edge in view['edges'] if edge['user_ref'] in reachable],
             'materials':materials, 'risks':view['risks'], 'limitations':view['limitations'],
             'reviews':result['review_coverage']['coverage'], 'routes':routes, 'pending_results':pending,
             'graph_complete':view['graph_complete'], 'raw_material_read':view['raw_material_read'],
-            'conclusion_decision':result,
+            'conclusion_decision':decision,
             'history':{'collection':'review_history', 'note':'Full structural view and historical review events remain in the draft.'}}
 
 
@@ -429,7 +438,7 @@ class EvidenceConclusionStore:
                 snapshot = {**snapshot, 'view': view, 'basis_digest': refreshed['basis_digest'],
                             'source_sequence': refreshed['source_sequence']}
                 result = evaluate(self, db, view, fields)
-            package = decision_package(snapshot['view'], result)
+            package = decision_package(snapshot['view'], result, fields)
             body = json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
             if len(body) > 32000:
                 counts = {key:len(package[key]) for key in ('records','edges','materials','risks','limitations')}

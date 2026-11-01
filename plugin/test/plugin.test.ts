@@ -2399,6 +2399,107 @@ test('material pages are confirmed when the coordinator actually responds', asyn
   expect(view.materials.find((item:any)=>item.ref===ref).material_read.complete).toBe(true)
 })
 
+test('a missing frozen material does not block the coordinator or credit its page', async () => {
+  const host=await load()
+  await host.command('init','ses_main',{goal:'Recover after a frozen material becomes unavailable'})
+  await host.command('conclusion-contract','ses_main',{contract:'evidence-v1'})
+  writeFileSync(join(project,'good.txt'),'usable source')
+  writeFileSync(join(project,'missing.txt'),'source later unavailable')
+  const source=await host.call('research_publish','ses_main',{status:'complete',summary:'data',gaps:[],
+    items:[{item_id:'good',kind:'text',source_path:'good.txt'},
+      {item_id:'missing',kind:'text',source_path:'missing.txt'}],knowledge_refs:[]})
+  const good=`pub/${source.publication_id}#good`, missing=`pub/${source.publication_id}#missing`
+  const parts=[]
+  for (const [index,ref] of [good,missing].entries()) {
+    const id=`material-${index}`
+    const raw=await host.tools.get('research_query').execute({collection:'evidence',material_ref:ref},
+      {sessionID:'ses_main',messageID:`read-${index}`,id,agent:'build'})
+    parts.push({type:'tool-result',id,name:'research_query',result:{type:'text',value:raw.content}})
+  }
+  const sql=`import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute("SELECT object_version FROM publication_items WHERE item_id='missing'").fetchone()[0])`
+  const object=spawnSync('python3',['-c',sql,join(project,'.research','state.sqlite3')],{encoding:'utf8'})
+  expect(object.status).toBe(0)
+  const objectPath=join(project,'.research','objects',object.stdout.trim())
+  const original=readFileSync(objectPath)
+  rmSync(objectPath)
+  const request=modelRequest('ses_main')
+  request.messages=[{role:'tool',content:parts}] as any
+  const step=async (message:string) => {
+    host.events.push({id:message,type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:message,
+      model:{id:'scripted',providerID:'mock'}}})
+    await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+      .some((item:any)=>item.source_key===`step:ses_main:${message}`),message)
+    const current=modelRequest('ses_main'); current.messages=request.messages
+    await host.hooks.get('context')!(current)
+    return current
+  }
+  await step('first-response')
+  const first=await host.tools.get('research_query').execute({collection:'evidence',refs:[good,missing],limit:16384},
+    {sessionID:'ses_main',messageID:'first-response',id:'view-first',agent:'build'})
+  const view=JSON.parse(JSON.parse(first.content).chunk)
+  expect(view.materials.find((item:any)=>item.ref===good).material_read.complete).toBe(true)
+  expect(view.materials.find((item:any)=>item.ref===missing).material_read?.complete).not.toBe(true)
+  const next=await step('second-response')
+  expect(next.system.some((item:any)=>item.text?.includes(`material_unavailable ${missing}`))).toBe(true)
+  const second=await host.tools.get('research_query').execute({collection:'evidence',refs:[good,missing]},
+    {sessionID:'ses_main',messageID:'second-response',id:'view-second',agent:'build'})
+  expect(JSON.parse(second.content).snapshot_id).toBeTruthy()
+  writeFileSync(objectPath,original)
+  const fresh=await host.tools.get('research_query').execute({collection:'evidence',material_ref:missing},
+    {sessionID:'ses_main',messageID:'second-response',id:'fresh-material',agent:'build'})
+  request.messages=[{role:'tool',content:[...parts,{type:'tool-result',id:'fresh-material',name:'research_query',
+    result:{type:'text',value:fresh.content}}]}] as any
+  await step('third-response')
+  const recovered=await host.tools.get('research_query').execute({collection:'evidence',refs:[missing],limit:16384},
+    {sessionID:'ses_main',messageID:'third-response',id:'view-recovered',agent:'build'})
+  const restored=JSON.parse(JSON.parse(recovered.content).chunk).materials.find((item:any)=>item.ref===missing)
+  expect(restored.material_read.complete).toBe(true)
+})
+
+test('unrelated coordinator tools do not wait for a stalled material confirmation', async () => {
+  const host=await load()
+  await host.command('init','ses_main',{goal:'Keep unrelated tools usable'})
+  writeFileSync(join(project,'material.txt'),'a synthetic source')
+  const source=await host.call('research_publish','ses_main',{status:'complete',summary:'data',gaps:[],
+    items:[{item_id:'data',kind:'text',source_path:'material.txt'}],knowledge_refs:[]})
+  const ref=`pub/${source.publication_id}#data`
+  const raw=await host.tools.get('research_query').execute({collection:'evidence',material_ref:ref},
+    {sessionID:'ses_main',messageID:'read',id:'material',agent:'build'})
+  const request=modelRequest('ses_main')
+  request.messages=[{role:'tool',content:[{type:'tool-result',id:'material',name:'research_query',
+    result:{type:'text',value:raw.content}}]}] as any
+  host.events.push({id:'slow-material',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'slow-material',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:slow-material'),'slow material step')
+  await host.hooks.get('context')!(request)
+  const original=StorageClient.prototype.request
+  let release!:(value:any)=>void
+  const gate=new Promise(resolve=>{release=resolve})
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(function(method,fields,operation) {
+    return method==='evidence_observed' ? gate : original.call(this,method,fields,operation)
+  })
+  try {
+    const pending=host.tools.get('research_query').execute({collection:'nodes'},
+      {sessionID:'ses_main',messageID:'slow-material',id:'unrelated',agent:'build'})
+    const value=await Promise.race([pending.then(()=>true),Bun.sleep(2000).then(()=>false)])
+    expect(value).toBe(true)
+    const evidence=host.tools.get('research_query').execute({collection:'evidence',refs:[ref],limit:16384},
+      {sessionID:'ses_main',messageID:'slow-material',id:'evidence-after-timeout',agent:'build'})
+    const output=await Promise.race([evidence,Bun.sleep(4000).then(()=>null)])
+    expect(output).not.toBeNull()
+    const view=JSON.parse(JSON.parse(output.content).chunk)
+    expect(view.materials.find((item:any)=>item.ref===ref).material_read.complete).toBe(false)
+    host.events.push({id:'after-timeout',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'after-timeout',
+      model:{id:'scripted',providerID:'mock'}}})
+    await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+      .some((item:any)=>item.source_key==='step:ses_main:after-timeout'),'post-timeout step')
+    const next=modelRequest('ses_main'); next.messages=request.messages
+    await host.hooks.get('context')!(next)
+    expect(next.system.some((item:any)=>item.text?.includes(`backend_unavailable ${ref}`))).toBe(true)
+  } finally { release({receipt_ids:[],rejected:[]}); spy.mockRestore() }
+},10000)
+
 test('material delivery remains complete after earlier pages leave the model context', async () => {
   const host = await load()
   await host.command('init','ses_main',{goal:'Answer from a paged frozen file'})
@@ -2456,3 +2557,36 @@ test('node execution observation waits only after evidence conclusion is adopted
     expect(spy.mock.calls.filter(([method])=>method==='runtime_tool_observed')).toHaveLength(1)
   } finally { spy.mockRestore() }
 })
+
+test('warm recovery loads the evidence contract before allowing executable work', async () => {
+  const first=await load()
+  await first.command('auto','ses_main',{goal:'Recover execution observation'})
+  await first.command('exploration','ses_main',{mode:'on'})
+  first.turn.start('ses_main')
+  const node=await first.call('research_propose','ses_main',{question:'Measure',why_now:'now',plan:'measure',root_reason:'first'})
+  await first.call('research_dispatch','ses_main',{node_id:node.node_id})
+  const child=first.created[0]!
+  first.turn.start(child)
+  await first.call('research_query',child,{collection:'nodes'})
+  const original=StorageClient.prototype.request
+  let unblock!:()=>void
+  const gate=new Promise<void>(resolve=>{unblock=resolve})
+  let delayed=false, observed=0
+  const spy=spyOn(StorageClient.prototype,'request').mockImplementation(async function(method,fields,operation){
+    if(method==='status' && !delayed){ delayed=true; await gate }
+    if(method==='runtime_tool_observed') observed++
+    return original.call(this,method,fields,operation)
+  })
+  try {
+    const second=await load()
+    await until(()=>delayed,'delayed status')
+    let allowed=false
+    const before=second.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'after-warm'}).then(()=>{allowed=true})
+    await Bun.sleep(100)
+    expect(allowed).toBe(false)
+    unblock()
+    await before
+    await second.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'after-warm',status:'completed'})
+    expect(observed).toBe(1)
+  } finally {unblock();spy.mockRestore()}
+},15000)

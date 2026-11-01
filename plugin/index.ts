@@ -465,7 +465,19 @@ export default Plugin.define({
       if (tool.writes) await ensureController(root, main)
       const role = research.roleOf(sessionID)
       if (!tool.roles.includes(role as any)) throw new Error(`${tool.name} 不属于本会话的角色（${role ?? "未登记"}）`)
-      if (role === 'main') await research.confirmMaterialDelivery(sessionID,call.messageID)
+      if (role === 'main') {
+        const confirmation=research.confirmMaterialDelivery(sessionID,call.messageID).catch(() => {})
+        const needsCurrentEvidence = tool.name === 'research_prepare_conclusion' || tool.name === 'research_conclude' ||
+          (tool.name === 'research_query' && args.collection === 'evidence')
+        if (needsCurrentEvidence) {
+          let timer:ReturnType<typeof setTimeout> | undefined
+          try {
+            const outcome=await Promise.race([confirmation.then(()=>'confirmed'),
+              new Promise<'timeout'>(resolve=>{timer=setTimeout(()=>resolve('timeout'),2000)})])
+            if (outcome==='timeout') research.evidenceDelivery.materialTimedOut(sessionID,call.messageID)
+          } finally { clearTimeout(timer) }
+        }
+      }
       if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
         const current = await research.call<any>("status", sessionID)
         const run = current.workflow?.run?.state

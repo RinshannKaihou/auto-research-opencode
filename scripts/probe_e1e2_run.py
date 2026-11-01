@@ -304,15 +304,77 @@ class RecoveryProvider(E1E2Provider):
         return None
 
 
+class MaterialFailureProvider(E1E2Provider):
+    """Exercise an unavailable frozen object while its old tool output remains visible."""
+    observations = {}
+    trace = []
+    saved_object = None
+
+    @classmethod
+    def choose(cls, body, names):
+        if 'research_dispatch' not in names or 'research_finish' in names:
+            return None
+        stage = cls.stage
+        tool_results = [message for message in body.get('messages', []) if message.get('role') == 'tool']
+        if tool_results:
+            cls.trace.append({'stage':stage, 'last_tool_result':tool_results[-1]})
+        if stage == 0:
+            cls.stage = 1
+            return 'research_publish', {'status':'complete','summary':'synthetic materials','gaps':[],
+                'knowledge_refs':[], 'items':[{'item_id':'good','kind':'text','source_path':'good.txt'},
+                                               {'item_id':'missing','kind':'text','source_path':'missing.txt'}]}
+        publication = cls.rows("SELECT publication_id FROM publication_items WHERE item_id='missing'")[0][0]
+        good, missing = f'pub/{publication}#good', f'pub/{publication}#missing'
+        if stage in (1, 2):
+            cls.stage += 1
+            return 'research_query', {'collection':'evidence', 'material_ref':good if stage == 1 else missing}
+        if stage == 3:
+            object_version = cls.rows("SELECT object_version FROM publication_items WHERE item_id='missing'")[0][0]
+            path = cls.database.parent / 'objects' / object_version
+            cls.saved_object = (path, path.read_bytes())
+            path.unlink()
+            cls.observations['old_material_output_visible'] = any(
+                item.get('material_ref') == missing for message in tool_results for item in objects(message))
+            cls.stage = 4
+            return 'research_query', {'collection':'evidence','refs':[good,missing], 'limit':16384}
+        if stage == 4:
+            view = json.loads(cls.last_page(body)['chunk'])
+            by_ref = {item['ref']:item for item in view['materials']}
+            cls.observations['valid_page_confirmed'] = by_ref[good]['material_read']['complete']
+            cls.observations['missing_page_not_confirmed'] = not (by_ref[missing].get('material_read') or {}).get('complete',False)
+            cls.observations['missing_reported'] = any(item.get('ref') == missing for item in view['limitations'])
+            path, content = cls.saved_object
+            path.write_bytes(content)
+            cls.stage = 5
+            return 'research_query', {'collection':'evidence','material_ref':missing}
+        if stage == 5:
+            cls.stage = 6
+            return 'research_query', {'collection':'evidence','refs':[good,missing], 'limit':16384}
+        if stage == 6:
+            view = json.loads(cls.last_page(body)['chunk'])
+            by_ref = {item['ref']:item for item in view['materials']}
+            cls.observations['fresh_page_confirmed_after_restore'] = by_ref[missing]['material_read']['complete']
+            cls.stage = 7
+            return 'research_query', {'collection':'nodes'}
+        if stage == 7:
+            cls.observations['subsequent_tool_succeeded'] = any('items' in item for item in objects(tool_results[-1]))
+            cls.stage = 8
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--plugin', type=Path, default=Path(__file__).resolve().parents[1] / 'plugin')
-    parser.add_argument('--scenario',choices=('full','stale','off','restart'),default='full')
+    parser.add_argument('--scenario',choices=('full','stale','off','restart','material-failure'),default='full')
+    parser.add_argument('--trace-output',type=Path,help='write selected synthetic host tool results')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='ari-e1e2-host-') as directory:
         root = Path(directory)
         workspace = root / 'project'
         workspace.mkdir()
+        if args.scenario == 'material-failure':
+            (workspace / 'good.txt').write_text('Valid synthetic material.', encoding='utf-8')
+            (workspace / 'missing.txt').write_text('Synthetic material that is temporarily unavailable.', encoding='utf-8')
         env = {key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG','LC_ALL') if key in os.environ}
         for name in ('DATA','CONFIG','STATE','CACHE'):
             path = root / name.lower()
@@ -320,7 +382,8 @@ def main():
             env[f'XDG_{name}_HOME'] = str(path)
         password = uuid4().hex
         env.update(OPENCODE_SERVER_PASSWORD=password, OPENCODE_DISABLE_MODELS_FETCH='1', ARI_PROBE_KEY='test-only')
-        provider = E1E2Provider if args.scenario == 'full' else RecoveryProvider
+        provider = (E1E2Provider if args.scenario == 'full' else
+                    MaterialFailureProvider if args.scenario == 'material-failure' else RecoveryProvider)
         provider.scenario = args.scenario
         if provider is RecoveryProvider:
             provider.node_gate.clear()
@@ -341,6 +404,8 @@ def main():
         provider.database = workspace / '.research' / 'state.sqlite3'
         provider.actions, provider.failures, provider.stage, provider.material_pages = [], [], 0, 0
         provider.finished_nodes = set()
+        if provider is MaterialFailureProvider:
+            provider.observations, provider.trace, provider.saved_object = {}, [], None
         with (root / 'server.log').open('w+') as log:
             process = subprocess.Popen(['opencode','serve','--hostname','127.0.0.1','--port',str(port)],
                                        cwd=workspace,env=env,stdout=log,stderr=log)
@@ -373,6 +438,21 @@ def main():
                 command('budget',{'limit':'turns','value':'80','reason':'bounded host fixture'})
                 command('exploration',{'mode':'on'})
                 command('auto',{})
+                if provider is MaterialFailureProvider:
+                    deadline = time.monotonic()+45
+                    while provider.stage < 8 and time.monotonic() < deadline:
+                        if provider.failures:
+                            raise RuntimeError(provider.failures[-1])
+                        time.sleep(.1)
+                    observed = {'scenario':'material-failure','actions':provider.actions,
+                                **provider.observations,'used_external_model':False}
+                    if provider.stage != 8 or not all(provider.observations.values()) or len(provider.observations) != 6:
+                        raise RuntimeError(json.dumps(observed,sort_keys=True))
+                    if args.trace_output:
+                        trace = json.dumps(provider.trace, ensure_ascii=False, indent=2).replace(str(workspace),'<isolated-project>')
+                        args.trace_output.write_text(trace+'\n')
+                    print(json.dumps(observed,sort_keys=True))
+                    return
                 if provider is RecoveryProvider:
                     deadline = time.monotonic()+30
                     while time.monotonic() < deadline:

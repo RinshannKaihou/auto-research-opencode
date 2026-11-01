@@ -33,7 +33,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history. A read proves delivery, not scientific understanding.',
+      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history. A read proves delivery, not scientific understanding.',
     parameters: {
       expected_digest: { type: "string" },
       scope_owner:{type:'string'},generation:{type:'number'},target_ref:{type:'string'},change_id:{type:'string'},obligation_id:{type:'string'},

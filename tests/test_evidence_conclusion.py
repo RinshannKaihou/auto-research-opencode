@@ -374,6 +374,23 @@ def test_challenge_to_current_core_blocks_an_unqualified_answer(completed):
         fields={**fields([claim['ref']]),'snapshot_id':page['snapshot_id']})
 
 
+def test_grouping_does_not_allow_a_review_challenge_to_be_marked_handled(completed):
+    host, store, _, _, claim, _ = completed
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    host.call('review_scope_set', refs=[claim['ref']], reason='review the synthesis')
+    row = next(item for item in obligations(store) if item['target_ref'] == claim['ref'])
+    link(host, row, report(host), result='challenges')
+    host.call('conclusion_contract', contract='evidence-v1')
+    page = host.call('query', collection='evidence', refs=[claim['ref'], 'knowledge/K-404@1'])
+    snapshot = host.service.evidence.get(store, page['snapshot_id'])
+    challenge = next(item['risk_id'] for item in snapshot['view']['risks'] if item['kind'] == 'review_challenge')
+    missing = next(item['risk_id'] for item in snapshot['view']['limitations'] if item['reason'] == 'knowledge_missing')
+    group = {'risk_ids':[missing,challenge], 'core_impact':'no', 'disposition':'handled',
+             'reason':'Attempt to classify both risks together', 'evidence_refs':[claim['ref']]}
+    assert 'challenges need their exact disposition' in host.error('conclusion_prepare', model_call=True,
+        fields={**fields([claim['ref']]),'snapshot_id':page['snapshot_id'], 'risk_judgments':[group]})
+
+
 def test_execution_review_requires_host_observed_executable_work(completed):
     host, store, _, _, claim, _ = completed
     host.call('workflow', action='run', fields={'state':'running'})
