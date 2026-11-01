@@ -57,6 +57,7 @@ export interface SessionResearch {
   role?: string
   runState?: string
   pauseReason?: string | null
+  eventRecovery?: { state: string; held: number; unresolved: number; message?: string }
   nodeID?: string | null
   tasks?: { queued: number; running: number; finished: number }
   waiting?: number

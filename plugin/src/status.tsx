@@ -50,6 +50,7 @@ export function createSessionStatus(context: Context): SessionStatusStore {
 }
 
 function activity(state: SessionResearch): string {
+  if (['gap', 'held'].includes(state.eventRecovery?.state ?? '')) return '事件待核对：/research resume'
   if (state.runState !== "running") return runState(state.runState)
   if (state.pauseReason) return pauseReason(state.pauseReason)
   return "自主推进中"
@@ -74,6 +75,9 @@ export function ResearchSidebar(props: { context: Context; state: () => SessionR
           <text fg={theme.text.muted}>{roleName(state().role)}</text>
           <text fg={warn(state()) ? theme.text.feedback.warning.base : theme.text.muted}>{activity(state())}</text>
           <text fg={theme.text.muted}>{workLine(state())}</text>
+          <Show when={state().eventRecovery?.message}>
+            <text fg={theme.text.feedback.warning.base}>{state().eventRecovery?.message}</text>
+          </Show>
           <text fg={theme.text.muted}>
             {`节点 ${state().counts?.nodes ?? 0} · 发布 ${state().counts?.publications ?? 0} · 知识 ${state().counts?.knowledge ?? 0}`}
           </text>

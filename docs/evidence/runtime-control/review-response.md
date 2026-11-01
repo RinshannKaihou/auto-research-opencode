@@ -1,5 +1,7 @@
 # PR #9／#10 审阅处理
 
+第二轮修复与验证见 [review-round2.md](review-round2.md)；下文保留第一轮记录。
+
 2026-11-01。优先核对 [Claude 对 #9 的审阅](https://github.com/RinshannKaihou/auto-research-opencode/pull/9#issuecomment-6552441128)及 [Claude 对 #10 的审阅](https://github.com/RinshannKaihou/auto-research-opencode/pull/10#issuecomment-6552444614)，并交叉检查 Grok、GLM。以下区分已修复的问题、保留的安全语义和后续工作。验证只使用临时项目和隔离服务，没有升级共享服务或迁移真实研究项目。
 
 ## PR #9

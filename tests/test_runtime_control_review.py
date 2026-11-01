@@ -85,6 +85,9 @@ def test_takeover_candidate_cannot_override_a_subsequent_owner_change(tmp_path, 
     candidate = host.call('controller_attach', epoch='new', binding='new', pid=os.getpid())
     newer = host.call('controller_attach', epoch='old', binding='reattached', pid=os.getpid())
     host.call('controller_ready', control_owner=owner_token(newer))
+    from auto_research.native_store import NativeStore
+    with NativeStore(host.root)._read() as db:
+        assert db.execute("SELECT state FROM workflow_intents WHERE kind='controller_candidate'").fetchone()[0] == 'superseded'
     assert 'adoption_not_authorized' in host.error('controller_adopt', reason='outdated check', control_owner=owner_token(candidate))
 
 
@@ -150,3 +153,39 @@ def test_native_terminal_does_not_clear_unknown_external_exit_after_a_deadline(t
     store.runtime_execution_end('opencode', 'ses_node', 'late-terminal', 'interrupted', 'late-end', 'old-turn')
     with store._read() as db:
         assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?', (task['task_id'],)).fetchone()[0] == 'unverified'
+
+
+def test_unsent_standalone_turn_refund_rejects_a_bound_or_submitted_request(tmp_path):
+    host, store, _ = project(tmp_path)
+    first = store.runtime_reserve('opencode', 'ses_main', 'nudge', message_id='msg_nudge')
+    assert store.runtime_turn_not_sent('opencode', 'ses_main', 'msg_nudge', 'refund')['refunded']
+    assert store.runtime_budget_status('opencode', 'ses_main')['turns'] == 0
+    assert store.runtime_turn_not_sent('opencode', 'ses_main', 'msg_nudge', 'refund-again')['refunded']
+    with pytest.raises(ConflictError):
+        store.runtime_submitted('opencode', 'ses_main', first['reservation_id'], 'late-submit')
+    second = store.runtime_reserve('opencode', 'ses_main', 'next', message_id='msg_next')
+    store.runtime_execution_start('opencode', 'ses_main', 'next-turn', 'start-next', 1)
+    store.runtime_execution_bind('opencode', 'ses_main', 'next-turn', 'msg_next', 'bind-next', 2)
+    with pytest.raises(ConflictError):
+        store.runtime_turn_not_sent('opencode', 'ses_main', 'msg_next', 'bound-refund')
+    store.runtime_reserve('opencode', 'ses_main', 'submitted', message_id='msg_submitted')
+    with store._read() as db:
+        rid = db.execute("SELECT reservation_id FROM runtime_budget_reservations WHERE operation_id='submitted'").fetchone()[0]
+    store.runtime_submitted('opencode', 'ses_main', rid, 'submitted-confirm')
+    with pytest.raises(ConflictError):
+        store.runtime_turn_not_sent('opencode', 'ses_main', 'msg_submitted', 'submitted-refund')
+
+
+def test_execution_view_ignores_prior_ambiguous_authorizations_but_retains_future_work(tmp_path):
+    host, store, _ = project(tmp_path)
+    store.runtime_reserve('opencode', 'ses_main', 'old', message_id='msg_old')
+    store.runtime_execution_start('opencode', 'ses_main', 'current', 'start', 1, ambiguous=True)
+    assert not store.runtime_execution_bind('opencode', 'ses_main', 'current', 'msg_old', 'ambiguous-bind', 2)['matched']
+    assert not store.runtime_execution_view('opencode', 'ses_main')['has_unbound_turn']
+    assert store.runtime_execution_view('opencode', 'ses_main', 'missing') is None
+    store.runtime_reserve('opencode', 'ses_main', 'future', message_id='msg_future')
+    assert store.runtime_execution_view('opencode', 'ses_main')['has_unbound_turn']
+    store.runtime_turn_not_sent('opencode', 'ses_main', 'msg_future', 'refund-future')
+    assert not store.runtime_execution_view('opencode', 'ses_main')['has_unbound_turn']
+    with store._read() as db:
+        assert db.execute("SELECT state FROM workflow_intents WHERE intent_id='execution-start:current'").fetchone()[0] == 'open'

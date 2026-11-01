@@ -138,6 +138,31 @@ def publication_materials(db, publication):
 
 
 class RuntimeStore:
+    def runtime_turn_not_sent(self, host, session, message_id, operation):
+        """Revoke a standalone nudge only with the host's pre-API not-sent proof."""
+        if not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256:
+            raise ValidationError('A bounded host message ID is required')
+
+        def work(db):
+            self._association(db, host, session)
+            row = db.execute("SELECT * FROM workflow_intents WHERE kind='turn_authorization' AND session_id=? "
+                             "AND json_extract(details,'$.host')=? AND json_extract(details,'$.message_id')=? ORDER BY rowid DESC LIMIT 1",
+                             (session, host, message_id)).fetchone()
+            if not row:
+                return {'refunded': False, 'reason': 'no_reservation'}
+            details = json.loads(row['details'])
+            rid = details['reservation_id']
+            reserved = db.execute('SELECT state FROM runtime_budget_reservations WHERE reservation_id=?', (rid,)).fetchone()
+            if reserved and reserved['state'] == 'not_sent' and row['state'] == 'revoked':
+                return {'refunded': True}
+            if not reserved or reserved['state'] != 'reserved' or row['state'] != 'issued':
+                raise ConflictError('Turn may have started; cannot declare it unsent')
+            db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE intent_id=?", (timestamp(), row['intent_id']))
+            db.execute("UPDATE runtime_budget_reservations SET state='not_sent' WHERE reservation_id=?", (rid,))
+            self._event(db, 'runtime.turn_not_sent', {'session': session, 'message_id': message_id, 'reservation_id': rid})
+            return {'refunded': True}
+        return self._mutate('runtime.turn_not_sent', dict(host=host, session=session, message_id=message_id), operation, work)
+
     def runtime_outbound_not_sent(self, host, session, intent_id, stage, reason, operation):
         """Host-only proof that its API was never invoked; never infer from an RPC error."""
         if stage not in {'create', 'synthetic'} or not isinstance(reason, str) or not reason.strip():
@@ -170,12 +195,18 @@ class RuntimeStore:
                 reservation = db.execute('SELECT state FROM runtime_budget_reservations WHERE reservation_id=?', (rid,)).fetchone()
                 if not auth or auth['state'] != 'issued' or not reservation or reservation['state'] != 'reserved':
                     raise ConflictError('Execution may have started; cannot refund this submission')
+            paused = False
             if row['kind'] == 'node_launch':
                 task = db.execute('SELECT * FROM exploration_tasks WHERE task_id=?', (details['task_id'],)).fetchone()
                 latest = db.execute("SELECT intent_id FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? ORDER BY rowid DESC LIMIT 1", (details['task_id'],)).fetchone()
                 if not task or task['state'] != 'starting' or task['session_id'] != details['session_id'] or latest['intent_id'] != intent_id:
                     raise ConflictError('Task changed; preserve the current recovery state')
                 db.execute("UPDATE exploration_tasks SET state='queued',error=?,updated_at=? WHERE task_id=?", (reason[:2000], timestamp(), details['task_id']))
+                recent = list(db.execute("SELECT state FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? AND intent_id!=? ORDER BY rowid DESC LIMIT 2",
+                                         (details['task_id'], intent_id)))
+                paused = len(recent) == 2 and all(item['state'] == 'not_sent' for item in recent)
+                if paused:
+                    db.execute("UPDATE workflow_sessions SET pause_reason='fault' WHERE host_id=? AND session_id=?", (host, session))
             elif row['kind'] == 'specialist_launch':
                 task = db.execute('SELECT state FROM specialist_tasks WHERE task_id=?', (details['task_id'],)).fetchone()
                 if not task or task['state'] not in {'starting', 'running'}:
@@ -187,7 +218,7 @@ class RuntimeStore:
             state = 'retryable' if row['kind'] in {'notification_delivery', 'notification_wake'} else 'not_sent'
             db.execute('UPDATE workflow_intents SET state=?,updated_at=? WHERE intent_id=?', (state, timestamp(), intent_id))
             self._event(db, 'runtime.outbound_not_sent', {**payload, 'reservation_id': rid})
-            return {'rolled_back': True, 'state': state}
+            return {'rolled_back': True, 'state': state, 'paused': paused}
         return self._mutate('runtime.outbound_not_sent', payload, operation, work)
 
     def runtime_unverified(self, host, session):
@@ -260,7 +291,7 @@ class RuntimeStore:
     def runtime_execution_view(self, host, session, execution_token=None):
         with self._read() as db:
             self._association(db, host, session)
-            row = db.execute("SELECT state,details FROM workflow_intents WHERE kind='execution_start' AND session_id=? "
+            row = db.execute("SELECT rowid AS sequence,state,details FROM workflow_intents WHERE kind='execution_start' AND session_id=? "
                              "AND (? IS NULL OR intent_id=?) ORDER BY rowid DESC LIMIT 1",
                              (session, execution_token, 'execution-start:' + execution_token if execution_token else None)).fetchone()
             if not row:
@@ -268,7 +299,9 @@ class RuntimeStore:
             details = json.loads(row['details'])
             if details.get('host') != host:
                 return None
-            pending = db.execute("SELECT 1 FROM workflow_intents WHERE kind='turn_authorization' AND session_id=? AND state='issued' LIMIT 1", (session,)).fetchone()
+            pending = db.execute("SELECT 1 FROM workflow_intents WHERE kind='turn_authorization' AND session_id=? AND state='issued' "
+                                 "AND rowid>? AND json_extract(details,'$.host')=? AND json_extract(details,'$.generation')=? LIMIT 1",
+                                 (session, row['sequence'], host, details['generation'])).fetchone()
             terminal = db.execute("SELECT details FROM workflow_intents WHERE kind='execution_terminal' AND session_id=? "
                                   "AND json_extract(details,'$.execution_token')=? LIMIT 1", (session, details['execution_token'])).fetchone()
             return {'state': row['state'], 'has_unbound_turn': bool(pending),
