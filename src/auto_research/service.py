@@ -1233,10 +1233,12 @@ class NativeService:
                             start, end = page.get('offset'), page.get('end')
                             if (type(start) is not int or type(end) is not int or not 0 <= start < end <= material['total_bytes']
                                     or page.get('snapshot_id') != material['snapshot_id']
-                                    or page.get('manifest_digest') != material['digest']
-                                    or not isinstance(page.get('model_message_id'), str) or not page['model_message_id']
-                                    or page.get('chunk_digest') != hashlib.sha256(self.evidence.materials.bytes(material, start, end)).hexdigest()):
+                                    or not isinstance(page.get('model_message_id'), str) or not page['model_message_id']):
                                 rejected.append({'index': index, 'reason': 'page_mismatch'})
+                                continue
+                            if (page.get('manifest_digest') != material['digest'] or page.get('chunk_digest') !=
+                                    hashlib.sha256(self.evidence.materials.bytes(material, start, end)).hexdigest()):
+                                rejected.append({'index': index, 'reason': 'digest_mismatch'})
                                 continue
                             validated.append({'snapshot_id': material['snapshot_id'], 'draft_id': None, 'part': 'material',
                                               'model_message_id': page['model_message_id'], 'generation': generation,
@@ -1262,18 +1264,19 @@ class NativeService:
                     if snapshot['generation'] != generation:
                         rejected.append({'index': index, 'reason': 'wrong_generation'})
                         continue
-                    if (snapshot.get('draft_id') and (snapshot.get('host_id') != host_id or snapshot.get('session_id') != session_id)):
+                    if snapshot.get('host_id') != host_id or snapshot.get('session_id') != session_id:
                         rejected.append({'index': index, 'reason': 'wrong_session'})
                         continue
                     part = 'decision' if snapshot.get('draft_id') and snapshot.get('format_version') == 2 else 'manifest'
                     body = snapshot['body'].encode('utf-8') if part == 'decision' else snapshot['body']
                     if (type(start) is not int or type(end) is not int or not 0 <= start < end <= len(body)
                             or page.get('part', part) != part
-                            or page.get('draft_id', snapshot.get('draft_id')) != snapshot.get('draft_id')
-                            or page.get('manifest_digest') != snapshot['manifest_digest']
-                            or page.get('chunk_digest') != hashlib.sha256(
-                                body[start:end] if part == 'decision' else body[start:end].encode('utf-8')).hexdigest()):
+                            or page.get('draft_id', snapshot.get('draft_id')) != snapshot.get('draft_id')):
                         rejected.append({'index': index, 'reason': 'page_mismatch'})
+                        continue
+                    if (page.get('manifest_digest') != snapshot['manifest_digest'] or page.get('chunk_digest') != hashlib.sha256(
+                            body[start:end] if part == 'decision' else body[start:end].encode('utf-8')).hexdigest()):
+                        rejected.append({'index': index, 'reason': 'digest_mismatch'})
                         continue
                     validated.append({'snapshot_id': snapshot['snapshot_id'], 'draft_id': snapshot.get('draft_id'),
                                       'generation': snapshot['generation'], 'offset': start, 'end': end,

@@ -115,10 +115,11 @@ def test_expired_page_does_not_poison_valid_draft_and_restart(completed, tmp_pat
     for _ in range(17):
         host.call('query', collection='evidence', refs=[])
     current = host.call('query', collection='evidence', draft_id=draft['draft_id'], limit=127)
-    pages = [evidence_page(old), evidence_page(current)]
+    pages = [evidence_page(old), evidence_page(current), {**evidence_page(current), 'chunk_digest':'changed'}]
     observed = host.call('evidence_observed', pages=pages, plugin_instance_id='p')
     assert len(observed['receipt_ids']) == 1
-    assert observed['rejected'] == [{'index': 0, 'reason': 'evidence_snapshot_expired'}]
+    assert observed['rejected'] == [{'index': 0, 'reason': 'evidence_snapshot_expired'},
+                                    {'index': 2, 'reason': 'digest_mismatch'}]
     host.service = NativeService(tmp_path / 'registry.sqlite3')
     observed = host.call('evidence_observed', pages=pages, plugin_instance_id='p')
     assert len(observed['receipt_ids']) == 1 and observed['rejected'][0]['index'] == 0
@@ -365,6 +366,8 @@ def test_new_main_cannot_inherit_previous_main_material_snapshot(tmp_path):
     deliver_material(host, ref)
     old = host.call('query', collection='evidence', refs=[claim])
     host.call('takeover_main', session='ses_new', root=str(host.root), cwd=str(host.root))
+    observed = host.call('evidence_observed',session='ses_new',pages=[evidence_page(old)],plugin_instance_id='plugin-1')
+    assert observed['rejected'] == [{'index':0,'reason':'wrong_session'}]
     declaration = {**fields([claim]), 'snapshot_id':old['snapshot_id']}
     assert 'evidence_snapshot_session_changed' in host.error('conclusion_prepare', session='ses_new',
         fields=declaration, model_call=True)
