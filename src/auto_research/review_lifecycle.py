@@ -27,7 +27,7 @@ def event(db, oid, action, reason, refs, scope, operation, actor):
         epistemic.read_bound(db), operation, encoded(actor), now())).lastrowid
 
 
-def assessment_identity(db, root, source_ref, target_ref, specialist_task_id):
+def assessment_identity(db, root, source_ref, target_ref, specialist_task_id, content_identities=None):
     """Use ledger and host observations; never accept a caller's model identity."""
     source = frozen_refs.resolve(db, root, source_ref)
     target = frozen_refs.resolve(db, root, target_ref) if frozen_refs.is_frozen(target_ref) else None
@@ -52,7 +52,10 @@ def assessment_identity(db, root, source_ref, target_ref, specialist_task_id):
         return container == item
 
     source_identity = identity(source_ref, source)
-    if target and contains(identity(target_ref, target), source_identity):
+    content_identities = content_identities or {}
+    same_content = lambda ref: bool(content_identities.get(source_ref) and
+                                   content_identities.get(source_ref) == content_identities.get(ref))
+    if target and (contains(identity(target_ref, target), source_identity) or same_content(target_ref)):
         raise ValidationError('Review report and reviewed material have the same frozen object')
     if target_ref.startswith('knowledge/'):
         from .memory_store import parse_knowledge_ref
@@ -61,7 +64,7 @@ def assessment_identity(db, root, source_ref, target_ref, specialist_task_id):
         if claim:
             for ref in json.loads(claim['evidence_refs']):
                 if ref == source_ref or (frozen_refs.is_frozen(ref)
-                        and contains(identity(ref, frozen_refs.resolve(db, root, ref)), source_identity)):
+                        and (contains(identity(ref, frozen_refs.resolve(db, root, ref)), source_identity) or same_content(ref))):
                     raise ValidationError('Review report is already a source of the reviewed claim')
         author = json.loads(claim['asserted_at'] or 'null') if claim else None
     else:
@@ -409,6 +412,24 @@ class ReviewStore:
         return self._mutate('review.promote', fields, request_id, work)
 
     def review_link(self, fields, request_id, actor):
+        content_identities = {}
+        with self._read() as db:
+            prior = db.execute('SELECT 1 FROM requests WHERE request_id=?', (request_id,)).fetchone()
+            if not prior and fields.get('review_type'):
+                refs = [fields['source_ref']]
+                target = fields['target_ref']
+                if frozen_refs.is_frozen(target):
+                    refs.append(target)
+                elif target.startswith('knowledge/'):
+                    from .memory_store import parse_knowledge_ref
+                    kid, revision = parse_knowledge_ref(target)
+                    claim = db.execute('SELECT evidence_refs FROM knowledge_revisions WHERE knowledge_id=? AND revision=?',
+                                       (kid, revision)).fetchone()
+                    if claim:
+                        refs.extend(ref for ref in json.loads(claim['evidence_refs']) if frozen_refs.is_frozen(ref))
+                for ref in refs:
+                    content_identities[ref] = frozen_refs.content_identity(db, self.root, ref)
+
         def work(db):
             row = db.execute('SELECT * FROM review_obligations WHERE obligation_id=?', (fields['obligation_id'],)).fetchone()
             if not row:
@@ -475,7 +496,7 @@ class ReviewStore:
             limitations = fields.get('limitations', [])
             if not isinstance(limitations, list) or not all(isinstance(item, str) and item.strip() for item in limitations):
                 raise ValidationError('Review limitations must be a list of text')
-            identity = assessment_identity(db, self.root, report, row['target_ref'], fields.get('specialist_task_id')) if review_type else None
+            identity = assessment_identity(db, self.root, report, row['target_ref'], fields.get('specialist_task_id'), content_identities) if review_type else None
             review_event = event(db, row['obligation_id'], 'completed' if complete else 'report_partial', fields['reason'], refs,
                   {'result': result, 'complete': complete}, request_id, actor)
             if review_type:

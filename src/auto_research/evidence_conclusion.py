@@ -468,9 +468,10 @@ class EvidenceConclusionStore:
             source = frozen_refs.parse(material['ref'])
             same_publication = source.get('publication_id') == publication['publication_id']
             same_object = report['object_version'] and (material.get('object') or {}).get('version') == report['object_version']
+            same_file = report['object_version'] and (material.get('material_identity') or {}).get('digest') == report['object_version']
             same_inline = not report['object_version'] and not material.get('object') and material.get('item') and (
                 material['item']['content'] == json.loads(report['content']))
-            if same_publication or same_object or same_inline:
+            if same_publication or same_object or same_file or same_inline:
                 self_source.append(material['ref'])
         if self_source:
             if result['outcome'] == 'answered':

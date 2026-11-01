@@ -204,3 +204,81 @@ def test_large_inline_material_is_separate_from_decision_package(tmp_path):
     draft = host.call('conclusion_prepare', model_call=True, fields={**fields([claim['ref']]),'snapshot_id':view['snapshot_id']})
     page = host.call('query', collection='evidence', draft_id=draft['draft_id'])
     assert page['total_bytes'] < 32000 and content['text'][:100] not in page['chunk']
+
+
+@pytest.mark.parametrize('source_kind', ['publication', 'snapshot'])
+@pytest.mark.parametrize('same_content', [True, False])
+def test_directory_child_and_final_file_compare_actual_bytes(tmp_path, source_kind, same_content):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    bundle = host.root / 'bundle'
+    bundle.mkdir()
+    (bundle / 'source.txt').write_text('Frozen measurements', encoding='utf-8')
+    if source_kind == 'publication':
+        source = host.call('publish', status='complete', summary='bundle', gaps=[], knowledge_refs=[],
+            items=[{'item_id':'bundle','kind':'directory','source_path':'bundle'}])
+        ref = f"pub/{source['publication_id']}#bundle/source.txt"
+    else:
+        source = host.call('snapshot', paths=['bundle'])
+        ref = f"{source['snapshot_id']}#bundle/source.txt"
+    claim = host.call('memory_write', action='record', fields={'kind':'claim','statement':'Measured',
+        'visibility':'project','evidence_refs':[ref]})
+    host.call('conclusion_contract', contract='evidence-v1')
+    deliver_material(host, ref)
+    view = host.call('query', collection='evidence', refs=[claim['ref']])
+    draft = host.call('conclusion_prepare', model_call=True, fields={**fields([claim['ref']]),'snapshot_id':view['snapshot_id']})
+    (host.root / 'final.txt').write_text('Frozen measurements' if same_content else 'Distinct final report', encoding='utf-8')
+    publication = host.call('publish', status='complete', summary='final', gaps=[], knowledge_refs=[claim['ref']],
+        items=[{'item_id':'report','kind':'report','source_path':'final.txt'}], draft_id=draft['draft_id'], report_item_id='report')
+    args = {'fields':{'draft_id':draft['draft_id'],'final_ref':f"pub/{publication['publication_id']}#report",'summary':'Answer'},
+            'delivery_receipts':deliver_draft(host,draft['draft_id']), 'plugin_instance_id':'plugin-1'}
+    if same_content:
+        assert 'cannot be treated as evidence for its own core claims' in host.error('conclude', **args)
+    else:
+        assert host.call('conclude', **args)['outcome'] == 'answered'
+
+
+def test_review_cannot_copy_a_directory_child_as_an_independent_report(tmp_path):
+    from test_r2_runtime import obligations
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    bundle = host.root / 'bundle'
+    bundle.mkdir()
+    (bundle / 'data.txt').write_text('Measured source', encoding='utf-8')
+    source = host.call('publish', status='complete', summary='bundle', gaps=[], knowledge_refs=[],
+        items=[{'item_id':'bundle','kind':'directory','source_path':'bundle'}])
+    ref = f"pub/{source['publication_id']}#bundle/data.txt"
+    claim = host.call('memory_write', action='record', fields={'kind':'claim','statement':'Measured',
+        'visibility':'project','evidence_refs':[ref]})
+    host.call('review_scope_set', refs=[claim['ref']], reason='review')
+    store = host.service.stores[str(host.root)]
+    obligation = next(row for row in obligations(store) if row['target_ref'] == claim['ref'])
+    review = host.call('publish', status='complete', summary='review', gaps=[], knowledge_refs=[],
+        items=[{'item_id':'review','kind':'text','source_path':'bundle/data.txt'}])
+    error = host.error('relate', contract_version='r2-v1', source_ref=f"pub/{review['publication_id']}#review",
+        target_ref=claim['ref'], obligation_id=obligation['obligation_id'], label='reviews', note='same source',
+        result='supports', complete=True, review_type='citation_scope')
+    assert 'already a source' in error
+
+
+def test_publish_replay_and_invalid_input_do_not_freeze_an_appendix(completed, monkeypatch):
+    from auto_research.artifacts import ArtifactStore
+    host, _, _, _, claim, _ = completed
+    host.call('conclusion_contract', contract='evidence-v1')
+    view = host.call('query', collection='evidence', refs=[claim['ref']])
+    draft = host.call('conclusion_prepare', model_call=True, fields={**fields([claim['ref']]),'snapshot_id':view['snapshot_id']})
+    original = ArtifactStore.freeze
+    frozen = []
+    def freeze(self, path, allowed_root):
+        frozen.append(str(path))
+        return original(self, path, allowed_root)
+    monkeypatch.setattr(ArtifactStore, 'freeze', freeze)
+    args = {'model_call':True,'status':'complete','summary':'Final','gaps':[],'knowledge_refs':[claim['ref']],
+            'items':[{'item_id':'report','kind':'text','content':{'text':'Final report'}}],
+            'draft_id':draft['draft_id'],'report_item_id':'report','operation_id':'publish-once'}
+    first = host.call('publish', **args)
+    assert host.call('publish', **args) == first and len(frozen) == 1
+    assert 'complete report item' in host.error('publish', **{**args,'status':'partial','operation_id':'bad-publish'})
+    assert len(frozen) == 1

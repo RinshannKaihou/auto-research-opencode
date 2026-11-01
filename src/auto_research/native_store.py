@@ -1098,15 +1098,34 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
         }
         if draft_id is not None:
             payload.update(draft_id=draft_id, report_item_id=report_item_id)
+
+        def check_draft(db):
+            from .exploration_store import _main
+            run = _main(db, host_id, session_id)
+            draft = db.execute('SELECT * FROM conclusion_drafts WHERE draft_id=? AND generation=?',
+                               (draft_id, run['generation'])).fetchone()
+            if not draft or self._project(db)['config'].get('conclusion_contract') != 'evidence-v1':
+                raise ValidationError('Conclusion draft is unavailable for this generation')
+            if status != 'complete' or report_item_id not in seen or 'evidence-appendix' in seen:
+                raise ValidationError('A draft publication requires a complete report item and an available appendix id')
+            declared_core = set(json.loads(draft['data'])['evaluation']['core_claim_refs'])
+            report = next(item for item in normalized if item['item_id'] == report_item_id)
+            if report['object_kind'] == 'directory':
+                raise ValidationError('The final report must be readable content, not a directory')
+            if not declared_core.issubset(set(knowledge_refs) | set(report['knowledge_refs'])):
+                raise ValidationError('The final report must cite every declared core claim revision')
+            return draft
+
         appendix_product = None
         if draft_id is not None:
             from .artifacts import ArtifactStore
             from .evidence_conclusion import render_appendix
             with self._read() as db:
-                draft_row = db.execute('SELECT basis_digest,data FROM conclusion_drafts WHERE draft_id=?', (draft_id,)).fetchone()
-                if not draft_row:
-                    raise NotFoundError('Unknown conclusion draft')
-                appendix_text = render_appendix(draft_id, draft_row['basis_digest'], json.loads(draft_row['data']))
+                previous = db.execute('SELECT 1 FROM requests WHERE request_id=?', (request_id,)).fetchone()
+                draft_row = None if previous else check_draft(db)
+            if previous:
+                return self._mutate('publish', payload, request_id, lambda db: None)
+            appendix_text = render_appendix(draft_id, draft_row['basis_digest'], json.loads(draft_row['data']))
             with tempfile.TemporaryDirectory(prefix='appendix-', dir=self.meta) as directory:
                 path = Path(directory) / 'evidence-appendix.md'
                 path.write_text(appendix_text, encoding='utf-8')
@@ -1120,19 +1139,7 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             attempt = self._attempt(db, association["association_id"])
             draft = None
             if draft_id is not None:
-                from .exploration_store import _main
-                run = _main(db, host_id, session_id)
-                draft = db.execute('SELECT * FROM conclusion_drafts WHERE draft_id=? AND generation=?', (draft_id, run['generation'])).fetchone()
-                if not draft or self._project(db)['config'].get('conclusion_contract') != 'evidence-v1':
-                    raise ValidationError('Conclusion draft is unavailable for this generation')
-                if status != 'complete' or report_item_id not in seen or 'evidence-appendix' in seen:
-                    raise ValidationError('A draft publication requires a complete report item and an available appendix id')
-                declared_core = set(json.loads(draft['data'])['evaluation']['core_claim_refs'])
-                report = next(item for item in normalized if item['item_id'] == report_item_id)
-                if report['object_kind'] == 'directory':
-                    raise ValidationError('The final report must be readable content, not a directory')
-                if not declared_core.issubset(set(knowledge_refs) | set(report['knowledge_refs'])):
-                    raise ValidationError('The final report must cite every declared core claim revision')
+                draft = check_draft(db)
             for refs_to_check in [knowledge_refs, *(item["knowledge_refs"] for item in normalized)]:
                 if not isinstance(refs_to_check, list) or not all(isinstance(ref, str) for ref in refs_to_check):
                     raise ValidationError("knowledge_refs must be research reference strings")
