@@ -545,6 +545,9 @@ class QueryStore:
             ]
             return {
                 "schema_version": db.execute("PRAGMA user_version").fetchone()[0],
+                'exploration_closing_allowed': bool(db.execute('SELECT 1 FROM exploration_scopes s '
+                    'JOIN workflow_project p ON p.generation=s.generation WHERE p.id=1 LIMIT 1').fetchone())
+                    if db.execute('PRAGMA user_version').fetchone()[0] >= 13 else False,
                 "project": project,
                 "association": dict(association) if association else None,
                 "attempt": {**dict(attempt), "details": json.loads(attempt["details"])}

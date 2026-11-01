@@ -169,6 +169,15 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
                       )}
                     </For>
                   </Section>
+                  <Show when={conclusion().closure}>
+                    <Section context={props.context} title="证据与停止">
+                      <text fg={colors.base}>{`证据状态  ${conclusion().closure}`}</text>
+                      <text fg={colors.base}>{`停止理由  ${conclusion().stopReason ?? '未记录'}`}</text>
+                      <Show when={conclusion().appendixRef}>
+                        <text fg={colors.link}>{`证据附录  ${conclusion().appendixRef}`}</text>
+                      </Show>
+                    </Section>
+                  </Show>
                 </>
               )}
             </Show>
@@ -209,6 +218,9 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
               </Show>
             </text>
             <For each={model().notices}>{(notice) => <text fg={colors.warning}>{notice}</text>}</For>
+            <Show when={model().exploration}>
+              {(exploration) => <text fg={colors.base}>{`当前选择  ${exploration().objective} · 候选 ${exploration().routesTotal} · 待处理结果 ${exploration().pendingTotal}`}</text>}
+            </Show>
             <text wrapMode="none" marginTop={1}>
               <For each={model().counts}>
                 {(count) => (

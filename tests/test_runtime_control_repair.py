@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from auto_research.errors import ConflictError, ResearchControlError, ResearchExecutionUnverified
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research import schema12
 from test_opencode_host import Host
 
@@ -75,13 +75,13 @@ def test_schema11_migration_preserves_history_and_original_receipts(tmp_path):
     upgraded = NativeStore(host.root)
     assert upgraded.workflow("opencode", "ses_main", "task", {"node_id": node_id}, "original-dispatch") == task
     with upgraded._read() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == event_count
         assert db.execute("SELECT control_revision FROM workflow_project").fetchone()[0] == 0
     with sqlite3.connect(store.meta / "schema-11-backup.sqlite3") as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 11
         assert backup.execute("SELECT COUNT(*) FROM events").fetchone()[0] == event_count
-    schema12.migrate_schema12(store.db_path)
+    schema12.migrate_schema12(store.meta / "schema-12-backup.sqlite3")
 
 
 def test_control_revision_tracks_run_and_session_changes(tmp_path):

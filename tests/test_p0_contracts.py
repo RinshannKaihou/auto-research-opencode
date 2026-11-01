@@ -274,11 +274,11 @@ def test_schema9_readonly_and_upgrade_keep_historical_completion(tmp_path):
     assert 'not_recorded' in readonly.context_view('opencode', 'ses_main')['text']
     store = NativeStore(host.root)
     state = store.control_state('opencode', 'ses_main')
-    assert state['schema_version'] == SCHEMA_VERSION == 12
+    assert state['schema_version'] == SCHEMA_VERSION
     assert state['workflow']['run']['state'] == 'complete' and state['workflow']['conclusion'] is None
     with store._read() as db:
         assert [tuple(r) for r in db.execute('SELECT * FROM node_checkpoints')] == original
     with sqlite3.connect(host.root / '.research/schema-9-backup.sqlite3') as db:
         assert db.execute('PRAGMA user_version').fetchone()[0] == 9
-    from auto_research.schema12 import migrate_schema12
-    migrate_schema12(store.db_path)  # latest migration is idempotent
+    from auto_research.schema15 import migrate_schema15
+    migrate_schema15(store.db_path)  # latest migration is idempotent

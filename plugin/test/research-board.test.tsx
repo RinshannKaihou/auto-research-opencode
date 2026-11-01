@@ -13,7 +13,7 @@ const file = { ref: target, publication_id: "P-007", item_id: "final_report_v2",
 const knowledge = (i: number) => ({ ref: `knowledge/K-${String(i).padStart(3, "0")}@1`, kind: "claim", status: "working", node_id: "X-001", statement: `发现 ${i} under controlled conditions`, scope: { dataset: "fixture-v1" }, conditions: { boundary: "完整条件。".repeat(80) }, evidence_refs: [target], dependencies: [], supersedes: [], field_checks: [] })
 
 type Command = { bind: string; enabled?: () => boolean; run(): void }
-async function mounted(width = 132, folder = false, beforeRead?: (view: string, fields: any) => Promise<void>) {
+async function mounted(width = 132, folder = false, beforeRead?: (view: string, fields: any) => Promise<void>, withRoutes = false) {
   let layer!: () => { commands: Command[] }
   const calls: any[] = []
   const opened: string[] = []
@@ -31,7 +31,7 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
   const fakeBoard = async ({ view, fields: f = {} }: any) => {
     calls.push({ view, ...f })
     await beforeRead?.(view, f)
-    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 },runtime_budget:{available:true,turns:3,total_nodes:101,unconfirmed_reservations:1,limits:{max_session_turns:8,max_total_nodes:120,max_tokens:2000},tokens_observed:420,cost_observed:null,deadline_at:'2026-10-31T12:00:00Z'} }
+    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 },runtime_budget:{available:true,turns:3,total_nodes:101,unconfirmed_reservations:1,limits:{max_session_turns:8,max_total_nodes:120,max_tokens:2000},tokens_observed:420,cost_observed:null,deadline_at:'2026-10-31T12:00:00Z'}, ...(withRoutes ? {exploration:{objective:'尾延迟优化',routes_total:1,pending_results_total:1,routes:[]}} : {}) }
     if (view === "presentation") return { status: "missing" }
     if (view === "reference_chunk") {
       const value = f.ref === "X-001" ? { node_id: "X-001", question: "Q" } : f.ref.startsWith("knowledge/") ? knowledge(Number(/K-(\d+)/.exec(f.ref)![1])) : { ...file, ref: f.ref, ...(folder ? { source_path: "materials", object_kind: "directory" } : {}) }
@@ -54,6 +54,9 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
     if (view === "page") {
       const after = f.cursor?.after ?? f.after ?? 0, count = f.limit ?? 100
       if (f.collection === "nodes") return { items: [{ node_id: "X-001", question: "Q" }], cursor: null }
+      if (f.collection === 'exploration_routes') return {items:[{ref:'explore/route/ER-001@1',route_id:'ER-001',revision:1,
+        title:'服务回放',rationale:'直接观察目标指标',critical_assumption:'负载具有代表性',disposition:'deferred',
+        disposition_reason:'数据暂不足',reactivation_condition:'补充负载数据',evidence_refs:[target]}],total:1,cursor:null}
       if (f.collection === "sessions") return { items: [{ session_id: "main", role: "main", detached: false }], cursor: null }
       if (f.collection === "critical_now") return {
         items: Array.from({ length: Math.min(count, 101 - after) }, (_, i) => ({ ...risk, target: after + i === 0 ? target : `pub/P-${after + i + 10}`, expand: { ref: after + i === 0 ? target : `pub/P-${after + i + 10}` } })),
@@ -81,6 +84,22 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
   await flush()
   return { screen, press, flush, calls, opened, changed: () => changed(), closed: () => closed, keys: () => layer().commands.map((v) => v.bind), frame: () => screen.captureCharFrame() }
 }
+
+test.each([80, 132])('exploration routes remain in the research view at %i columns', async width => {
+  const ui = await mounted(width, false, undefined, true)
+  try {
+    expect(ui.frame()).toContain('尾延迟优化')
+    await ui.press('2')
+    await ui.press('b')
+    expect(ui.frame()).toContain('服务回放')
+    expect(ui.frame()).toContain('暂缓')
+    expect(ui.frame()).toContain('负载具有代表性')
+    expect(ui.frame()).not.toContain('"disposition"')
+    expect(ui.calls.some(call => call.collection === 'exploration_routes')).toBe(true)
+    await ui.press('b')
+    expect(ui.frame()).toContain('X-001')
+  } finally { ui.screen.renderer.destroy() }
+})
 
 test.each([80, 132])("risk view at %i columns explains unknown coverage and opens original report", async (width) => {
   const ui = await mounted(width)

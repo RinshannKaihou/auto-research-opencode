@@ -1,0 +1,18 @@
+{
+  "exploration_intents_after": 1,
+  "exploration_intents_before": 1,
+  "host_process_changed": true,
+  "node_count_after": 2,
+  "node_count_before": 2,
+  "scenario": "restart",
+  "state_after_restart": "paused",
+  "tasks_after_restart": [
+    "unverified",
+    "queued"
+  ],
+  "tasks_after_resume": [
+    "unverified",
+    "queued"
+  ],
+  "used_external_model": false
+}

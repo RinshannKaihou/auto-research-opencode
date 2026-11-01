@@ -451,6 +451,10 @@ class RuntimeStore:
                 raise ValidationError('The task does not belong to this coordinator')
             if task['state'] != 'queued':
                 return {'claimed': False, 'reason': 'already_claimed', 'state': task['state']}
+            from .exploration_store import check_exploration_task
+            check = check_exploration_task(self, db, task_id)
+            if not check['allowed']:
+                return {'claimed': False, 'reason': check['reason'], 'state': check['state']}
             active = db.execute("SELECT COUNT(*) FROM exploration_tasks WHERE state IN ('starting','running','stopping','unverified')").fetchone()[0]
             if active >= concurrency:
                 return {'claimed': False, 'reason': 'capacity', 'state': 'queued'}
@@ -530,9 +534,11 @@ class RuntimeStore:
                                  (host, session)).fetchone()
             notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=? AND recipient=?',
                                 (notification_id, session)).fetchone()
+            exploration = notice and notice['kind'] == 'exploration_result'
+            matched = notice and (notice['task_id'] in json.loads(current['waiting']) or exploration and notice['task_id'] is None)
             if (actor['pause_reason'] != 'wait' or not notice or notice['state'] != 'delivered'
-                    or notice['kind'] not in {'finished', 'stopped', 'failed', 'unknown'}
-                    or notice['task_id'] not in json.loads(current['waiting'])):
+                    or notice['kind'] not in {'finished', 'stopped', 'failed', 'unknown', 'exploration_result'}
+                    or not matched or exploration and not self._exploration_notice_pending(db, notice)):
                 raise ConflictError('The coordinator is not waiting for this delivered result')
             if previous:
                 details = json.loads(previous['details'])
@@ -556,12 +562,21 @@ class RuntimeStore:
             details = json.loads(row['details'])
             if details['host'] != host or details['message_id'] != message_id:
                 raise ConflictError('Coordinator wake confirmation does not match')
+            notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=?', (details['notification_id'],)).fetchone()
+            if notice and notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                raise ConflictError('Exploration result is no longer pending')
             db.execute("UPDATE workflow_sessions SET waiting='[]',pause_reason=NULL WHERE host_id=? AND session_id=? AND pause_reason='wait'",
                        (host, session))
             db.execute("UPDATE workflow_intents SET state='delivered',updated_at=? WHERE intent_id=?", (timestamp(), intent_id))
             self._event(db, 'runtime.wake_delivered', {'intent_id': intent_id})
             return {'intent_id': intent_id, 'state': 'delivered'}
         return self._mutate('runtime.wake_confirm', payload, operation, work)
+
+    @staticmethod
+    def _exploration_notice_pending(db, notice):
+        return bool(db.execute('SELECT 1 FROM exploration_results r JOIN exploration_scopes s ON s.scope_id=r.scope_id '
+            'JOIN workflow_project p ON p.generation=s.generation WHERE p.id=1 AND r.result_id=? '
+            'AND r.handled_by_decision IS NULL AND p.main_session_id=?', (notice['reference'], notice['recipient'])).fetchone())
 
     def notification_begin(self, host, session, notification_id, operation, text=None):
         """Reserve a stable host message before attempting delivery once."""
@@ -576,6 +591,9 @@ class RuntimeStore:
                                 (notification_id, session)).fetchone()
             if not role or role['role'] != 'main' or role['detached'] or not notice:
                 raise ValidationError('Notification does not belong to the current coordinator')
+            if notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
+                return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
             intent_id = 'notification:' + notification_id
             previous = db.execute('SELECT * FROM workflow_intents WHERE intent_id=?', (intent_id,)).fetchone()
             if previous:
@@ -795,6 +813,25 @@ class RuntimeStore:
         intent = {key:value for key,value in fields.items() if key!='request_key'}
         return self._mutate('runtime.native_event',dict(host=host,session=session,fields=intent),operation,work)
 
+    def runtime_tool_observed(self, host, session, tool, call_id, operation):
+        """Record only host-observed executable tool completion, without its input or output."""
+        if tool not in {'bash', 'shell', 'python', 'terminal'} or not isinstance(call_id, str) or not call_id:
+            raise ValidationError('An observed executable tool and call identity are required')
+        payload = {'host':host, 'session':session, 'tool':tool, 'call_id':call_id}
+        def work(db):
+            role = db.execute('SELECT role FROM workflow_sessions WHERE host_id=? AND session_id=? AND detached=0',
+                              (host, session)).fetchone()
+            context = self._invocation_context(db, host, session)
+            if not role or role['role'] != 'node_core' or not context['attempt_id']:
+                return {'recorded':False}
+            key = f'tool:{host}:{session}:{call_id}'
+            details = {'tool':tool, 'status':'completed', 'generation':context['generation'], 'binding':'frozen'}
+            db.execute('INSERT OR IGNORE INTO usage_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (str(uuid4()), key, context['association_id'], context['attempt_id'], context['node_id'],
+                        'tool_execution', None, None, None, 'unknown', json.dumps(details), timestamp()))
+            return {'recorded':True, 'source_key':key}
+        return self._mutate('runtime.tool_observed', payload, operation, work)
+
     def runtime_budget_set(self, host, session, limits, reason, operation):
         if not isinstance(limits, dict) or set(limits)-LIMITS or not isinstance(reason,str) or not reason.strip():
             raise ValidationError('Explicit runtime limits and reason required')
@@ -807,7 +844,7 @@ class RuntimeStore:
             before = config.get('runtime_budget', {})
             updated = {**before, **limits}
             config['runtime_budget'] = updated
-            db.execute('UPDATE project SET config=?', (json.dumps(config),))
+            self._set_project_config(db, config)
             run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
             if run:
                 stored = db.execute('SELECT started_at FROM runtime_budgets WHERE generation=?', (run[0],)).fetchone()
@@ -853,6 +890,10 @@ class RuntimeStore:
                                     (wake_intent_id, session)).fetchone()
                 if not intent or intent['state'] != 'submitting' or json.loads(intent['details'])['host'] != host:
                     raise ConflictError('Coordinator wake is not authorized')
+                notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=?',
+                                    (json.loads(intent['details'])['notification_id'],)).fetchone()
+                if notice and notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                    raise ConflictError('Exploration result is no longer pending')
             if launch_intent_id:
                 launch = db.execute("SELECT * FROM workflow_intents WHERE intent_id=? AND kind='node_launch'",
                                     (launch_intent_id,)).fetchone()
@@ -916,6 +957,8 @@ class RuntimeStore:
             state = view(self,db,host,session)
             if not state['expired'] or state['run_state'] != 'running':
                 return {'stopped':False,**state}
+            affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
+                "WHERE state IN ('queued','starting','running','waiting','stopping')"))
             db.execute("UPDATE workflow_project SET state='paused' WHERE id=1")
             db.execute("UPDATE project SET control='paused'")
             db.execute("UPDATE exploration_tasks SET state='cancelled',error='wall_clock_budget: queued request cancelled',updated_at=? WHERE state='queued'",(timestamp(),))
@@ -923,6 +966,10 @@ class RuntimeStore:
             db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0 WHERE state IN ('starting','running')")
             db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (timestamp(),))
             db.execute("UPDATE workflow_sessions SET pause_reason='budget' WHERE detached=0")
+            for task in affected_tasks:
+                outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
+                self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
+                    outcome, None, {'task_id': task['task_id'], 'reason': 'budget_exhausted'})
             self._event(db,'runtime.budget_exhausted',state)
             return {'stopped':True,**state}
         return self._mutate('runtime.budget_stop',dict(host=host,session=session),operation,work)
@@ -975,6 +1022,8 @@ class RuntimeStore:
                     meaningful |= duplicates==1
                 elif mine=='project' and kind=='project.concluded':
                     meaningful = True
+                elif mine=='project' and kind=='exploration.decided':
+                    meaningful |= data.get('actor')=={'host_id':host,'session_id':session} and bool(data.get('result_ids'))
                 elif kind=='review.scope_changed':
                     meaningful |= data['actor'].get('host_id')==host and data['actor'].get('session_id')==session and bool(data['added'])
                 elif kind == 'review.completed':

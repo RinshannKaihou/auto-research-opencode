@@ -8,7 +8,7 @@ import type { Spec } from "./schema"
 import { coordinatorMayUseNative } from "./coordinator-boundary"
 
 export type Role = "main" | "node_core" | "specialist"
-export type EngineAction = "dispatch" | "wait" | "finish" | "conclude" | "delegate" | "delegate_batch"
+export type EngineAction = "dispatch" | "wait" | "finish" | "conclude" | "delegate" | "delegate_batch" | "exploration_decide"
 
 export interface ToolDefinition {
   name: string
@@ -33,14 +33,17 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read bounded research state, fixed references, or paged collections. A checkpoint normally uses its delivered base automatically; on checkpoint_base_required read collection="checkpoint" for full current-owner state and return base unchanged. review_obligations contains exact current tasks, review_candidates is optional event backlog, review_events is history; filter by scope_owner/generation/target_ref/state/change_id as applicable. adoptions lists explicit and derived uses. critical_now/findings/completed_findings expose risks and discoveries, including completed nodes with no finding. Return cursor objects unchanged; conflicting filters or changed mutable views require explicit refresh. Legacy review_todos/hints remain queryable. Use ref for full scope, conditions and stored checks; offset/limit and expected_digest expand long references. Hints describe current state, not historical replay.',
+      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history. A read proves delivery, not scientific understanding.',
     parameters: {
       expected_digest: { type: "string" },
       scope_owner:{type:'string'},generation:{type:'number'},target_ref:{type:'string'},change_id:{type:'string'},obligation_id:{type:'string'},
       state: { type: "string" }, trigger_kind: { type: "string" },
       cursor: { type: "object", additionalProperties: true, properties: {} },
       decision_refs: { type: "array", items: { type: "string" } }, final_ref: { type: "string" },
-      ref: { type: "string" }, query: { type: "string" }, collection: { type: "string" },
+      ref: { type: "string" }, refs: { type: "array", items: { type: "string" } },
+      material_ref: { type: "string" },
+      draft_id: { type: "string" },
+      snapshot_id: { type: "string" }, query: { type: "string" }, collection: { type: "string" },
       node_id: { type: "string" }, kind: { type: "string" }, after: { type: "number" },
       status: { type: "string" }, revision: { type: "number" },
       conditions: { type: "object", additionalProperties: true, properties: {} },
@@ -188,10 +191,12 @@ export const TOOLS: ToolDefinition[] = [
     method: "publish",
     writes: true,
     description:
-      "Publish an immutable partial or complete stage. Zero-experiment and empty-findings publications are valid. When possible include display: a short title, overview and grouped points in the research goal language; distinguish findings, untested hypotheses and limitations. Keep the detailed account in summary/report; do not call another model to format it. Display is optional for compatibility.",
+      "Publish an immutable partial or complete stage. For an evidence-v1 final report supply draft_id, report_item_id, and exact core claim knowledge_refs; the evidence appendix is generated from the draft. Zero-experiment and empty-findings publications are valid. Display is optional; distinguish findings, hypotheses and limitations.",
     parameters: {
       status: { type: "string", required: true, enum: ["partial", "complete"] },
       summary: { type: "string", required: true },
+      draft_id: { type: 'string', description: 'For an evidence-v1 final report, bind the prepared conclusion draft and generate its evidence appendix.' },
+      report_item_id: { type: 'string', description: 'The item_id of the final report when draft_id is supplied.' },
       display: {
         type: "object",
         properties: {
@@ -248,6 +253,8 @@ export const TOOLS: ToolDefinition[] = [
       input_refs:{type:'array',items:{type:'string'}},revision:{type:'object',additionalProperties:true,properties:{}},
       obligation_id:{type:'string'},change_id:{type:'string'},result:{type:'string',enum:['supports','challenges','inconclusive']},
       complete:{type:'boolean'},evidence_refs:{type:'array',items:{type:'string'}},
+      review_type:{type:'string',enum:['citation_scope','semantic_inference','recompute','reimplementation','adversarial_test']},
+      specialist_task_id:{type:'string'},limitations:{type:'array',items:{type:'string'}},
     },
     fields: args => ({...args,contract_version:'r2-v1'}),
   },
@@ -296,6 +303,68 @@ TOOLS.push(
 TOOLS.push({name:'research_review_scope',roles:['main'],method:'review_scope_set',writes:true,
   description:'Explicitly replace the project synthesis review scope with fixed adopted references and a reason. Empty refs clears the scope; it does not dispose scientific risks. No checkpoint is needed.',
   parameters:{refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true}},fields:same})
+
+TOOLS.push(
+  { name:'research_prepare_conclusion', roles:['main'], method:'conclusion_prepare', writes:true,
+    description:'Prepare an evidence-v1 conclusion from a current evidence snapshot. Declare exact core claim versions, outcome, risk judgments, review requirements and why exploration stops. Read every page of the returned draft before publishing its final report.',
+    parameters:{snapshot_id:{type:'string',required:true},core_claim_refs:{type:'array',required:true,items:{type:'string'}},
+      outcome:{type:'string',required:true,enum:['answered','partial','unresolved']},gaps:{type:'array',required:true,items:{type:'string'}},
+      risk_judgments:{type:'array',required:true,items:{type:'object',additionalProperties:false,properties:{
+        risk_id:{type:'string'},risk_ids:{type:'array',items:{type:'string'}},core_impact:{type:'string',required:true,enum:['yes','no','unknown']},
+        disposition:{type:'string',required:true,enum:['handled','unresolved']},reason:{type:'string',required:true},
+        evidence_refs:{type:'array',items:{type:'string'}},gap:{type:'string'},
+      }}},
+      review_requirements:{type:'array',required:true,items:{type:'object',additionalProperties:false,properties:{
+        target_ref:{type:'string',required:true},types:{type:'array',required:true,items:{type:'string',enum:['citation_scope','semantic_inference','recompute','reimplementation','adversarial_test']}},
+        independent:{type:'boolean'},reason:{type:'string'},
+      }}},
+      scope_change:{type:'object',additionalProperties:false,description:'Required when removing a previously declared core claim.',properties:{
+        reason:{type:'string',required:true},excluded_impact:{type:'string',required:true},
+      }},
+      exploration_stop:{type:'object',required:true,additionalProperties:true,properties:{
+        reason_kind:{type:'string',required:true,enum:['goal_met','sufficient_for_current_choice','low_expected_value','resource_limited','user_requested']},
+        reason:{type:'string',required:true},unprocessed_results:{type:'array',items:{type:'string'}},
+        route_judgments:{type:'array',items:{type:'object',additionalProperties:false,properties:{
+          route_refs:{type:'array',required:true,items:{type:'string'}},reason:{type:'string',required:true},
+          reactivation_condition:{type:'string',required:true},
+        }}},
+      }}},
+    fields:args=>({fields:args}) },
+  { name:'research_scope', roles:['main'], method:'exploration_scope', writes:true,
+    description:'Create or revise the current exploration scope. On revision supply the current scope_ref and a reason. Changes to objective or constraints create a new goal version.',
+    parameters:{scope_ref:{type:'string'},reason:{type:'string'},
+      changes:{type:'object',required:true,additionalProperties:false,properties:{
+        objective:{type:'string'},task_kind:{type:'string',enum:['delivery','selection','discovery']},
+        question_refs:{type:'array',items:{type:'string'}},constraints:{},comparison_basis:{},
+        baseline_refs:{type:'array',items:{type:'string'}},budget_policy:{},
+      }}}, fields:args=>({fields:args}) },
+  { name:'research_route', roles:['main'], method:'exploration_route', writes:true,
+    description:'Save a candidate route without creating a node. Supply scope_ref; for edits also supply the current route_ref and a reason. Disposition is set by a decision.',
+    parameters:{scope_ref:{type:'string',required:true},route_ref:{type:'string'},reason:{type:'string'},
+      changes:{type:'object',required:true,additionalProperties:false,properties:{
+        title:{type:'string'},rationale:{type:'string'},critical_assumption:{type:'string'},
+        hypothesis_refs:{type:'array',items:{type:'string'}},baseline_refs:{type:'array',items:{type:'string'}},
+        evidence_refs:{type:'array',items:{type:'string'}},next_probe:{},cost_estimate:{},reactivation_condition:{},
+      }}}, fields:args=>({fields:args}) },
+  { name:'research_decide', roles:['main'], engine:'exploration_decide', writes:true,
+    description:'Record a decision after reading collection=evidence. Use its snapshot_id, the current scope and route revisions, and the result IDs actually considered. Optionally schedule one bounded probe; existing budgets and node execution apply.',
+    parameters:{scope_ref:{type:'string',required:true},snapshot_id:{type:'string',required:true},
+      route_refs:{type:'array',required:true,items:{type:'string'}},result_ids:{type:'array',items:{type:'string'}},
+      action:{type:'string',required:true,enum:['probe','deepen','redirect','defer','recommend_combine','propose_stop']},
+      reason:{type:'string',required:true},route_changes:{type:'array',items:{type:'object',additionalProperties:false,properties:{
+        route_ref:{type:'string',required:true},disposition:{type:'string',required:true,enum:['untried','investigating','deferred','excluded','adopted','combination_proposed']},
+        reason:{type:'string',required:true},reactivation_condition:{type:'string'},evidence_refs:{type:'array',items:{type:'string'}},
+      }}},
+      missing_results:{type:'array',items:{}},remaining_options:{type:'array',items:{}},
+      supersede_intent_ids:{type:'array',items:{type:'string'}},
+      next_work:{type:'object',additionalProperties:false,properties:{
+        route_refs:{type:'array',required:true,items:{type:'string'}},question:{type:'string',required:true},
+        why_now:{type:'string',required:true},plan:{type:'string',required:true},root_reason:{type:'string'},
+        predecessors:{type:'array',items:{type:'object',additionalProperties:true,properties:{}}},
+        inputs:{type:'array',items:{type:'string'}},work_kind:{type:'string',enum:['scout','probe','deepen']},strategy:{type:'string',enum:['continue','redirect','anchor']},
+        anchor_ref:{type:'string'},question_ref:{type:'string'},
+      }}}, fields:same },
+)
 
 /** One specialist task; the names follow the DSH plugin's research_delegate. */
 const SPECIALIST_TASK: Record<string, Spec> = {
@@ -364,14 +433,15 @@ TOOLS.push(
     engine: "conclude",
     writes: true,
     description:
-      "End research execution with an explicit outcome, gaps, and self-declared review coverage after publishing a complete final report. Complete means delivery, not scientific verification. Partial/unresolved outcomes need gaps. Unreviewed/partial review needs limitations; partial/reviewed review needs frozen material refs. Refused while work is live. Pending historical reviews and open questions do not by themselves block conclusion.",
+      "End research execution after publishing a complete final report. For evidence-v1, provide draft_id and final_ref after reading the complete draft and publishing its bound report; outcome and review are derived from the draft. Legacy projects provide outcome, gaps and self-declared review. Refused while work is live.",
     parameters: {
       summary: { type: "string", required: true },
       final_ref: { type: "string", required: true, description: "Reference of the final report publication, for example pub/P-004 or pub/P-004#report." },
-      outcome: { type: "string", required: true, enum: ["answered", "partial", "unresolved"] },
-      gaps: { type: "array", required: true, items: { type: "string" } },
+      draft_id: { type: "string" },
+      outcome: { type: "string", enum: ["answered", "partial", "unresolved"] },
+      gaps: { type: "array", items: { type: "string" } },
       review: {
-        type: "object", required: true, additionalProperties: false,
+        type: "object", additionalProperties: false,
         properties: {
           status: { type: "string", required: true, enum: ["unreviewed", "partial", "reviewed"] },
           refs: { type: "array", required: true, items: { type: "string" } },

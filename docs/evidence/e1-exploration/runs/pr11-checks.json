@@ -1,0 +1,30 @@
+{
+  "source_commit": "4cbafee3c21be1b8de0e99184d5663c2e84c769c",
+  "generated_at_utc": "2026-11-01T07:29:16.318453+00:00",
+  "python": {
+    "command": "python3 -m pytest -q",
+    "passed": 691,
+    "failed": 0
+  },
+  "bun": {
+    "command": "bun test (in plugin/)",
+    "passed": 163,
+    "failed": 0
+  },
+  "typescript": {
+    "command": "bun run typecheck (in plugin/)",
+    "result": "passed"
+  },
+  "diff_check": {
+    "command": "git diff --check 324f2ed2ad15e88dc6ab39a50f2a3762023f8379 HEAD; staged changes separately",
+    "result": "passed"
+  },
+  "host_commands": [
+    "python3 scripts/probe_e1e2_run.py --scenario full",
+    "python3 scripts/probe_e1e2_run.py --scenario stale",
+    "python3 scripts/probe_e1e2_run.py --scenario off",
+    "python3 scripts/probe_e1e2_run.py --scenario restart",
+    "python3 scripts/probe_packed_release.py --e1e2"
+  ],
+  "host_model": "local scripted provider; no external model"
+}

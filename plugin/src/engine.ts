@@ -46,6 +46,7 @@ export interface SessionHost {
 export interface ConclusionInput {
   summary: string
   final_ref: string
+  draft_id?: string
   outcome: "answered" | "partial" | "unresolved"
   gaps: string[]
   review: { status: "unreviewed" | "partial" | "reviewed"; refs: string[]; limitations: string[] }
@@ -58,7 +59,7 @@ const IDLE_LIMIT = 3
 const ACTIVE_TASK = new Set(["starting", "running", "stopping", "unverified"])
 const LIVE_TASK = new Set(["queued", ...ACTIVE_TASK, "waiting"])
 /** Node reports that end a wait; a publication notice is delivered without waking. */
-const WAKING = new Set(["finished", "stopped", "failed", "unknown"])
+const WAKING = new Set(["finished", "stopped", "failed", "unknown", "exploration_result"])
 const NOTICE_OUTCOME: Record<string, string> = {
   finished: "已完成",
   stopped: "受阻停止",
@@ -396,6 +397,9 @@ export class Engine {
 
   private async noticeText(root: string, notice: any): Promise<string> {
     const payload = notice.payload ?? {}
+    if (notice.kind === 'exploration_result') {
+      return `探索工作未启动：${payload.reason}。待处理结果 ${payload.result_id}；请读取探索结果并决定下一步。`
+    }
     const pubs = await this.research.storage
       .request("project_read", { root, view: "page", collection: "publications", node_id: payload.node_id, limit: 5 })
       .catch(() => null)
@@ -450,7 +454,7 @@ export class Engine {
     }
     // A waited task may have ended before the coordinator started waiting.
     const wakeNotice = [...delivered, ...notices.filter((item: any) => item.state === "delivered")]
-      .find((item: any) => waiting.includes(item.task_id) && WAKING.has(item.kind))
+      .find((item: any) => WAKING.has(item.kind) && (waiting.includes(item.task_id) || item.kind === 'exploration_result' && !item.task_id))
     const canWake =
       wakeNotice && row?.pause_reason === "wait" && state.workflow?.run?.state === "running" && !this.busy.has(main)
     if (canWake) {
@@ -475,14 +479,26 @@ export class Engine {
   private async schedule(root: string): Promise<void> {
     const main = this.mainIn(root)
     if (!main) return
-    const state = await this.state(main)
+    let state = await this.state(main)
     if (state.workflow?.run?.state !== "running") return
+    let settled = false
+    if (state.project?.config?.exploration_policy === 'exploration-v1') {
+      const intents: string[] = await this.call('exploration_pending', main)
+      for (const intent_id of intents) {
+        const result: any = await this.call('exploration_materialize', main, { intent_id })
+        if (['stale','failed','cancelled'].includes(result.state)) settled = true
+        if (result.state === 'waiting_budget') await this.say(main, `探索工作等待预算：${result.reason}`).catch(() => {})
+      }
+      if (intents.length) state = await this.state(main)
+    }
     const tasks = await this.allTasks(main, state.workflow)
     let active = tasks.filter((task) => ACTIVE_TASK.has(task.state)).length
     for (const task of tasks.filter((item) => item.state === "queued")) {
       if (active >= this.concurrency) break
       try {
-        if (await this.startTask(root, main, task)) active++
+        const result = await this.startTask(root, main, task)
+        if (result === 'started') active++
+        if (result === 'settled') settled = true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if ((error as any)?.unsent_rolled_back) {
@@ -519,16 +535,17 @@ export class Engine {
           : `节点 ${task.node_id} 启动失败：${message}`).catch(() => {})
       }
     }
+    if (settled) await this.deliver(root)
   }
 
-  private async startTask(root: string, main: string, task: any): Promise<boolean> {
+  private async startTask(root: string, main: string, task: any): Promise<'started' | 'settled' | 'skipped'> {
     let workspace: string | null = task.cwd
     if (!workspace) {
       const prepared = await this.call("prepare_branch", main, { node_id: task.node_id }, `${task.task_id}:prepare`)
       workspace = prepared.workspace as string
     }
     const launch = await this.call("node_launch_claim", main, { task_id: task.task_id, concurrency: this.concurrency })
-    if (!launch.claimed) return false
+    if (!launch.claimed) return ['exploration_basis_changed','exploration_disabled'].includes(launch.reason) ? 'settled' : 'skipped'
     let createAttempted = false
     let createConfirmed = !!launch.reuse
     let kickoffAttempted = false
@@ -569,7 +586,9 @@ export class Engine {
           `固定输入：${inputs.length ? `${inputs.join("、")}（已放在 ${workspace}/inputs/，只读）` : "无"}`,
           `工作目录：${workspace}。先 cd 到这里；在 scratch/ 里做实验，把报告和数据放进 output/。`,
           "发布时 source_path 写相对这个工作目录的路径，例如 output/report.md。",
-          "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
+          ['scout','probe'].includes(context.purpose)
+            ? "只回答这个会影响选择的问题。可返回支持、反例、混合或信息不足；发布最小可读结果及固定依据，说明条件、未知和建议。受阻不等于反证；完成或受阻时调用 research_finish。"
+            : "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
         ].join("\n"),
         true,
         `开始节点 ${task.node_id}`,
@@ -582,7 +601,7 @@ export class Engine {
       // Inside the coordinator's own dispatch call the tool result already says this.
       if (!this.busy.has(main)) await this.say(main, `已启动节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`).catch(() => {})
       this.research.notifyChanged(root)
-      return true
+      return 'started'
     } catch (error) {
       const stage = (error as any)?.code === 'research_execution_unverified' ? undefined
         : !createConfirmed && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
@@ -598,6 +617,30 @@ export class Engine {
   }
 
   // ── Engine tools called by models ────────────────────────────────────────
+
+  explorationDecide(sessionID: string, fields: Record<string, unknown>, operationID: string): Promise<unknown> {
+    const root = this.research.requireAssociated(sessionID)
+    return this.serial(root, async () => {
+      const decision = await this.call<any>('exploration_decide', sessionID, { fields, model_call: true }, operationID)
+      this.research.notifyChanged(root)
+      if (!decision.intent_id) return decision
+      const state = await this.state(sessionID)
+      if (state.workflow?.run?.state !== 'running') return {...decision, work:{state:'pending',reason:'awaiting_auto'}}
+      const work = await this.call<any>('exploration_materialize', sessionID, {intent_id:decision.intent_id})
+      if (work.state === 'materialized') await this.schedule(root)
+      else if (['stale','failed','cancelled'].includes(work.state)) await this.deliver(root)
+      return {...decision, work}
+    })
+  }
+
+  explorationPolicy(sessionID:string,mode?:string | null): Promise<CommandResult> {
+    const root=this.research.requireAssociated(sessionID)
+    return this.serial(root,async()=>{
+      const result=await this.research.explorationPolicy(sessionID,mode)
+      if (mode==='off') await this.deliver(root)
+      return result
+    })
+  }
 
   dispatch(sessionID: string, nodeID: string, operationID: string): Promise<unknown> {
     const root = this.research.requireAssociated(sessionID)
@@ -692,15 +735,16 @@ export class Engine {
     return { message: "本轮结束后，节点本次执行结束，总结会交给主协调。", state: finish.state }
   }
 
-  conclude(sessionID: string, fields: ConclusionInput, operationID: string): Promise<unknown> {
+  conclude(sessionID: string, fields: ConclusionInput, operationID: string, deliveryReceipts: string[] = []): Promise<unknown> {
     const root = this.research.requireAssociated(sessionID)
     if (this.research.roleOf(sessionID) !== "main") throw new Error("只有主协调可以结束研究")
     return this.serial(root, async () => {
-      const conclusion = await this.call("conclude", sessionID, { fields, model_call: true }, operationID)
+      const conclusion = await this.call("conclude", sessionID, { fields, model_call: true,
+        ...(fields.draft_id ? { delivery_receipts: deliveryReceipts } : {}) }, operationID)
       let notification_warning: string | undefined
       try {
         this.research.notifyChanged(root)
-        await this.say(sessionID, `研究执行已结束，结果 ${conclusion.outcome}，最终报告 ${conclusion.final_ref}。审阅状态 ${conclusion.review.status} 为调用者声明，不表示结论通过。`)
+        await this.say(sessionID, `研究执行已结束，结果 ${conclusion.outcome}，最终报告 ${conclusion.final_ref}。审阅状态 ${conclusion.evidence ? conclusion.evidence.review_coverage.status + ' 为派生覆盖' : conclusion.review.status + ' 为调用者声明'}，不表示结论通过。`)
       } catch {
         notification_warning = "结项已保存，但会话通知发送失败；可通过状态或项目概览查看。"
       }

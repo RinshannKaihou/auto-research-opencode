@@ -4,7 +4,7 @@ import {CheckpointDelivery} from '../src/checkpoint-delivery'
 
 test('a transient capability failure is retried on the next call',async()=>{
   let calls=0
-  const storage:any={request:async()=>{if(++calls===1)throw new Error('startup timeout');return {memory_write_contract:'r2-v1',runtime_control_contract:'controller-launch-v1'}}}
+  const storage:any={request:async()=>{if(++calls===1)throw new Error('startup timeout');return {memory_write_contract:'r2-v1',runtime_control_contract:'controller-launch-v1',exploration_contract:'exploration-v1',evidence_contract:'evidence-v1',evidence_read:'snapshot-delivery-v2'}}}
   const research=new Research(storage,'/tmp',()=>false)
   await expect(research.ensureContract()).rejects.toThrow('startup timeout')
   await research.ensureContract();await research.ensureContract()

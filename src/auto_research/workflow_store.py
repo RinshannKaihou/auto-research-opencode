@@ -158,7 +158,13 @@ class WorkflowStore:
             "tasks": ("exploration_tasks", f"state IN {live} OR session_id=?", (session_id,)),
             "notifications": (
                 "workflow_notifications",
-                "state='pending' OR (state='delivered' AND task_id IN (SELECT j.value FROM workflow_sessions w,json_each(w.waiting) j WHERE w.detached=0 AND w.pause_reason IN ('wait','project_wait')))",
+                "state='pending' OR (state='delivered' AND task_id IN (SELECT j.value FROM workflow_sessions w,json_each(w.waiting) j WHERE w.detached=0 AND w.pause_reason IN ('wait','project_wait')))" +
+                (" OR (state='delivered' AND kind='exploration_result' AND task_id IS NULL "
+                 "AND EXISTS (SELECT 1 FROM workflow_sessions w WHERE w.session_id=recipient AND w.detached=0 AND w.pause_reason='wait') "
+                 "AND EXISTS (SELECT 1 FROM exploration_results r JOIN exploration_scopes s ON s.scope_id=r.scope_id "
+                 "JOIN workflow_project p ON p.generation=s.generation WHERE r.result_id=workflow_notifications.reference AND r.handled_by_decision IS NULL) "
+                 "AND NOT EXISTS (SELECT 1 FROM workflow_intents i WHERE i.intent_id='notification-wake:' || workflow_notifications.notification_id AND i.state='delivered'))"
+                 if db.execute('PRAGMA user_version').fetchone()[0] >= 15 else ''),
                 (),
             ),
             "intents": ("workflow_intents", "session_id=? AND kind='jobs'", (session_id,)),
@@ -290,7 +296,7 @@ class WorkflowStore:
             "session": next((s for s in sessions if s["session_id"] == session_id), None),
         }
 
-    def workflow(self, host_id, session_id, action, fields, operation_id):
+    def workflow(self, host_id, session_id, action, fields, operation_id, *, _db=None):
         payload = {"host_id": host_id, "session_id": session_id, "action": action, "fields": fields}
 
         def work(db):
@@ -359,6 +365,11 @@ class WorkflowStore:
                 }:
                     raise ValidationError("Invalid run state")
                 generation = view["run"]["generation"] + (1 if fields.get("new_generation") else 0)
+                if fields.get('new_generation') and db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                    from .conclusion_policy import set_contract
+                    config = self._project(db)['config']
+                    contract = 'evidence-v1' if config.get('exploration_policy') == 'exploration-v1' else 'legacy-v1'
+                    set_contract(db, generation, contract, 'new_generation')
                 if state == 'running':
                     from .runtime_budget import start
                     start(self, db, generation, at)
@@ -377,6 +388,8 @@ class WorkflowStore:
                 )
                 db.execute("UPDATE project SET control=?", (control,))
                 if state == "stopping":
+                    affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
+                        "WHERE state IN ('queued','starting','running','waiting','stopping')"))
                     db.execute(
                         "UPDATE exploration_tasks SET state='cancelled',updated_at=? WHERE state='queued'",
                         (at,),
@@ -387,6 +400,10 @@ class WorkflowStore:
                     )
                     db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0,error='stop: execution exit not verified',updated_at=? WHERE state IN ('starting','running')", (at,))
                     db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (at,))
+                    for task in affected_tasks:
+                        outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
+                        self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
+                            outcome, None, {'task_id': task['task_id'], 'reason': 'user_stop'})
             elif action == "session":
                 if not current:
                     raise NotFoundError("Session role is missing")
@@ -548,6 +565,10 @@ class WorkflowStore:
                         fields["task_id"],
                     ),
                 )
+                if fields["state"] in {"failed", "cancelled", "unverified"} and fields["state"] != task["state"]:
+                    self.exploration_record_result(db, task["node_id"],
+                        f"task:{task['task_id']}:{fields['state']}", fields["state"], None,
+                        {"task_id": task["task_id"], "error": fields.get("error")})
             elif action == "task_retry":
                 task = db.execute(
                     "SELECT * FROM exploration_tasks WHERE task_id=?", (fields["task_id"],)
@@ -627,7 +648,7 @@ class WorkflowStore:
                     (fields["state"], fields["notification_id"]),
                 )
             elif action == "intent":
-                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization"}:
+                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization", "exploration_work"}:
                     raise ValidationError("Typed runtime intents require their dedicated operation")
                 db.execute(
                     "INSERT INTO workflow_intents VALUES(?,?,?,?,?,?) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
@@ -657,6 +678,8 @@ class WorkflowStore:
             self._event(db, "workflow." + action, {"session_id": session_id, **fields})
             return self.workflow_control(db, session_id)
 
+        if _db is not None:
+            return work(_db)
         return self._mutate("workflow", payload, operation_id, work)
 
     def takeover_main(self, host_id, session_id, cwd, operation_id):

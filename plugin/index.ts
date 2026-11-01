@@ -151,7 +151,7 @@ export default Plugin.define({
       const message = state === 'ready' ? undefined : state === 'unresolved'
         ? `有 ${unresolved} 个事件会话归属待核对；已知会话继续按原授权控制。用 /research resume 重试核对。`
         : `研究事件需核对（${eventGap ? '事件流中断或溢出；' : ''}暂存 ${held} 条）；暂停和停止仍可用，用 /research resume 重新订阅并核对。`
-      return { state, held, unresolved, message }
+      return { state, held, unresolved, ...(message ? {message} : {}) }
     }
     notifyEventState = () => { for (const root of research.roots()) if (research.inScope(root)) emitChanged(root) }
     research.setExecutionResolver(sessionID => lifecycle.state.turns.get(sessionID))
@@ -324,7 +324,7 @@ export default Plugin.define({
         status:'started',execution_ref:`session:${request.sessionID}`,resource_usage:'unknown'})
     }
     await ctx.tool.hook('execute.before',beforeTool)
-    await ctx.tool.hook('execute.after',request => {
+    await ctx.tool.hook('execute.after',async request => {
       const key = `${request.sessionID}:${request.id}`
       const started = externalStarts.get(key)
       if (started===undefined) return
@@ -332,6 +332,16 @@ export default Plugin.define({
       const root = research.rootOf(request.sessionID)!
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
         status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
+      if (request.status === 'completed' && research.roleOf(request.sessionID) === 'node_core' &&
+          ['bash','shell','python','terminal'].includes(request.tool) && research.conclusionContractOf(request.sessionID)==='evidence-v1') {
+        const observed = await within(research.call('runtime_tool_observed', request.sessionID,
+          {tool:request.tool,call_id:request.id}, `tool-observed:${request.sessionID}:${request.id}`).catch(error => {
+            observations.append(root,{phase:'coverage_gap',source:'execution_observation',session_id:request.sessionID,
+              error_code:error.code ?? 'storage_unavailable'})
+          }), 2000)
+        if (!observed) observations.append(root,{phase:'coverage_gap',source:'execution_observation',session_id:request.sessionID,
+          error_code:'not_confirmed'})
+      }
     })
     const count = (value: unknown, fallback: number) => Math.max(1, Math.floor(Number(value ?? fallback)) || fallback)
     const engine = new Engine(research, host, count(options.concurrency, 1), lifecycle.state, lifecycle.current,
@@ -455,6 +465,19 @@ export default Plugin.define({
       if (tool.writes) await ensureController(root, main)
       const role = research.roleOf(sessionID)
       if (!tool.roles.includes(role as any)) throw new Error(`${tool.name} 不属于本会话的角色（${role ?? "未登记"}）`)
+      if (role === 'main') {
+        const confirmation=research.confirmMaterialDelivery(sessionID,call.messageID).catch(() => {})
+        const needsCurrentEvidence = tool.name === 'research_prepare_conclusion' || tool.name === 'research_conclude' ||
+          (tool.name === 'research_query' && args.collection === 'evidence')
+        if (needsCurrentEvidence) {
+          let timer:ReturnType<typeof setTimeout> | undefined
+          try {
+            const outcome=await Promise.race([confirmation.then(()=>'confirmed'),
+              new Promise<'timeout'>(resolve=>{timer=setTimeout(()=>resolve('timeout'),2000)})])
+            if (outcome==='timeout') research.evidenceDelivery.materialTimedOut(sessionID,call.messageID)
+          } finally { clearTimeout(timer) }
+        }
+      }
       if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
         const current = await research.call<any>("status", sessionID)
         const run = current.workflow?.run?.state
@@ -473,7 +496,10 @@ export default Plugin.define({
         case "finish":
           return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
         case "conclude":
-          return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID)
+          return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID,
+            research.evidenceDelivery.forCall(sessionID,call.messageID,call.id))
+        case "exploration_decide":
+          return engine.explorationDecide(sessionID, args, operationID)
         case "delegate":
           return specialists.delegate(sessionID, args as unknown as SpecialistTask, call.signal, operationID)
         case "delegate_batch":
@@ -573,8 +599,30 @@ export default Plugin.define({
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
           const pause = state.workflow?.session?.pause_reason
+          if (state.project?.config?.exploration_policy !== 'exploration-v1') {
+            for (const name of ['research_scope', 'research_route']) delete request.tools[name]
+            if (!state.exploration_closing_allowed) delete request.tools.research_decide
+            else if (request.tools.research_decide) {
+              const spec=TOOLS.find(tool=>tool.name==='research_decide')!.parameters
+              const closing=Object.fromEntries(Object.entries(spec).filter(([key])=>key!=='next_work')
+                .map(([key,value])=>[key,key==='action' ? {...value,enum:['defer','propose_stop']} : value]))
+              request.tools.research_decide.input=parameters(closing) as typeof request.tools.research_decide.input
+              request.tools.research_decide.description='Exploration is off. Consider existing results and close or defer routes; do not create new work.'
+            }
+          }
+          const evidenceContract = state.project?.config?.conclusion_contract === 'evidence-v1'
+          if (!evidenceContract) delete request.tools.research_prepare_conclusion
+          const conclude = request.tools.research_conclude
+          if (conclude) {
+            const spec = TOOLS.find(tool => tool.name === 'research_conclude')!.parameters
+            const keys = evidenceContract ? ['summary', 'final_ref', 'draft_id'] : ['summary', 'final_ref', 'outcome', 'gaps', 'review']
+            conclude.input = parameters(Object.fromEntries(keys.map(key => [key, {...spec[key], required:true}]))) as typeof conclude.input
+            conclude.description = evidenceContract
+              ? 'Conclude using the prepared draft and its published final report after the complete draft was delivered in this model request.'
+              : 'Conclude with a complete final report, the outcome, remaining gaps and an explicitly declared review.'
+          }
           if (controlInstructions(run, pause)) {
-            for (const name of ["research_propose", "research_dispatch", "research_conclude"]) delete request.tools[name]
+            for (const name of ["research_propose", "research_dispatch", "research_conclude", 'research_scope', 'research_route', 'research_decide', 'research_prepare_conclusion']) delete request.tools[name]
           }
         }
         if (role === 'node_core') {
@@ -587,11 +635,16 @@ export default Plugin.define({
           }
         }
         const deadline=performance.now()+2000
+        const evidence = role==='main' || role==='node_core'
+          ? research.observeEvidence(request.sessionID,request.messages,Math.max(0,deadline-performance.now()))
+          : Promise.resolve([])
         const text = await research.memory(request.sessionID)
         if (text) {
           request.system.push({ type: "text", text })
           if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages,deadline-performance.now())
         }
+        const issues = await evidence
+        if (issues.length) request.system.push({type:'text',text:`Evidence delivery was not fully confirmed (${issues.join(', ')}). Re-read the affected pages and retry.`})
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
@@ -770,6 +823,10 @@ export default Plugin.define({
           return research.detach(needsSession(sessionID, action))
         case "context-policy":
           return research.contextPolicy(needsSession(sessionID, action), args.policy)
+        case "exploration":
+          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
+        case "conclusion-contract":
+          return research.conclusionContract(needsSession(sessionID, action), args.contract)
         case "guidance":
           return research.guidance(needsSession(sessionID, action), directory, args.path, args.version)
         default:
@@ -805,7 +862,7 @@ export default Plugin.define({
           await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS)
           const state = await research.sessionState(sessionID)
           const root = research.rootOf(sessionID)
-          return { ...state, eventRecovery: eventHealth(root), observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
+          return { ...state, eventRecovery: eventHealth(root) ?? null, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
         })
     const boardHandler = (input: any) => reported(async () => {
           const directory =

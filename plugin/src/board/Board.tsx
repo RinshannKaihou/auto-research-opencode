@@ -34,6 +34,9 @@ import { ReviewDetail, ReviewRow } from "./ReviewView"
 
 const POLL_MS = 5000
 const CHUNK = 32 * 1024
+const ROUTE_STATUS: Record<string,string> = {
+  untried:'待试', investigating:'试探中', deferred:'暂缓', excluded:'已排除', adopted:'已采用', combination_proposed:'建议组合',
+}
 
 interface Reader {
   ref: string
@@ -87,6 +90,7 @@ export function ResearchBoard(props: {
   const [statusFilter, setStatusFilter] = createSignal("")
   const [graph, setGraph] = createSignal<ProcessView | null>(null)
   const [processNode, setProcessNode] = createSignal<any>(null)
+  const [routeMode, setRouteMode] = createSignal(false)
   const [tasks, setTasks] = createSignal<any[]>([])
   const [knowledgeTotals, setKnowledgeTotals] = createSignal<{ kind?: string; total: number }[]>([])
   /** How many entries match the current filters across all pages. */
@@ -156,6 +160,12 @@ export function ResearchBoard(props: {
         nextRows = []
       } else if (target === "overview") {
         setPresentation(await board("presentation"))
+      } else if (target === "process" && routeMode()) {
+        const page = await board('page', { collection:'exploration_routes', limit:50, cursor:pageCursor() })
+        if (run !== generation) return
+        setGraph(null)
+        setNextCursor(page.cursor)
+        nextRows = (page.items ?? []).map((route:any) => ({id:route.ref,code:route.route_id,title:route.title,data:route}))
       } else if (target === "process") {
         const [nodes, dependencies, attempts, taskPage, sessions, publications, snapshots, knowledge] = await pages([
           "nodes",
@@ -276,6 +286,7 @@ export function ResearchBoard(props: {
       return
     }
     if (target !== "process") return
+    if (routeMode()) { setProcessNode(row.data); return }
     const node = await fullReference(row.id)
     if (active()) setProcessNode(node?.value ?? null)
   }
@@ -432,6 +443,7 @@ export function ResearchBoard(props: {
           const row = current()
           if (tab() === "runtime" && row) props.openSession?.(row.id)
           else if (tab() === "review" || tab() === "knowledge") void openReviewLink().catch((failure) => setError(errorText(failure)))
+          else if (tab() === 'process' && routeMode()) return
           else void openReader()
         },
       },
@@ -448,6 +460,9 @@ export function ResearchBoard(props: {
       { bind: "r", run: () => {
         if (reader()) void openReader(0, reader()!.ref, reader()!.path)
         else { resetPage(); void load() }
+      } },
+      { bind: "b", enabled: () => !reader() && tab() === 'process' && !!summary()?.exploration, run: () => {
+        setRouteMode(!routeMode()); setRows([]); setSelected(0); resetPage(); void load('process')
       } },
       { bind: "x", enabled: () => !reader() && (tab() === "review" || tab() === "knowledge"), run: () => setReviewRaw(!reviewRaw()) },
       { bind: "l", enabled: () => !reader() && (tab() === "review" || tab() === "knowledge"), run: () => {
@@ -525,6 +540,8 @@ export function ResearchBoard(props: {
     if (reader()) return [["Esc", "返回"], ["PgUp/PgDn", "翻页"], ...(reader()?.nextOffset != null ? [["n", "读取下一段"] as [string, string]] : [])]
     if (tab() === "review") return [["v", "成果内容"], ["f", "检查类别"], ["j/k", "移动"], ["[/]", "页"], ["l/Enter", "依据"], ["r", "刷新"], ["Esc", "关闭"]]
     if (tab() === "overview") return [["1-3", "导航"], ["PgUp/PgDn", "滚动"], ["r", "刷新"], ["Esc", "关闭"]]
+    if (tab() === 'process' && summary()?.exploration) return [["b", routeMode() ? "节点" : "路线"], ["j/k", "移动"],
+      ["[/]", "列表翻页"], ["PgUp/PgDn", "滚动详情"], ["r", "刷新"], ["Esc", "关闭"]]
     return [
       ["v", "切换内容"],
       ["j/k", "移动"],
@@ -628,6 +645,11 @@ export function ResearchBoard(props: {
               <scrollbox ref={list} flexGrow={1} minHeight={0} scrollX={false} border borderColor={colors.rail}>
                 <box paddingX={1} flexDirection="column">
                   <Switch fallback={<text fg={colors.muted}>（没有条目）</text>}>
+                    <Match when={tab() === 'process' && routeMode() && rows().length}>
+                      <For each={rows()}>{(row,index) => <text id={`research-row-${index()}`} fg={index() === selected() ? colors.brand : colors.base}>
+                        {`${index() === selected() ? '▸' : ' '} ${row.code}  ${row.title}`}
+                      </text>}</For>
+                    </Match>
                     <Match when={tab() === "process" ? graph() : null}>
                       {(view) => <ProcessList context={context} view={view()} selected={selected()} width={listWidth() - 4} />}
                     </Match>
@@ -679,6 +701,20 @@ export function ResearchBoard(props: {
                     width={dimensions().width - 8}
                     markdown={markdown}
                   />
+                </Match>
+                <Match when={tab() === 'process' && routeMode()}>
+                  <Show when={current()?.data} fallback={<text fg={colors.muted}>尚无路线卡。</text>}>
+                    {(route) => <box flexDirection="column">
+                      <text fg={colors.base}>{route().title}</text>
+                      <text fg={colors.muted}>{`状态  ${ROUTE_STATUS[route().disposition] ?? route().disposition} · 版本 ${route().revision}`}</text>
+                      <text fg={colors.base}>{`理由  ${route().rationale}`}</text>
+                      <text fg={colors.base}>{`关键假设  ${route().critical_assumption}`}</text>
+                      <Show when={route().disposition_reason}><text fg={colors.base}>{`处置理由  ${route().disposition_reason}`}</text></Show>
+                      <Show when={route().reactivation_condition}><text fg={colors.base}>{`恢复条件  ${route().reactivation_condition}`}</text></Show>
+                      <Show when={route().next_probe}><text fg={colors.base}>{`下一探针  ${typeof route().next_probe === 'string' ? route().next_probe : route().next_probe?.question ?? '已登记'}`}</text></Show>
+                      <For each={route().evidence_refs ?? []}>{(ref) => <text fg={colors.link}>{`依据  ${ref}`}</text>}</For>
+                    </box>}
+                  </Show>
                 </Match>
                 <Match when={tab() === "process" ? graph() : null}>
                   {(view) => (

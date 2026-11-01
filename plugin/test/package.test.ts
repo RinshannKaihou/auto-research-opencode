@@ -89,7 +89,7 @@ finally {probe.close();}
       request("status", "status"),
     ])
     expect(responses.map((response) => response.ok)).toEqual([true, true, true, true, false, true, true])
-    expect(responses[0].value.schema_version).toBe(12)
+    expect(responses[0].value.schema_version).toBe(15)
     expect(responses[0].value.memory_write_contract).toBe('r2-v1')
     expect(responses[0].value.checkpoint_base).toBe('receipt-cas-v1')
     expect(responses[4].error.message).toContain("item_missing")
@@ -111,7 +111,7 @@ finally {probe.close();}
     const downgraded = spawnSync(python,['-S','-c',`
 import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
-    for table in ('review_candidates','review_obligations','review_lifecycle_events','checkpoint_read_receipts','runtime_budgets','runtime_budget_reservations','runtime_progress'):
+    for table in ('review_candidates','review_obligations','review_lifecycle_events','checkpoint_read_receipts','runtime_budgets','runtime_budget_reservations','runtime_progress','generation_conclusion_contracts'):
         db.execute('DROP TABLE '+table)
     db.execute('PRAGMA user_version=10')
 `,join(project,'.research/state.sqlite3')],{cwd:release,env,encoding:'utf8',timeout:10_000})
@@ -123,9 +123,72 @@ with sqlite3.connect(sys.argv[1]) as db:
       request('new-capabilities','project_read',{root:project,view:'capabilities'}),
       request('checkpoint','memory_write',{model_call:true,action:'checkpoint',fields:{state:{phase:'synthesis'},expected_revision:0}})])
     expect(migrated.every(row=>row.ok)).toBe(true)
-    expect(migrated[1].value.schema_version).toBe(12)
+    expect(migrated[1].value.schema_version).toBe(15)
     expect(migrated[2].value).toEqual(responses[2].value)
     expect(readFileSync(join(project,'.research/schema-10-backup.sqlite3')).length).toBeGreaterThan(0)
+
+    // The extracted backend also exercises the new durable choice and the
+    // evidence-v1 report/receipt contract, including a service restart.
+    const scenario = spawnSync(python, ['-S','-c', `
+import hashlib, json, pathlib, sys
+from auto_research.service import NativeService
+base=pathlib.Path(sys.argv[1]); registry=base/'e1e2-registry.sqlite3'; count=0
+service=NativeService(registry)
+def call(method, **fields):
+    global count
+    count+=1
+    req={'transport_id':str(count),'operation_id':str(count),'host_id':'opencode','session_id':'main','method':method,**fields}
+    result=service.handle(req)
+    assert result['ok'], result
+    return result['value']
+e1=base/'e1-project'; e1.mkdir()
+call('open',root=str(e1),cwd=str(e1),goal='Choose a probe')
+call('workflow',action='run',fields={'state':'running'})
+call('exploration_policy',mode='on')
+scope=call('exploration_scope',model_call=True,fields={'changes':{'objective':'Choose a probe','task_kind':'selection'}})
+route=call('exploration_route',model_call=True,fields={'scope_ref':scope['ref'],'changes':{
+    'title':'Measure','rationale':'Resolve uncertainty','critical_assumption':'Data is representative'}})
+view=call('query',collection='evidence',refs=[])
+decision=call('exploration_decide',model_call=True,fields={'scope_ref':scope['ref'],'snapshot_id':view['snapshot_id'],
+    'route_refs':[route['ref']],'action':'probe','reason':'Measure first','next_work':{'route_refs':[route['ref']],
+    'question':'Is it representative?','why_now':'Choose','plan':'Measure','root_reason':'First probe'}})
+service=NativeService(registry)
+pending=call('exploration_pending')
+assert pending==[decision['intent_id']]
+work=call('exploration_materialize',intent_id=pending[0])
+assert work['state']=='materialized'
+e2=base/'e2-project'; e2.mkdir(); service=NativeService(base/'e2-registry.sqlite3')
+call('open',root=str(e2),cwd=str(e2),goal='Answer a bounded question')
+call('conclusion_contract',contract='evidence-v1')
+source=call('publish',model_call=True,status='complete',summary='data',gaps=[],knowledge_refs=[],
+    items=[{'item_id':'data','kind':'text','content':{'value':7}}])
+claim=call('memory_write',model_call=True,action='record',fields={'kind':'claim','statement':'Value is 7',
+    'visibility':'project','evidence_refs':['pub/'+source['publication_id']+'#data']})
+view=call('query',collection='evidence',refs=[claim['ref']])
+draft=call('conclusion_prepare',model_call=True,fields={'snapshot_id':view['snapshot_id'],
+    'core_claim_refs':[claim['ref']],'outcome':'answered','gaps':[],'risk_judgments':[],
+    'review_requirements':[],'exploration_stop':{'reason_kind':'goal_met','reason':'Measured target'}})
+pub=call('publish',model_call=True,status='complete',summary='report',gaps=[],knowledge_refs=[claim['ref']],
+    items=[{'item_id':'report','kind':'text','content':{'text':'The measured value is 7.'}}],
+    draft_id=draft['draft_id'],report_item_id='report')
+page=call('query',collection='evidence',draft_id=draft['draft_id'],limit=500)
+pages=[]
+while True:
+    end=page['end']
+    pages.append({'snapshot_id':page['snapshot_id'],'draft_id':page['draft_id'],'part':page['part'],'offset':page['offset'],'end':end,
+        'manifest_digest':page['manifest_digest'],'chunk_digest':hashlib.sha256(page['chunk'].encode()).hexdigest()})
+    if not page['cursor']: break
+    page=call('query',collection='evidence',cursor=page['cursor'],limit=500)
+receipts=call('evidence_observed',pages=pages,plugin_instance_id='pack-test')['receipt_ids']
+result=call('conclude',fields={'draft_id':draft['draft_id'],'final_ref':'pub/'+pub['publication_id']+'#report','summary':'Bounded answer'},
+    delivery_receipts=receipts,plugin_instance_id='pack-test')
+assert result['evidence']['evidence_closure']['status']=='resolved'
+service=NativeService(base/'e2-registry.sqlite3')
+assert call('status')['workflow']['conclusion']['conclusion_id']==result['conclusion_id']
+print(json.dumps({'pending_recovered':True,'evidence_concluded':True}))
+`, temporary], {cwd:release, env, encoding:'utf8', timeout:15_000})
+    expect({status:scenario.status,error:scenario.stderr}).toMatchObject({status:0})
+    expect(JSON.parse(scenario.stdout)).toEqual({pending_recovered:true,evidence_concluded:true})
   } finally {
     rmSync(temporary, { recursive: true, force: true })
   }

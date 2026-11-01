@@ -21,10 +21,120 @@ def generation(db):
 
 
 def event(db, oid, action, reason, refs, scope, operation, actor):
-    db.execute('''INSERT INTO review_lifecycle_events
+    return db.execute('''INSERT INTO review_lifecycle_events
         (obligation_id,candidate_id,action,reason,evidence_refs,scope_snapshot,source_sequence,operation_id,actor,created_at)
         VALUES(?,?,?,?,?,?,?,?,?,?)''', (oid, scope.get('candidate_id'),action, reason, encoded(refs), encoded(scope),
-        epistemic.read_bound(db), operation, encoded(actor), now()))
+        epistemic.read_bound(db), operation, encoded(actor), now())).lastrowid
+
+
+def assessment_identity(db, root, source_ref, target_ref, specialist_task_id, content_identities=None):
+    """Use ledger and host observations; never accept a caller's model identity."""
+    source = frozen_refs.resolve(db, root, source_ref)
+    target = frozen_refs.resolve(db, root, target_ref) if frozen_refs.is_frozen(target_ref) else None
+
+    def identity(ref, resolution):
+        if resolution.get('object'):
+            return ('object', resolution['object']['version'], resolution.get('subpath'))
+        parsed = frozen_refs.parse(ref)
+        if parsed.get('publication_id') and parsed.get('item_id'):
+            row = db.execute('SELECT content FROM publication_items WHERE publication_id=? AND item_id=?',
+                             (parsed['publication_id'], parsed['item_id'])).fetchone()
+            if row:
+                return ('content', hashlib.sha256(encoded(json.loads(row['content'])).encode()).hexdigest())
+        return None
+
+    def contains(container, item):
+        if not container or not item:
+            return False
+        if container[0] == item[0] == 'object' and container[1] == item[1]:
+            parent, child = container[2] or '', item[2] or ''
+            return not parent or child == parent or child.startswith(parent + '/')
+        return container == item
+
+    source_identity = identity(source_ref, source)
+    content_identities = content_identities or {}
+    same_content = lambda ref: bool(content_identities.get(source_ref) and
+                                   content_identities.get(source_ref) == content_identities.get(ref))
+    if target and (contains(identity(target_ref, target), source_identity) or same_content(target_ref)):
+        raise ValidationError('Review report and reviewed material have the same frozen object')
+    if target_ref.startswith('knowledge/'):
+        from .memory_store import parse_knowledge_ref
+        kid, rev = parse_knowledge_ref(target_ref)
+        claim = db.execute('SELECT evidence_refs,asserted_at FROM knowledge_revisions WHERE knowledge_id=? AND revision=?', (kid, rev)).fetchone()
+        if claim:
+            for ref in json.loads(claim['evidence_refs']):
+                if ref == source_ref or (frozen_refs.is_frozen(ref)
+                        and (contains(identity(ref, frozen_refs.resolve(db, root, ref)), source_identity) or same_content(ref))):
+                    raise ValidationError('Review report is already a source of the reviewed claim')
+        author = json.loads(claim['asserted_at'] or 'null') if claim else None
+    else:
+        author = None
+    parsed = frozen_refs.parse(source_ref)
+    association = attempt = role = context_mode = message_id = published_at = None
+    assigned_inputs = effective_tools = None
+    if specialist_task_id:
+        task = db.execute('SELECT * FROM specialist_tasks WHERE task_id=?', (specialist_task_id,)).fetchone()
+        result = json.loads(task['result'] or '{}') if task else {}
+        artifact = result.get('artifact') or {}
+        if not task or task['state'] != 'completed' or not task['exit_verified'] or not source.get('object') or artifact.get('version') != source['object']['version']:
+            raise ValidationError('Specialist report does not match a verified completed specialist output')
+        association = db.execute('SELECT * FROM associations WHERE session_id=? ORDER BY rowid DESC LIMIT 1', (task['child_session_id'],)).fetchone()
+        role, context_mode = 'specialist', task['context_mode']
+        assigned_inputs = json.loads(task['inputs'])
+        launch = db.execute("SELECT details FROM workflow_intents WHERE intent_id=? AND kind='specialist_launch'",
+                            ('specialist-launch:' + task['task_id'],)).fetchone()
+        effective_tools = json.loads(launch['details']).get('tools') if launch else None
+    elif parsed.get('publication_id'):
+        owner = db.execute('SELECT a.attempt_id,a.association_id,w.role,p.asserted_at,p.created_at FROM publications p '
+                           'JOIN attempts a USING(attempt_id) JOIN associations s USING(association_id) '
+                           'LEFT JOIN workflow_sessions w ON w.session_id=s.session_id WHERE p.publication_id=?',
+                           (parsed['publication_id'],)).fetchone()
+        if owner:
+            attempt, role, published_at = owner['attempt_id'], owner['role'], owner['created_at']
+            association = db.execute('SELECT * FROM associations WHERE association_id=?', (owner['association_id'],)).fetchone()
+            asserted = json.loads(owner['asserted_at'] or 'null') or {}
+            operation = asserted.get('operation_id', '').split(':')
+            if association and len(operation) >= 4 and operation[0] == association['session_id']:
+                message_id = operation[1]
+    observed = None
+    if association:
+        rows = []
+        if message_id:
+            rows = list(db.execute('SELECT provider,model,details FROM usage_observations WHERE association_id=? AND source_key=?',
+                                   (association['association_id'], f"step:{association['session_id']}:{message_id}")))
+        elif specialist_task_id:
+            rows = list(db.execute('SELECT provider,model,details FROM usage_observations WHERE association_id=? '
+                                   'AND provider IS NOT NULL AND model IS NOT NULL', (association['association_id'],)))
+        identities = {(row['provider'], row['model'], json.loads(row['details']).get('variant')) for row in rows
+                      if row['provider'] is not None and row['model'] is not None}
+        if len(identities) == 1:
+            provider, model, variant = identities.pop()
+            observed = {'provider': provider, 'model': model, 'variant': variant}
+    reviewer = association['session_id'] if association else None
+    observed_tools = []
+    if attempt and published_at:
+        observed_tools = sorted({json.loads(row['details'])['tool'] for row in db.execute(
+            "SELECT details FROM usage_observations WHERE attempt_id=? AND purpose='tool_execution' AND observed_at<=?",
+            (attempt, published_at))})
+    author_model = None
+    if isinstance(author, dict):
+        author_session, author_host = author.get('session_id'), author.get('host_id')
+        operation = (author.get('operation_id') or '').split(':')
+        if author_session and len(operation) >= 4 and operation[0] == author_session:
+            row = db.execute('SELECT u.provider,u.model,u.details FROM usage_observations u JOIN associations a USING(association_id) '
+                             'WHERE a.host_id=? AND a.session_id=? AND u.source_key=?',
+                             (author_host, author_session, f"step:{author_session}:{operation[1]}" )).fetchone()
+            if row and row['provider'] and row['model']:
+                author_model = {'provider':row['provider'], 'model':row['model'], 'variant':json.loads(row['details']).get('variant')}
+    same_model = ((observed['provider'], observed['model']) == (author_model['provider'], author_model['model'])
+                  if observed and author_model else None)
+    author_session = author.get('session_id') if isinstance(author, dict) and author.get('host_id') != 'native_store' else None
+    return {'session_id': reviewer, 'attempt_id': attempt, 'specialist_task_id': specialist_task_id,
+            'role': role, 'context_mode': context_mode, 'model': observed,
+            'author_model':author_model, 'same_model_as_author':same_model,
+            'assigned_inputs':assigned_inputs, 'effective_tools':effective_tools, 'observed_execution_tools':observed_tools,
+            'shared_research_context': False if context_mode == 'blind' else True if role in {'main', 'node_core', 'specialist'} else None,
+            'same_session_as_author': reviewer == author_session if reviewer and author_session else None}
 
 
 def candidate(db, todo_id, kind, ref, node_id, at):
@@ -76,7 +186,7 @@ def set_scope(store, db, refs, reason, operation, actor):
     before = config.get('r2_review_scope')
     scope = {'generation': generation(db), 'refs': sorted(set(refs))}
     config['r2_review_scope'] = scope
-    db.execute('UPDATE project SET config=?', (encoded(config),))
+    store._set_project_config(db, config)
     event(db, None, 'scope_set', reason, refs, {'before': before, 'after': scope}, operation, actor)
     old_refs = before['refs'] if before and before['generation']==scope['generation'] else []
     added = sorted(set(refs)-set(old_refs))
@@ -129,6 +239,25 @@ def reconcile(store, db, operation):
     known_project = explicit is not None and explicit['generation'] == gen
     if known_project:
         scopes['project'] = closure(store, db, explicit['refs'])
+    conclusion = store._project(db)['config'].get('conclusion_review_scope')
+    if conclusion and conclusion['generation'] == gen:
+        scopes.setdefault('project', set()).update(closure(store, db, conclusion['refs']))
+        known_project = True
+    if db.execute('PRAGMA user_version').fetchone()[0] >= 13:
+        from .exploration_store import _current_scope, _decode
+        exploration = _current_scope(db, gen)
+        if exploration:
+            refs = []
+            for row in db.execute("SELECT r.* FROM exploration_routes r JOIN "
+                    "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
+                    "ON r.route_id=x.route_id AND r.revision=x.revision", (exploration['scope_id'],)):
+                route = _decode(row, 'route')
+                if route['goal_version'] == exploration['goal_version'] and route['disposition'] in {'investigating', 'adopted'}:
+                    refs.extend(route.get('evidence_refs') or [])
+                    refs.extend(route.get('hypothesis_refs') or [])
+            if refs:
+                scopes.setdefault('project', set()).update(closure(store, db, refs))
+                known_project = True
     run = db.execute('SELECT state FROM workflow_project WHERE id=1').fetchone()
     if run and run[0] in {'complete', 'stopped'}:
         scopes = {}
@@ -175,16 +304,29 @@ def read_row(db, row):
     return value
 
 
-def unresolved_challenges(db):
-    return list(db.execute('''SELECT o.target_ref,o.obligation_id,o.generation,e.event_id,e.evidence_refs
+def unresolved_challenges(db, *, relevant_refs=None, limit=None):
+    query = '''SELECT o.target_ref,o.obligation_id,o.generation,e.event_id,e.evidence_refs
         FROM review_obligations o JOIN review_lifecycle_events e USING(obligation_id)
         WHERE e.action IN ('completed','report_partial')
         AND json_extract(e.scope_snapshot,'$.result')='challenges'
         AND COALESCE((SELECT json_extract(d.scope_snapshot,'$.kind')
             FROM review_lifecycle_events d WHERE d.action='challenge_disposed'
             AND json_extract(d.scope_snapshot,'$.review_event')=e.event_id
-            ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved'
-        ORDER BY (o.generation=(SELECT generation FROM workflow_project WHERE id=1)) DESC,e.event_id DESC'''))
+            ORDER BY d.event_id DESC LIMIT 1),'unresolved')='unresolved' '''
+    params = []
+    if relevant_refs is not None:
+        knowledge = sorted({ref.split('@', 1)[0] for ref in relevant_refs if ref.startswith('knowledge/') and '@' in ref})
+        publications = sorted({'pub/' + parsed['publication_id'] for ref in relevant_refs if frozen_refs.is_frozen(ref)
+                               for parsed in [frozen_refs.parse(ref)] if parsed.get('publication_id')})
+        query += '''AND (o.target_ref IN (SELECT value FROM json_each(?))
+            OR (o.target_ref LIKE 'knowledge/%' AND substr(o.target_ref,1,instr(o.target_ref,'@')-1) IN (SELECT value FROM json_each(?)))
+            OR (o.target_ref LIKE 'pub/%' AND substr(o.target_ref,1,instr(o.target_ref||'#','#')-1) IN (SELECT value FROM json_each(?)))) '''
+        params.extend((encoded(sorted(relevant_refs)), encoded(knowledge), encoded(publications)))
+    query += 'ORDER BY (o.generation=(SELECT generation FROM workflow_project WHERE id=1)) DESC,e.event_id DESC'
+    if limit is not None:
+        query += ' LIMIT ?'
+        params.append(limit)
+    return list(db.execute(query, params))
 
 
 def summary(db, node_id=None):
@@ -283,6 +425,24 @@ class ReviewStore:
         return self._mutate('review.promote', fields, request_id, work)
 
     def review_link(self, fields, request_id, actor):
+        content_identities = {}
+        with self._read() as db:
+            prior = db.execute('SELECT 1 FROM requests WHERE request_id=?', (request_id,)).fetchone()
+            if not prior and fields.get('review_type'):
+                refs = [fields['source_ref']]
+                target = fields['target_ref']
+                if frozen_refs.is_frozen(target):
+                    refs.append(target)
+                elif target.startswith('knowledge/'):
+                    from .memory_store import parse_knowledge_ref
+                    kid, revision = parse_knowledge_ref(target)
+                    claim = db.execute('SELECT evidence_refs FROM knowledge_revisions WHERE knowledge_id=? AND revision=?',
+                                       (kid, revision)).fetchone()
+                    if claim:
+                        refs.extend(ref for ref in json.loads(claim['evidence_refs']) if frozen_refs.is_frozen(ref))
+                for ref in refs:
+                    content_identities[ref] = frozen_refs.content_identity(db, self.root, ref)
+
         def work(db):
             row = db.execute('SELECT * FROM review_obligations WHERE obligation_id=?', (fields['obligation_id'],)).fetchone()
             if not row:
@@ -343,8 +503,21 @@ class ReviewStore:
                 prior = db.execute("SELECT evidence_refs,scope_snapshot FROM review_lifecycle_events WHERE obligation_id=? AND action='completed' ORDER BY event_id DESC LIMIT 1",(row['obligation_id'],)).fetchone()
                 if prior and json.loads(prior[0])==refs and json.loads(prior[1])['result']==result:
                     return {**read_row(db,row),'deduplicated':True}
-            event(db, row['obligation_id'], 'completed' if complete else 'report_partial', fields['reason'], refs,
+            review_type = fields.get('review_type')
+            if review_type is not None and review_type not in {'citation_scope','semantic_inference','recompute','reimplementation','adversarial_test'}:
+                raise ValidationError('Unknown review type')
+            limitations = fields.get('limitations', [])
+            if not isinstance(limitations, list) or not all(isinstance(item, str) and item.strip() for item in limitations):
+                raise ValidationError('Review limitations must be a list of text')
+            identity = assessment_identity(db, self.root, report, row['target_ref'], fields.get('specialist_task_id'), content_identities) if review_type else None
+            review_event = event(db, row['obligation_id'], 'completed' if complete else 'report_partial', fields['reason'], refs,
                   {'result': result, 'complete': complete}, request_id, actor)
+            if review_type:
+                db.execute('INSERT INTO review_assessments VALUES(?,?,?,?,?,?,?)',
+                           (review_event, review_type, report, row['target_ref'], encoded(identity), encoded(limitations), now()))
+            if result == 'challenges':
+                self.exploration_record_change(db, row['target_ref'], 'review-event:' + str(review_event),
+                                               'review_challenge', report)
             db.execute('UPDATE review_obligations SET updated_at=? WHERE obligation_id=?',(now(),row['obligation_id']))
             if complete:
                 db.execute("UPDATE review_obligations SET state='completed',updated_at=? WHERE obligation_id=?", (now(), row['obligation_id']))
@@ -365,10 +538,12 @@ class ReviewStore:
             if action not in {'waive','reopen','accept_previous','start'} or not fields.get('reason'):
                 raise ValidationError('Explicit review exception action and reason required')
             if action == 'accept_previous':
-                report = db.execute("SELECT 1 FROM review_lifecycle_events WHERE event_id=? AND obligation_id=? AND action='completed'",
-                                    (fields.get('report_link'), row['obligation_id'])).fetchone()
+                report = db.execute("SELECT 1 FROM review_lifecycle_events e JOIN review_obligations previous USING(obligation_id) "
+                                    "WHERE e.event_id=? AND e.action='completed' AND previous.target_ref=? "
+                                    "AND previous.change_id IS ?",
+                                    (fields.get('report_link'), row['target_ref'], row['change_id'])).fetchone()
                 if not report:
-                    raise ValidationError('accept_previous requires a previous complete report link')
+                    raise ValidationError('accept_previous requires a previous complete report for the exact target and change')
             refs = fields.get('evidence_refs', [])
             for ref in refs:
                 self._require_ref(db, ref)

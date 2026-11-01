@@ -13,6 +13,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+import tempfile
 from typing import Any, Callable, Iterator
 from uuid import uuid4
 
@@ -27,15 +28,21 @@ from .schema9 import ensure_schema9, migrate_schema9
 from .schema10 import ensure_schema10, migrate_schema10
 from .schema11 import ensure_schema11, migrate_schema11
 from .schema12 import ensure_schema12, migrate_schema12
+from .schema13 import ensure_schema13, migrate_schema13
+from .schema14 import ensure_schema14, migrate_schema14
+from .schema15 import ensure_schema15, migrate_schema15
+from .conclusion_policy import current_contract
 from .controller import ControllerStore, require_controller, CURRENT_MODEL_CALL
 from .conclusion_store import ConclusionStore
 from .review_lifecycle import ReviewStore
 from .runtime_budget import RuntimeStore
 from .adoption import AdoptionStore
+from .exploration_store import ExplorationStore
+from .evidence_conclusion import EvidenceConclusionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 15
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -73,7 +80,81 @@ def _number(value: Any, label: str) -> float:
 from .workflow_store import WorkflowStore, DDL, migrate_schema3
 
 
-class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
+def normalize_proposal(question, why_now, plan, inputs=None, purpose="explore", strategy="continue",
+                       anchor_ref=None, question_ref=None, root_reason=None, predecessors=None, *, enforce_protocol=False):
+    supplied_inputs = inputs is not None
+    inputs = [] if inputs is None else inputs
+    if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
+        raise ValidationError("inputs must be research reference strings")
+    if root_reason is not None:
+        root_reason = _text(root_reason, "root_reason")
+    predecessors = [] if predecessors is None else predecessors
+    if not isinstance(predecessors, list) or not all(
+        isinstance(item, dict) for item in predecessors
+    ):
+        raise ValidationError("predecessors must be a list of declarations")
+    if root_reason and predecessors:
+        raise ValidationError("Choose exactly one of root_reason or predecessors")
+    if enforce_protocol and not (root_reason or predecessors):
+        raise ValidationError("Choose exactly one of root_reason or predecessors")
+    fixed_inputs: list[str] = []
+    normalized_predecessors = []
+    seen_dependencies = set()
+    for index, predecessor in enumerate(predecessors):
+        node_id = _text(predecessor.get("node_id"), f"predecessors[{index}].node_id")
+        relation_type = predecessor.get("relation_type")
+        if relation_type not in {"depends_on", "branches_from", "revises"}:
+            raise ValidationError("predecessor relation_type is not allowed")
+        rationale = _text(
+            predecessor.get("rationale"), f"predecessors[{index}].rationale"
+        )
+        refs = predecessor.get("input_refs")
+        if not isinstance(refs, list) or (relation_type == "depends_on" and not refs) or not all(
+            isinstance(ref, str) and ref.strip() for ref in refs
+        ):
+            raise ValidationError("predecessor input_refs must be nonempty reference lists")
+        key = (node_id, relation_type)
+        if key in seen_dependencies:
+            raise ValidationError("Duplicate predecessor declaration")
+        seen_dependencies.add(key)
+        refs = [ref.strip() for ref in refs]
+        normalized_predecessors.append(
+            {
+                "node_id": node_id,
+                "relation_type": relation_type,
+                "rationale": rationale,
+                "input_refs": refs,
+            }
+        )
+        for ref in refs:
+            if ref not in fixed_inputs:
+                fixed_inputs.append(ref)
+    if predecessors:
+        if supplied_inputs and inputs != fixed_inputs:
+            raise ValidationError("inputs must exactly match predecessor input_refs")
+        inputs = fixed_inputs
+    if strategy not in {"continue", "redirect", "anchor"}:
+        raise ValidationError("strategy must be continue, redirect, or anchor")
+    if strategy == "anchor" and not anchor_ref:
+        raise ValidationError("anchor strategy requires anchor_ref")
+    payload = {
+        "question": _text(question, "question"),
+        "why_now": _text(why_now, "why_now"),
+        "plan": _text(plan, "plan"),
+        "inputs": inputs,
+        "purpose": _text(purpose, "purpose"),
+        "strategy": strategy,
+        "anchor_ref": anchor_ref,
+        "question_ref": question_ref,
+        "origin_kind": "root" if root_reason else "derived" if predecessors else "legacy_unresolved",
+        "root_reason": root_reason,
+        "predecessors": normalized_predecessors,
+    }
+
+    return payload
+
+
+class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
     """Transactional store used only by the native DSH plugin."""
 
     def __init__(self, root: str | Path, *, readonly: bool = False):
@@ -84,8 +165,8 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
         self.db_path = self.meta / "state.sqlite3"
         if readonly:
             with self._connection() as db:
-                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, 10, 11, SCHEMA_VERSION}:
-                    raise ValidationError(f"Read-only view requires schema 9, 10, 11 or {SCHEMA_VERSION}")
+                if db.execute("PRAGMA user_version").fetchone()[0] not in range(9, SCHEMA_VERSION + 1):
+                    raise ValidationError(f"Read-only view requires schema 9 through {SCHEMA_VERSION}")
             return
         self.meta.mkdir(parents=True, exist_ok=True)
         if self.db_path.exists():
@@ -121,6 +202,15 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
             if version == 11 and SCHEMA_VERSION >= 12:
                 migrate_schema12(self.db_path)
                 version = 12
+            if version == 12 and SCHEMA_VERSION >= 13:
+                migrate_schema13(self.db_path)
+                version = 13
+            if version == 13 and SCHEMA_VERSION >= 14:
+                migrate_schema14(self.db_path)
+                version = 14
+            if version == 14 and SCHEMA_VERSION >= 15:
+                migrate_schema15(self.db_path)
+                version = 15
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -289,6 +379,12 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
         ensure_schema11(db)
         if SCHEMA_VERSION >= 12:
             ensure_schema12(db)
+        if SCHEMA_VERSION >= 13:
+            ensure_schema13(db)
+        if SCHEMA_VERSION >= 14:
+            ensure_schema14(db)
+        if SCHEMA_VERSION >= 15:
+            ensure_schema15(db)
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
@@ -341,7 +437,7 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                         raise ConflictError(f"request_id {request_id!r} was reused")
                     result = json.loads(previous["response"])
                     db.commit()
-                    if operation in {"propose", "knowledge.record", "knowledge.revise", "memory.checkpoint", "guidance.register"}:
+                    if operation in {"propose", "knowledge.record", "knowledge.revise", "memory.checkpoint", "guidance.register", "exploration.materialize"}:
                         self.rebuild_memory_projection()
                     return result
                 self.last_replayed = False
@@ -356,7 +452,7 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                     from .runtime_budget import require_model_drain
                     require_model_drain(db, model_call['host'], model_call['session'], model_call['execution_token'])
                 result = work(db)
-                if operation in {'propose','consume','focus','finish','runtime.node_finish_commit','runtime.controller_adopt','runtime.recovery_confirm_exit','close_node','publish','relate',
+                if operation in {'propose','consume','focus','finish','runtime.node_finish_commit','runtime.controller_adopt','runtime.recovery_confirm_exit','close_node','publish','relate','exploration.materialize','exploration.scope','exploration.route','exploration.decide',
                         'knowledge.record','knowledge.revise','knowledge.dispose','knowledge.narrow_scope',
                         'memory.checkpoint','review.scope','relate.typed','project.conclude'} or (
                         operation == 'workflow' and (payload['action'] in {'run','register'} or
@@ -368,7 +464,7 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                     (request_id, operation, encoded, _json(result), _now()),
                 )
                 db.commit()
-                if operation in {"propose", "knowledge.record", "knowledge.revise", "memory.checkpoint", "guidance.register"}:
+                if operation in {"propose", "knowledge.record", "knowledge.revise", "memory.checkpoint", "guidance.register", "exploration.materialize"}:
                     self.rebuild_memory_projection()
                 return result
             except BaseException:
@@ -395,10 +491,23 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
             raise NotFoundError("Project is not initialized")
         value = dict(row)
         value["config"] = json.loads(value["config"])
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+            value['config']['conclusion_contract'] = current_contract(db, value['config'])
         # Kept physically for schema-2 database compatibility. Quotas are no
         # longer part of the native plugin API or any runtime decision.
         value.pop("budget_limit", None)
         return value
+
+    @staticmethod
+    def _set_project_config(db: sqlite3.Connection, config: dict) -> None:
+        config = dict(config)
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+            raw = json.loads(db.execute('SELECT config FROM project LIMIT 1').fetchone()[0])
+            if 'conclusion_contract' in raw:
+                config['conclusion_contract'] = raw['conclusion_contract']
+            else:
+                config.pop('conclusion_contract', None)
+        db.execute('UPDATE project SET config=?', (_json(config),))
 
     @staticmethod
     def _association(db: sqlite3.Connection, host_id: str, session_id: str) -> sqlite3.Row:
@@ -426,11 +535,13 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
 
         def work(db):
             config = self._project(db)["config"]
+            if config.get("exploration_policy") == "exploration-v1" and policy != "memory-r1-v1":
+                raise ConflictError("Disable exploration before changing to legacy context")
             value = {"policy_version": policy}
             if config.get("context_policy", "memory-v2") == policy:
                 return value
             config["context_policy"] = policy
-            db.execute("UPDATE project SET config=?", (_json(config),))
+            self._set_project_config(db, config)
             self._event(db, "context.policy_changed", value)
             return value
 
@@ -518,6 +629,30 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
 
         return self._mutate("detach", payload, request_id, work)
 
+    def validate_proposal_references(self, db, payload):
+        qref = payload['question_ref']
+        question = None
+        if qref:
+            kid, revision = parse_knowledge_ref(qref)
+            question_row = db.execute('SELECT e.kind FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) '
+                                      'WHERE e.knowledge_id=? AND r.revision=?', (kid, revision)).fetchone()
+            if not question_row:
+                raise NotFoundError(f'Unknown research reference: {qref}')
+            if question_row['kind'] != 'open_question':
+                raise ValidationError('question_ref must identify an open_question')
+            question = (kid, revision)
+        for ref in payload['inputs']:
+            self._require_ref(db, ref)
+        if payload['anchor_ref']:
+            self._require_ref(db, payload['anchor_ref'])
+        for predecessor in payload['predecessors']:
+            if not db.execute('SELECT 1 FROM nodes WHERE node_id=?', (predecessor['node_id'],)).fetchone():
+                raise NotFoundError(f"Unknown predecessor node: {predecessor['node_id']}")
+            for ref in predecessor['input_refs']:
+                if self._ref_node_id(db, ref) != predecessor['node_id']:
+                    raise ValidationError(f"Input {ref} is not owned by predecessor {predecessor['node_id']}")
+        return question
+
     def propose(
         self,
         question: str,
@@ -535,75 +670,11 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
         enforce_protocol: bool = False,
         asserted_at: dict | None = None,
         control_actor: tuple[str, str] | None = None,
+        _db: sqlite3.Connection | None = None,
     ) -> dict:
-        supplied_inputs = inputs is not None
-        inputs = [] if inputs is None else inputs
-        if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
-            raise ValidationError("inputs must be research reference strings")
-        if root_reason is not None:
-            root_reason = _text(root_reason, "root_reason")
-        predecessors = [] if predecessors is None else predecessors
-        if not isinstance(predecessors, list) or not all(
-            isinstance(item, dict) for item in predecessors
-        ):
-            raise ValidationError("predecessors must be a list of declarations")
-        if root_reason and predecessors:
-            raise ValidationError("Choose exactly one of root_reason or predecessors")
-        if enforce_protocol and not (root_reason or predecessors):
-            raise ValidationError("Choose exactly one of root_reason or predecessors")
-        fixed_inputs: list[str] = []
-        normalized_predecessors = []
-        seen_dependencies = set()
-        for index, predecessor in enumerate(predecessors):
-            node_id = _text(predecessor.get("node_id"), f"predecessors[{index}].node_id")
-            relation_type = predecessor.get("relation_type")
-            if relation_type not in {"depends_on", "branches_from", "revises"}:
-                raise ValidationError("predecessor relation_type is not allowed")
-            rationale = _text(
-                predecessor.get("rationale"), f"predecessors[{index}].rationale"
-            )
-            refs = predecessor.get("input_refs")
-            if not isinstance(refs, list) or (relation_type == "depends_on" and not refs) or not all(
-                isinstance(ref, str) and ref.strip() for ref in refs
-            ):
-                raise ValidationError("predecessor input_refs must be nonempty reference lists")
-            key = (node_id, relation_type)
-            if key in seen_dependencies:
-                raise ValidationError("Duplicate predecessor declaration")
-            seen_dependencies.add(key)
-            refs = [ref.strip() for ref in refs]
-            normalized_predecessors.append(
-                {
-                    "node_id": node_id,
-                    "relation_type": relation_type,
-                    "rationale": rationale,
-                    "input_refs": refs,
-                }
-            )
-            for ref in refs:
-                if ref not in fixed_inputs:
-                    fixed_inputs.append(ref)
-        if predecessors:
-            if supplied_inputs and inputs != fixed_inputs:
-                raise ValidationError("inputs must exactly match predecessor input_refs")
-            inputs = fixed_inputs
-        if strategy not in {"continue", "redirect", "anchor"}:
-            raise ValidationError("strategy must be continue, redirect, or anchor")
-        if strategy == "anchor" and not anchor_ref:
-            raise ValidationError("anchor strategy requires anchor_ref")
-        payload = {
-            "question": _text(question, "question"),
-            "why_now": _text(why_now, "why_now"),
-            "plan": _text(plan, "plan"),
-            "inputs": inputs,
-            "purpose": _text(purpose, "purpose"),
-            "strategy": strategy,
-            "anchor_ref": anchor_ref,
-            "question_ref": question_ref,
-            "origin_kind": "root" if root_reason else "derived" if predecessors else "legacy_unresolved",
-            "root_reason": root_reason,
-            "predecessors": normalized_predecessors,
-        }
+        payload = normalize_proposal(question, why_now, plan, inputs, purpose, strategy, anchor_ref, question_ref,
+                                     root_reason, predecessors, enforce_protocol=enforce_protocol)
+        inputs, anchor_ref, normalized_predecessors = payload['inputs'], payload['anchor_ref'], payload['predecessors']
 
         def work(db: sqlite3.Connection) -> dict:
             self._project(db)
@@ -612,20 +683,11 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                 require_new_work(db, *control_actor, manual=True, waiting=True, role='main')
             from .runtime_budget import check_node
             check_node(self, db)
+            question = self.validate_proposal_references(db, payload)
             node_id = self._next(db, "node", "X")
             qref = payload["question_ref"]
             if qref:
-                kid, revision = parse_knowledge_ref(qref)
-                question_row = db.execute(
-                    "SELECT e.kind,r.statement FROM knowledge_entries e "
-                    "JOIN knowledge_revisions r USING(knowledge_id) "
-                    "WHERE e.knowledge_id=? AND r.revision=?",
-                    (kid, revision),
-                ).fetchone()
-                if not question_row:
-                    raise NotFoundError(f"Unknown research reference: {qref}")
-                if question_row["kind"] != "open_question":
-                    raise ValidationError("question_ref must identify an open_question")
+                kid, revision = question
             else:
                 knowledge = self._record_knowledge_in_tx(
                     db,
@@ -653,21 +715,6 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                 "created_at": _now(),
                 "closed_at": None,
             }
-            for ref in inputs:
-                self._require_ref(db, ref)
-            if anchor_ref:
-                self._require_ref(db, anchor_ref)
-            for predecessor in normalized_predecessors:
-                if not db.execute(
-                    "SELECT 1 FROM nodes WHERE node_id=?", (predecessor["node_id"],)
-                ).fetchone():
-                    raise NotFoundError(f"Unknown predecessor node: {predecessor['node_id']}")
-                for ref in predecessor["input_refs"]:
-                    owner = self._ref_node_id(db, ref)
-                    if owner != predecessor["node_id"]:
-                        raise ValidationError(
-                            f"Input {ref} is not owned by predecessor {predecessor['node_id']}"
-                        )
             db.execute(
                 "INSERT INTO nodes "
                 "(node_id,question,why_now,plan,inputs,purpose,strategy,anchor_ref,question_ref,"
@@ -725,6 +772,8 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
             self._event(db, "node.proposed", value)
             return value
 
+        if _db is not None:
+            return work(_db)
         return self._mutate("propose", payload, request_id, work)
 
     def consume(
@@ -955,6 +1004,9 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                     (at, session_id),
                 )
         self._event(db, "attempt.finished", value)
+        if attempt["node_id"] is not None:
+            self.exploration_record_result(db, attempt["node_id"], "attempt:" + attempt["attempt_id"],
+                                           state, None, {"summary": details.get("reason", "")})
         self.queue_review_in_tx(db, "attempt-finished", attempt["attempt_id"], attempt["node_id"])
         if queued:
             next_id = self._next(db, "attempt", "A")
@@ -996,6 +1048,7 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
         request_id: str,
         knowledge_refs: list[str] | None = None,
         *, asserted_at: dict | None = None, display: dict | None = None,
+        draft_id: str | None = None, report_item_id: str | None = None,
     ) -> dict:
         if status not in {"partial", "complete"}:
             raise ValidationError("publication status must be partial or complete")
@@ -1043,6 +1096,40 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
             "items": normalized,
             "knowledge_refs": knowledge_refs,
         }
+        if draft_id is not None:
+            payload.update(draft_id=draft_id, report_item_id=report_item_id)
+
+        def check_draft(db):
+            from .exploration_store import _main
+            run = _main(db, host_id, session_id)
+            draft = db.execute('SELECT * FROM conclusion_drafts WHERE draft_id=? AND generation=?',
+                               (draft_id, run['generation'])).fetchone()
+            if not draft or self._project(db)['config'].get('conclusion_contract') != 'evidence-v1':
+                raise ValidationError('Conclusion draft is unavailable for this generation')
+            if status != 'complete' or report_item_id not in seen or 'evidence-appendix' in seen:
+                raise ValidationError('A draft publication requires a complete report item and an available appendix id')
+            declared_core = set(json.loads(draft['data'])['evaluation']['core_claim_refs'])
+            report = next(item for item in normalized if item['item_id'] == report_item_id)
+            if report['object_kind'] == 'directory':
+                raise ValidationError('The final report must be readable content, not a directory')
+            if not declared_core.issubset(set(knowledge_refs) | set(report['knowledge_refs'])):
+                raise ValidationError('The final report must cite every declared core claim revision')
+            return draft
+
+        appendix_product = None
+        if draft_id is not None:
+            from .artifacts import ArtifactStore
+            from .evidence_conclusion import render_appendix
+            with self._read() as db:
+                previous = db.execute('SELECT 1 FROM requests WHERE request_id=?', (request_id,)).fetchone()
+                draft_row = None if previous else check_draft(db)
+            if previous:
+                return self._mutate('publish', payload, request_id, lambda db: None)
+            appendix_text = render_appendix(draft_id, draft_row['basis_digest'], json.loads(draft_row['data']))
+            with tempfile.TemporaryDirectory(prefix='appendix-', dir=self.meta) as directory:
+                path = Path(directory) / 'evidence-appendix.md'
+                path.write_text(appendix_text, encoding='utf-8')
+                appendix_product = ArtifactStore(self.root).freeze(path, directory)
 
         def work(db: sqlite3.Connection) -> dict:
             # Captured before this transaction writes anything: the check's
@@ -1050,6 +1137,9 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
             publish_bound = epistemic.read_bound(db)
             association = self._association(db, host_id, session_id)
             attempt = self._attempt(db, association["association_id"])
+            draft = None
+            if draft_id is not None:
+                draft = check_draft(db)
             for refs_to_check in [knowledge_refs, *(item["knowledge_refs"] for item in normalized)]:
                 if not isinstance(refs_to_check, list) or not all(isinstance(ref, str) for ref in refs_to_check):
                     raise ValidationError("knowledge_refs must be research reference strings")
@@ -1110,7 +1200,24 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                     "INSERT OR IGNORE INTO publication_knowledge VALUES(?,?,?)",
                     (publication_id, kid, revision),
                 )
+            if draft:
+                appendix_content = _json({'draft_id': draft_id, 'basis_digest': draft['basis_digest'],
+                                          'manifest_digest': draft['manifest_digest']})
+                db.execute('INSERT INTO publication_items '
+                           '(publication_id,item_id,kind,content,object_version,object_kind,source_path,knowledge_refs) '
+                           'VALUES(?,?,?,?,?,?,?,?)',
+                           (publication_id, 'evidence-appendix', 'evidence_appendix', appendix_content,
+                            appendix_product['version'], appendix_product['kind'], 'evidence-appendix.md', '[]'))
+                report = next(item for item in normalized if item['item_id'] == report_item_id)
+                report_digest = report['object_version'] or hashlib.sha256(_json(report['content']).encode()).hexdigest()
+                appendix_digest = appendix_product['version']
+                db.execute('INSERT INTO conclusion_publications VALUES(?,?,?,?,?,?,?)',
+                           (publication_id, draft_id, report_item_id, 'evidence-appendix', report_digest,
+                            appendix_digest, draft['basis_digest']))
+                refs.append(f'pub/{publication_id}#evidence-appendix')
             value = {"publication_id": publication_id, "refs": refs, "created_at": at}
+            if draft:
+                value.update(draft_id=draft_id, appendix_ref=f'pub/{publication_id}#evidence-appendix')
             if status == "complete":
                 # R25: checked and stored inside the publishing transaction, so
                 # the receipt names the exact ledger position it was taken at.
@@ -1139,6 +1246,9 @@ class NativeStore(ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, Con
                 },
             )
             self._event(db, "publication.created", value)
+            if attempt["node_id"] is not None:
+                self.exploration_record_result(db, attempt["node_id"], "publication:" + publication_id,
+                                               "published", f"pub/{publication_id}", {"summary": summary})
             self.queue_review_in_tx(db, "publication", f"pub/{publication_id}", attempt["node_id"])
             return value
 

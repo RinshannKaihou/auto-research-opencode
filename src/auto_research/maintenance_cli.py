@@ -34,7 +34,7 @@ def parser() -> argparse.ArgumentParser:
     migration.add_argument("--no-files", action="store_true")
 
     commands.add_parser("validate", help="Read-only SQLite integrity and schema validation")
-    export = commands.add_parser("export", help="Export a schema-9/10 state view as JSON")
+    export = commands.add_parser("export", help="Export a supported read-only state view as JSON")
     export.add_argument("--output", type=Path, required=True)
 
     rebuild = commands.add_parser(
@@ -88,7 +88,7 @@ def execute(args: argparse.Namespace) -> dict:
         return validate_project(root)
     if args.command == "export":
         result = validate_project(root)
-        if result["schema_version"] not in {9, 10, 11, SCHEMA_VERSION} or not result["ok"]:
+        if result["schema_version"] not in range(9, SCHEMA_VERSION + 1) or not result["ok"]:
             raise ValueError("Export requires a valid supported project")
         output = args.output.expanduser().resolve()
         if output.exists():

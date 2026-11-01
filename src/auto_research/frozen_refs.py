@@ -6,12 +6,14 @@ never hashes an object or falls back to its original workspace source.
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from pathlib import Path
 import re
 import stat
 from urllib.parse import unquote
 
-from .artifacts import ArtifactError, ArtifactStore
+from .artifacts import ArtifactError, ArtifactStore, _open_source
 from .errors import NotFoundError, ValidationError
 
 
@@ -184,3 +186,35 @@ def require(db, root, ref):
     if result["outcome"] != "resolved":
         raise ValidationError(result["message"])
     return result
+
+
+def content_identity(db, root, ref):
+    """Identify exact file bytes even when a file is inside a frozen directory."""
+    result = resolve(db, root, ref)
+    if result['outcome'] != 'resolved':
+        return None
+    obj = result.get('object')
+    if obj:
+        if obj['kind'] == 'file' and not result.get('subpath'):
+            return ('file', obj['version'])
+        if not result.get('subpath'):
+            return None
+        opened, path = open(db, root, ref)
+        if opened['outcome'] != 'resolved' or not path or not path.is_file():
+            return None
+        digest = hashlib.sha256()
+        with _open_source(path, root) as fd:
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return ('file', digest.hexdigest())
+    parsed = parse(ref)
+    if parsed.get('publication_id') and parsed.get('item_id'):
+        row = db.execute('SELECT content FROM publication_items WHERE publication_id=? AND item_id=?',
+                         (parsed['publication_id'], parsed['item_id'])).fetchone()
+        if row:
+            body = json.dumps(json.loads(row[0]), ensure_ascii=False, sort_keys=True, allow_nan=False)
+            return ('inline', hashlib.sha256(body.encode('utf-8')).hexdigest())
+    return None

@@ -1,0 +1,130 @@
+{
+  "method": "stable DB/WAL and object copies; compare every historical column; original sources are not opened for writing",
+  "projects": [
+    {
+      "project": "project-01",
+      "old_schema": 10,
+      "new_schema": 15,
+      "historical_tables": 55,
+      "historical_rows": 2207,
+      "historical_columns_unchanged": true,
+      "source_db_wal_unchanged": true,
+      "new_scientific_records": {
+        "exploration_scopes": 0,
+        "exploration_routes": 0,
+        "exploration_decisions": 0,
+        "exploration_results": 0,
+        "review_assessments": 0,
+        "conclusion_drafts": 0,
+        "conclusion_evidence": 0
+      },
+      "backups": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "project": "project-02",
+      "old_schema": 10,
+      "new_schema": 15,
+      "historical_tables": 55,
+      "historical_rows": 3646,
+      "historical_columns_unchanged": true,
+      "source_db_wal_unchanged": true,
+      "new_scientific_records": {
+        "exploration_scopes": 0,
+        "exploration_routes": 0,
+        "exploration_decisions": 0,
+        "exploration_results": 0,
+        "review_assessments": 0,
+        "conclusion_drafts": 0,
+        "conclusion_evidence": 0
+      },
+      "backups": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "project": "project-03",
+      "old_schema": 10,
+      "new_schema": 15,
+      "historical_tables": 55,
+      "historical_rows": 2488,
+      "historical_columns_unchanged": true,
+      "source_db_wal_unchanged": true,
+      "new_scientific_records": {
+        "exploration_scopes": 0,
+        "exploration_routes": 0,
+        "exploration_decisions": 0,
+        "exploration_results": 0,
+        "review_assessments": 0,
+        "conclusion_drafts": 0,
+        "conclusion_evidence": 0
+      },
+      "backups": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "project": "project-04",
+      "old_schema": 10,
+      "new_schema": 15,
+      "historical_tables": 55,
+      "historical_rows": 5679,
+      "historical_columns_unchanged": true,
+      "source_db_wal_unchanged": true,
+      "new_scientific_records": {
+        "exploration_scopes": 0,
+        "exploration_routes": 0,
+        "exploration_decisions": 0,
+        "exploration_results": 0,
+        "review_assessments": 0,
+        "conclusion_drafts": 0,
+        "conclusion_evidence": 0
+      },
+      "backups": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "project": "project-05",
+      "old_schema": 10,
+      "new_schema": 15,
+      "historical_tables": 55,
+      "historical_rows": 1391,
+      "historical_columns_unchanged": true,
+      "source_db_wal_unchanged": true,
+      "new_scientific_records": {
+        "exploration_scopes": 0,
+        "exploration_routes": 0,
+        "exploration_decisions": 0,
+        "exploration_results": 0,
+        "review_assessments": 0,
+        "conclusion_drafts": 0,
+        "conclusion_evidence": 0
+      },
+      "backups": [
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    }
+  ]
+}

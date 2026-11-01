@@ -1,0 +1,26 @@
+{
+  "source_parent_commit": "9a7b1101f632fb7ac09e72da1964b33c2289ddb3",
+  "source_manifest": "../source-manifest-round2.json",
+  "generated_at_utc": "2026-11-01T08:28:06.370683+00:00",
+  "python": {
+    "command": "python3 -m pytest -q",
+    "passed": 695,
+    "failed": 0
+  },
+  "bun": {
+    "command": "bun test (in plugin/)",
+    "passed": 172,
+    "failed": 0
+  },
+  "typescript": {
+    "command": "bun run typecheck (in plugin/)",
+    "result": "passed"
+  },
+  "host_commands": [
+    "python3 scripts/probe_e1e2_run.py --scenario material-failure --trace-output <temporary trace>",
+    "python3 scripts/probe_e1e2_run.py --scenario full",
+    "python3 scripts/probe_packed_release.py --e1e2"
+  ],
+  "host_model": "local scripted provider; no external model",
+  "legacy_projects": "stable independent DB/WAL and object copies; placeholder sizes only"
+}
