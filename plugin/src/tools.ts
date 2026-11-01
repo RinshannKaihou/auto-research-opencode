@@ -33,7 +33,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read research state and fixed references. collection=evidence with refs opens a consistent, paged evidence snapshot; follow cursor unchanged and concatenate chunks, including risks and limitations. Supply include_materials for frozen text files. For an evidence conclusion read collection=evidence with draft_id and follow every page. exploration_scopes/routes/decisions/results/intents contain the current choice and its history. A checkpoint uses its delivered base automatically; on checkpoint_base_required read collection=checkpoint. review_obligations contains exact current tasks; critical_now/findings expose risks and discoveries. Use ref for a full record. A read proves delivery, not scientific understanding.',
+      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request. exploration_scopes/routes/decisions/results/intents contain choices and history. A read proves delivery, not scientific understanding.',
     parameters: {
       expected_digest: { type: "string" },
       scope_owner:{type:'string'},generation:{type:'number'},target_ref:{type:'string'},change_id:{type:'string'},obligation_id:{type:'string'},
@@ -41,7 +41,7 @@ export const TOOLS: ToolDefinition[] = [
       cursor: { type: "object", additionalProperties: true, properties: {} },
       decision_refs: { type: "array", items: { type: "string" } }, final_ref: { type: "string" },
       ref: { type: "string" }, refs: { type: "array", items: { type: "string" } },
-      include_materials: { type: "array", items: { type: "string" } },
+      material_ref: { type: "string" },
       draft_id: { type: "string" },
       snapshot_id: { type: "string" }, query: { type: "string" }, collection: { type: "string" },
       node_id: { type: "string" }, kind: { type: "string" }, after: { type: "number" },
@@ -310,7 +310,7 @@ TOOLS.push(
     parameters:{snapshot_id:{type:'string',required:true},core_claim_refs:{type:'array',required:true,items:{type:'string'}},
       outcome:{type:'string',required:true,enum:['answered','partial','unresolved']},gaps:{type:'array',required:true,items:{type:'string'}},
       risk_judgments:{type:'array',required:true,items:{type:'object',additionalProperties:false,properties:{
-        risk_id:{type:'string',required:true},core_impact:{type:'string',required:true,enum:['yes','no','unknown']},
+        risk_id:{type:'string'},risk_ids:{type:'array',items:{type:'string'}},core_impact:{type:'string',required:true,enum:['yes','no','unknown']},
         disposition:{type:'string',required:true,enum:['handled','unresolved']},reason:{type:'string',required:true},
         evidence_refs:{type:'array',items:{type:'string'}},gap:{type:'string'},
       }}},

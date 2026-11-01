@@ -42,6 +42,14 @@ export class NativeObservations {
       this.research.checkpoints.stepStarted(session,data.assistantMessageID)
       this.research.evidenceDelivery.stepStarted(session,data.assistantMessageID)
     }
+    if (type==='session.step.ended') {
+      void this.research.confirmMaterialDelivery(session,data.assistantMessageID).catch(error => {
+        this.log.append(root,{phase:'coverage_gap',source:'material_delivery',session_id:session,
+          error_code:error.code ?? 'delivery_unconfirmed'})
+      })
+      this.research.evidenceDelivery.stepFinished(session,data.assistantMessageID)
+    }
+    if (type==='session.step.failed') this.research.evidenceDelivery.stepFinished(session,data.assistantMessageID)
     if (!event.id) return
     if (type==='session.step.started') {
       void this.save(session,{phase:'started',source_key:`step:${session}:${data.assistantMessageID}`,model:data.model},event.id)

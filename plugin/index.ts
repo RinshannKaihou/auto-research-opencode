@@ -463,6 +463,7 @@ export default Plugin.define({
       if (tool.writes) await ensureController(root, main)
       const role = research.roleOf(sessionID)
       if (!tool.roles.includes(role as any)) throw new Error(`${tool.name} 不属于本会话的角色（${role ?? "未登记"}）`)
+      if (role === 'main') await research.confirmMaterialDelivery(sessionID,call.messageID)
       if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
         const current = await research.call<any>("status", sessionID)
         const run = current.workflow?.run?.state

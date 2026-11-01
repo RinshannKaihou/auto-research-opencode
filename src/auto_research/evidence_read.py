@@ -11,6 +11,7 @@ from .exploration_store import _current_scope, _decode
 from .memory_store import parse_knowledge_ref
 from .review_lifecycle import unresolved_challenges
 from .workflow_store import encoded
+from .material_read import MaterialReader, canonical_content, material_coverage
 
 
 def _hash(value):
@@ -117,7 +118,14 @@ def build_evidence_view(store, db, refs):
             if pid and parsed.get("item_id"):
                 item = db.execute("SELECT kind,content,object_version,object_kind,source_path,knowledge_refs FROM publication_items WHERE publication_id=? AND item_id=?",
                                   (pid, parsed["item_id"])).fetchone()
-                materials[ref]["item"] = {**dict(item), "content": json.loads(item["content"]),
+                content = json.loads(item['content'])
+                content_bytes = canonical_content(content)
+                if len(content_bytes) > 2048:
+                    content = None
+                    materials[ref]['inline_digest'] = hashlib.sha256(content_bytes).hexdigest()
+                    if not resolution.get('object'):
+                        limitations.append({'ref': ref, 'reason': 'material_content_not_delivered'})
+                materials[ref]["item"] = {**dict(item), "content": content,
                                            "knowledge_refs": json.loads(item["knowledge_refs"])}
                 queue.extend(json.loads(item["knowledge_refs"]))
             elif pid:
@@ -237,45 +245,40 @@ class EvidenceCache:
         self._max_snapshots = max_snapshots
         self._max_bytes = max_bytes
         self._bytes = 0
+        self.materials = MaterialReader()
 
-    def open(self, store, refs, include_materials=None):
-        with store._read() as db:
-            snapshot = build_evidence_view(store, db, refs)
-        include_materials = include_materials or []
-        if not isinstance(include_materials, list) or any(not isinstance(ref, str) for ref in include_materials):
-            raise ValidationError("include_materials must be a list of frozen references")
-        selected = set(include_materials)
-        materials = {item['ref']: item for item in snapshot['view']['materials']}
-        if selected - set(materials):
-            raise ValidationError("Requested content must be part of the evidence view")
-        for ref in sorted(selected):
-            material = materials[ref]
-            if not material.get('object'):
-                continue
-            with store._read() as db:
-                resolved, path = frozen_refs.open(db, store.root, ref)
-            if resolved['outcome'] != 'resolved' or not path or not path.is_file():
-                snapshot['view']['limitations'].append({'ref': ref, 'reason': resolved.get('reason') or 'not_a_text_file'})
-                continue
-            if path.stat().st_size > self._max_bytes // 2:
-                snapshot['view']['limitations'].append({'ref': ref, 'reason': 'material_too_large_for_snapshot'})
+    def annotate_materials(self, store, view, host=None, session=None):
+        """Attach delivered ranges without changing the scientific basis digest."""
+        for material in view['materials']:
+            item = material.get('item') or {}
+            if material['outcome'] != 'resolved' or not (material.get('object') or material.get('inline_digest')):
                 continue
             try:
-                material['content_text'] = path.read_text(encoding='utf-8')
-            except UnicodeDecodeError:
-                snapshot['view']['limitations'].append({'ref': ref, 'reason': 'material_not_utf8'})
-                continue
-            snapshot['view']['limitations'] = [item for item in snapshot['view']['limitations'] if not (
-                item['ref'] == ref and item['reason'] == 'material_content_not_delivered')]
-        if selected:
-            with store._read() as db:
-                if build_evidence_view(store, db, refs)['basis_digest'] != snapshot['basis_digest']:
-                    raise ConflictError('evidence_basis_changed: read the evidence again')
-            for limitation in snapshot['view']['limitations']:
-                if 'risk_id' not in limitation:
-                    limitation['risk_id'] = 'limit-' + _hash(limitation)[:24]
-            snapshot['view']['limitations'].sort(key=encoded)
-            snapshot['view']['material_content_in_snapshot'] = sorted(ref for ref in selected if 'content_text' in materials[ref])
+                descriptor = self.materials.describe(store, material['ref'])
+                public = {key: descriptor[key] for key in ('snapshot_id', 'digest', 'total_bytes', 'object', 'subpath')}
+                with store._read() as db:
+                    generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+                    coverage = (material_coverage(db, host, session, generation, descriptor)
+                                if host and session and db.execute('PRAGMA user_version').fetchone()[0] >= 15
+                                else {'complete': False, 'covered_bytes': 0})
+                material['material_identity'] = public
+                material['material_read'] = coverage
+                if coverage['complete']:
+                    view['limitations'] = [limit for limit in view['limitations'] if not (
+                        limit['ref'] == material['ref'] and limit['reason'] == 'material_content_not_delivered')]
+            except (ValidationError, OSError) as error:
+                material['read_error'] = str(error)
+        return view
+
+    def open(self, store, refs, include_materials=None, host=None, session=None):
+        with store._read() as db:
+            snapshot = build_evidence_view(store, db, refs)
+        if include_materials:
+            raise ValidationError('evidence_read_contract_changed: use material_ref to read frozen material')
+        self.annotate_materials(store, snapshot['view'], host, session)
+        with store._read() as db:
+            if build_evidence_view(store, db, refs)['basis_digest'] != snapshot['basis_digest']:
+                raise ConflictError('evidence_basis_changed: read the evidence again')
         return self._remember(store, snapshot)
 
     def draft_snapshot(self, store, draft_id, snapshot_id=None):
@@ -283,11 +286,13 @@ class EvidenceCache:
             row = db.execute('SELECT * FROM conclusion_drafts WHERE draft_id=?', (draft_id,)).fetchone()
             if not row:
                 raise ValidationError('Unknown conclusion draft')
-            view = json.loads(row['data'])['view']
+            data = json.loads(row['data'])
+            view = data['view']
             snapshot = {'project_id': store._project(db)['project_id'], 'generation': row['generation'],
                         'source_sequence': row['source_sequence'], 'basis_digest': row['basis_digest'],
                         'host_id': row['host_id'], 'session_id': row['session_id'],
-                        'draft_id': draft_id, 'view': view, 'snapshot_id': snapshot_id, 'root': str(store.root)}
+                        'draft_id': draft_id, 'view': view, 'snapshot_id': snapshot_id, 'root': str(store.root),
+                        'format_version': data.get('format_version', 1)}
         body = json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         digest = hashlib.sha256(body.encode('utf-8')).hexdigest()
         if digest != row['manifest_digest']:
@@ -323,7 +328,10 @@ class EvidenceCache:
         self._snapshots.move_to_end(snapshot_id)
         return snapshot
 
-    def page(self, store, *, refs=None, include_materials=None, draft_id=None, snapshot_id=None, cursor=None, limit=4096):
+    def page(self, store, *, refs=None, include_materials=None, draft_id=None, snapshot_id=None, cursor=None,
+             material_ref=None, limit=4096, host=None, session=None):
+        if material_ref or (cursor and cursor.get('part') == 'material'):
+            return self.materials.page(store, material_ref, cursor, limit)
         if cursor:
             if snapshot_id is not None and snapshot_id != cursor.get("snapshot_id"):
                 raise ValidationError("Evidence cursor does not match snapshot")
@@ -336,7 +344,7 @@ class EvidenceCache:
         else:
             offset = 0
         if snapshot_id is None:
-            snapshot_id = self.open_draft(store, draft_id) if draft_id else self.open(store, refs or [], include_materials)
+            snapshot_id = self.open_draft(store, draft_id) if draft_id else self.open(store, refs or [], include_materials, host, session)
         try:
             snapshot = self.get(store, snapshot_id)
         except ConflictError:
@@ -347,18 +355,29 @@ class EvidenceCache:
             raise ValidationError('Evidence cursor belongs to another conclusion draft')
         if refs is not None and sorted(set(refs)) != snapshot["view"]["roots"]:
             raise ConflictError("read_view_changed: evidence roots changed")
-        if not isinstance(offset, int) or offset < 0 or offset > len(snapshot["body"]):
+        is_decision = snapshot.get('draft_id') and snapshot.get('format_version') == 2
+        source = snapshot['body'].encode('utf-8') if is_decision else snapshot['body']
+        if not isinstance(offset, int) or offset < 0 or offset > len(source):
             raise ValidationError("Invalid evidence cursor offset")
-        limit = max(1, min(int(limit or 4096), 16384))
-        chunk = snapshot["body"][offset:offset + limit]
-        end = offset + len(chunk)
+        limit = max(4 if is_decision else 1, min(int(limit or 4096), 16384))
+        end = min(offset + limit, len(source))
+        if is_decision:
+            while end < len(source) and source[end] & 0xc0 == 0x80:
+                end -= 1
+            try:
+                chunk = source[offset:end].decode('utf-8')
+            except UnicodeDecodeError as error:
+                raise ValidationError('Invalid UTF-8 decision cursor') from error
+        else:
+            chunk = source[offset:end]
         view = snapshot["view"]
         return {key: snapshot[key] for key in ("snapshot_id", "project_id", "generation", "source_sequence",
                                               "basis_digest", "manifest_digest")} | {
-            "offset": offset, "chunk": chunk, "total_chars": len(snapshot["body"]),
+            "offset": offset, "end": end, "chunk": chunk, "total_chars": len(snapshot["body"]),
+            **({'part': 'decision', 'offset_unit': 'utf8_byte', 'total_bytes': len(source)} if is_decision else {}),
             "draft_id": snapshot.get('draft_id'),
             "cursor": {"snapshot_id": snapshot_id, "offset": end,
                        **({'draft_id': snapshot['draft_id']} if snapshot.get('draft_id') else {})}
-                      if end < len(snapshot["body"]) else None,
+                      if end < len(source) else None,
             "counts": {key: len(view[key]) for key in ("records", "edges", "materials", "risks", "reviews", "limitations")},
             "graph_complete": view["graph_complete"], "raw_material_read": view["raw_material_read"]}

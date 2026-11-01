@@ -750,7 +750,7 @@ class NativeService:
                 'runtime_control_contract':'controller-launch-v1',
                 'review_lifecycle':'candidate-obligation-v1',
                 'exploration_contract':'exploration-v1', 'evidence_contract':'evidence-v1',
-                'evidence_read':'snapshot-delivery-v1', 'backend_version':__version__,
+                'evidence_read':'snapshot-delivery-v2', 'backend_version':__version__,
                 'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered',
                 "native_specialists": "foreground-one-shot",
             }
@@ -1079,7 +1079,8 @@ class NativeService:
                 )
             elif method == "query":
                 if request.get('collection') == 'evidence':
-                    value = self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit') if key in request})
+                    value = self.evidence.page(store, host=host_id, session=session_id, **{key: request[key] for key in
+                        ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'material_ref', 'limit') if key in request})
                 elif request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
                     value = store.exploration_page(request['collection'], **{key: request[key] for key in
                         ('cursor', 'limit', 'ref') if key in request})
@@ -1219,7 +1220,30 @@ class NativeService:
                 with store._read() as db:
                     store._association(db, host_id, session_id)
                     generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+                    main = db.execute('SELECT 1 FROM workflow_project p JOIN workflow_sessions w ON w.session_id=p.main_session_id '
+                                      "WHERE p.id=1 AND w.host_id=? AND w.session_id=? AND w.role='main' AND w.detached=0",
+                                      (host_id, session_id)).fetchone()
                 for index, page in enumerate(pages):
+                    if page.get('part') == 'material':
+                        if not main:
+                            rejected.append({'index': index, 'reason': 'wrong_session'})
+                            continue
+                        try:
+                            material = self.evidence.materials.describe(store, page.get('material_ref'))
+                            start, end = page.get('offset'), page.get('end')
+                            if (type(start) is not int or type(end) is not int or not 0 <= start < end <= material['total_bytes']
+                                    or page.get('snapshot_id') != material['snapshot_id']
+                                    or page.get('manifest_digest') != material['digest']
+                                    or not isinstance(page.get('model_message_id'), str) or not page['model_message_id']
+                                    or page.get('chunk_digest') != hashlib.sha256(self.evidence.materials.bytes(material, start, end)).hexdigest()):
+                                rejected.append({'index': index, 'reason': 'page_mismatch'})
+                                continue
+                            validated.append({'snapshot_id': material['snapshot_id'], 'draft_id': None, 'part': 'material',
+                                              'model_message_id': page['model_message_id'], 'generation': generation,
+                                              'offset': start, 'end': end, 'digest': material['digest']})
+                        except (ConflictError, ValidationError, OSError):
+                            rejected.append({'index': index, 'reason': 'material_unavailable'})
+                        continue
                     try:
                         snapshot = self.evidence.get(store, page.get('snapshot_id'))
                     except ValidationError:
@@ -1241,15 +1265,19 @@ class NativeService:
                     if (snapshot.get('draft_id') and (snapshot.get('host_id') != host_id or snapshot.get('session_id') != session_id)):
                         rejected.append({'index': index, 'reason': 'wrong_session'})
                         continue
-                    if (type(start) is not int or type(end) is not int or not 0 <= start < end <= len(snapshot['body'])
+                    part = 'decision' if snapshot.get('draft_id') and snapshot.get('format_version') == 2 else 'manifest'
+                    body = snapshot['body'].encode('utf-8') if part == 'decision' else snapshot['body']
+                    if (type(start) is not int or type(end) is not int or not 0 <= start < end <= len(body)
+                            or page.get('part', part) != part
                             or page.get('draft_id', snapshot.get('draft_id')) != snapshot.get('draft_id')
                             or page.get('manifest_digest') != snapshot['manifest_digest']
-                            or page.get('chunk_digest') != hashlib.sha256(snapshot['body'][start:end].encode('utf-8')).hexdigest()):
+                            or page.get('chunk_digest') != hashlib.sha256(
+                                body[start:end] if part == 'decision' else body[start:end].encode('utf-8')).hexdigest()):
                         rejected.append({'index': index, 'reason': 'page_mismatch'})
                         continue
                     validated.append({'snapshot_id': snapshot['snapshot_id'], 'draft_id': snapshot.get('draft_id'),
                                       'generation': snapshot['generation'], 'offset': start, 'end': end,
-                                      'digest': snapshot['manifest_digest']})
+                                      'part': part, 'digest': snapshot['manifest_digest']})
                 value = store.evidence_observed(host_id, session_id, request.get('plugin_instance_id'), validated, self._operation(request))
                 value['rejected'] = rejected
             elif method == "context_shadow":

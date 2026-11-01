@@ -89,7 +89,7 @@ finally {probe.close();}
       request("status", "status"),
     ])
     expect(responses.map((response) => response.ok)).toEqual([true, true, true, true, false, true, true])
-    expect(responses[0].value.schema_version).toBe(14)
+    expect(responses[0].value.schema_version).toBe(15)
     expect(responses[0].value.memory_write_contract).toBe('r2-v1')
     expect(responses[0].value.checkpoint_base).toBe('receipt-cas-v1')
     expect(responses[4].error.message).toContain("item_missing")
@@ -111,7 +111,7 @@ finally {probe.close();}
     const downgraded = spawnSync(python,['-S','-c',`
 import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as db:
-    for table in ('review_candidates','review_obligations','review_lifecycle_events','checkpoint_read_receipts','runtime_budgets','runtime_budget_reservations','runtime_progress'):
+    for table in ('review_candidates','review_obligations','review_lifecycle_events','checkpoint_read_receipts','runtime_budgets','runtime_budget_reservations','runtime_progress','generation_conclusion_contracts'):
         db.execute('DROP TABLE '+table)
     db.execute('PRAGMA user_version=10')
 `,join(project,'.research/state.sqlite3')],{cwd:release,env,encoding:'utf8',timeout:10_000})
@@ -123,7 +123,7 @@ with sqlite3.connect(sys.argv[1]) as db:
       request('new-capabilities','project_read',{root:project,view:'capabilities'}),
       request('checkpoint','memory_write',{model_call:true,action:'checkpoint',fields:{state:{phase:'synthesis'},expected_revision:0}})])
     expect(migrated.every(row=>row.ok)).toBe(true)
-    expect(migrated[1].value.schema_version).toBe(14)
+    expect(migrated[1].value.schema_version).toBe(15)
     expect(migrated[2].value).toEqual(responses[2].value)
     expect(readFileSync(join(project,'.research/schema-10-backup.sqlite3')).length).toBeGreaterThan(0)
 
@@ -174,8 +174,8 @@ pub=call('publish',model_call=True,status='complete',summary='report',gaps=[],kn
 page=call('query',collection='evidence',draft_id=draft['draft_id'],limit=500)
 pages=[]
 while True:
-    end=page['cursor']['offset'] if page['cursor'] else page['total_chars']
-    pages.append({'snapshot_id':page['snapshot_id'],'offset':page['offset'],'end':end,
+    end=page['end']
+    pages.append({'snapshot_id':page['snapshot_id'],'draft_id':page['draft_id'],'part':page['part'],'offset':page['offset'],'end':end,
         'manifest_digest':page['manifest_digest'],'chunk_digest':hashlib.sha256(page['chunk'].encode()).hexdigest()})
     if not page['cursor']: break
     page=call('query',collection='evidence',cursor=page['cursor'],limit=500)

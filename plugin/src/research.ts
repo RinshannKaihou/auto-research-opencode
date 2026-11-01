@@ -157,7 +157,7 @@ export class Research {
     this.contract ??= this.storage.request('capabilities').then(value => {
       if (value.memory_write_contract!=='r2-v1' || value.runtime_control_contract !== 'controller-launch-v1' ||
           value.exploration_contract !== 'exploration-v1' || value.evidence_contract !== 'evidence-v1' ||
-          value.evidence_read !== 'snapshot-delivery-v1') throw Object.assign(
+          value.evidence_read !== 'snapshot-delivery-v2') throw Object.assign(
         new Error('Research backend contract mismatch: install the matching plugin and bundled Python package.'),
         {code:'research_contract_mismatch'})
     }).catch(error=>{this.contract=null;throw error})
@@ -573,5 +573,16 @@ export class Research {
         }
       }))
     },Math.max(0,timeoutMs))
+  }
+
+  async confirmMaterialDelivery(sessionID:string,messageID:string): Promise<void> {
+    if (this.roleOf(sessionID)!=='main') return
+    await this.evidenceDelivery.confirmMaterials(sessionID,messageID,async pages => {
+      const requestID=randomUUID()
+      const batches=Array.from({length:Math.ceil(pages.length/100)},(_,i)=>pages.slice(i*100,(i+1)*100))
+      const results=await Promise.all(batches.map((batch,index)=>this.call<{receipt_ids:string[];rejected?:{reason:string}[]}>(
+        'evidence_observed',sessionID,{pages:batch},`material-observed:${requestID}:${index}`)))
+      return {receipt_ids:results.flatMap(item=>item.receipt_ids),rejected:results.flatMap(item=>item.rejected ?? [])}
+    })
   }
 }

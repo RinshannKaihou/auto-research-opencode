@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import copy
 
 from . import frozen_refs
 from .controller import require_controller
@@ -41,7 +42,8 @@ def render_appendix(draft_id, basis_digest, data):
             lines.append(f'  - 依据：{ref}')
     lines.extend(['', '## 材料与读取范围'])
     for material in view['materials']:
-        included = '已纳入依据快照' if material.get('content_text') is not None or (material.get('item') or {}).get('content') else '正文未纳入快照'
+        included = ('原文已在当前决策包中' if (material.get('item') or {}).get('content') and not material.get('object')
+                    else '原文曾完整送达主会话' if (material.get('material_read') or {}).get('complete') else '正文未完整送达')
         lines.append(f"- {material['ref']}：{material['outcome']}；{included}。")
     if not view['materials']:
         lines.append('- 未登记固定材料。')
@@ -176,9 +178,9 @@ def evaluate(store, db, view, fields):
         if material:
             if material['outcome'] != 'resolved':
                 return False
-            if material.get('object'):
-                return 'content_text' in material
-            if (material.get('item') or {}).get('content'):
+            if (material.get('material_read') or {}).get('complete'):
+                return True
+            if not material.get('object') and (material.get('item') or {}).get('content'):
                 return True
         return any(has_fixed_support(edge['used_ref'], seen) for edge in view['edges'] if edge['user_ref'] == ref)
     unsupported_core = [ref for ref in core if ref in records and (
@@ -189,9 +191,18 @@ def evaluate(store, db, view, fields):
         item['kind'] == 'impact' and item.get('disposition') and item['disposition']['kind'] != 'unresolved')]
     risks.extend(view['limitations'])
     by_id = {item['risk_id']: item for item in risks}
-    judgments = fields.get('risk_judgments', [])
-    if not isinstance(judgments, list):
+    requested_judgments = fields.get('risk_judgments', [])
+    if not isinstance(requested_judgments, list):
         raise ValidationError('risk_judgments must be a list')
+    judgments = []
+    for item in requested_judgments:
+        if isinstance(item, dict) and 'risk_ids' in item:
+            ids = item['risk_ids']
+            if 'risk_id' in item or not isinstance(ids, list) or not ids:
+                raise ValidationError('risk_ids must be a nonempty list without risk_id')
+            judgments.extend({**{key: value for key, value in item.items() if key != 'risk_ids'}, 'risk_id': ident} for ident in ids)
+        else:
+            judgments.append(item)
     seen, unresolved = set(), []
     for item in judgments:
         if not isinstance(item, dict) or item.get('risk_id') not in by_id or item['risk_id'] in seen:
@@ -279,14 +290,19 @@ class EvidenceConclusionStore:
             for page in pages:
                 if page['generation'] != generation:
                     raise ConflictError('Evidence was delivered in another generation')
+                part = page.get('part', 'manifest')
+                if part == 'material':
+                    _main(db, host, session)
                 identity = [generation, host, session, instance_id, page['snapshot_id'], page['draft_id'],
-                            page['offset'], page['end'], page['digest']]
+                            part, page['offset'], page['end'], page['digest']]
                 receipt = 'evr-' + hashlib.sha256(encoded(identity).encode()).hexdigest()
-                db.execute('INSERT OR IGNORE INTO evidence_read_receipts '
-                           '(receipt_id,generation,host_id,session_id,plugin_instance_id,snapshot_id,draft_id,part,start_offset,end_offset,digest,created_at) '
-                           'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                           (receipt, generation, host, session, instance_id, page['snapshot_id'], page['draft_id'],
-                            'manifest', page['offset'], page['end'], page['digest'], now()))
+                columns = ('receipt_id,generation,host_id,session_id,plugin_instance_id,snapshot_id,draft_id,part,start_offset,end_offset,digest,created_at')
+                values = (receipt, generation, host, session, instance_id, page['snapshot_id'], page['draft_id'],
+                          part, page['offset'], page['end'], page['digest'], now())
+                if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                    columns += ',model_message_id'
+                    values += (page.get('model_message_id'),)
+                db.execute(f"INSERT OR IGNORE INTO evidence_read_receipts ({columns}) VALUES({','.join('?' for _ in values)})", values)
                 receipts.append(receipt)
             return {'receipt_ids': receipts}
         return self._mutate('evidence.observed', payload, operation, work)
@@ -321,6 +337,8 @@ class EvidenceConclusionStore:
 
     def prepare_conclusion(self, host, session, fields, snapshot, operation):
         payload = {'host': host, 'session': session, 'fields': fields}
+        if snapshot:
+            snapshot = {**snapshot, 'view': copy.deepcopy(snapshot['view'])}
 
         def work(db):
             nonlocal snapshot
@@ -359,24 +377,22 @@ class EvidenceConclusionStore:
                 old_materials = {item['ref']: item for item in snapshot['view']['materials']}
                 for item in view['materials']:
                     old = old_materials.get(item['ref'], {})
-                    if 'content_text' in old:
-                        item['content_text'] = old['content_text']
-                selected = snapshot['view'].get('material_content_in_snapshot')
-                if selected is not None:
-                    view['material_content_in_snapshot'] = selected
-                    selected_refs = set(selected)
-                    view['limitations'] = [item for item in view['limitations'] if not (
-                        item['ref'] in selected_refs and item['reason'] == 'material_content_not_delivered')]
-                    view['limitations'].extend(item for item in snapshot['view']['limitations'] if item['reason'] in {
-                        'material_too_large_for_snapshot', 'material_not_utf8'})
-                    view['limitations'].sort(key=encoded)
-                body = json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+                    for key in ('material_identity', 'material_read', 'read_error'):
+                        if key in old:
+                            item[key] = old[key]
+                    if (old.get('material_read') or {}).get('complete'):
+                        view['limitations'] = [limit for limit in view['limitations'] if not (
+                            limit['ref'] == item['ref'] and limit['reason'] == 'material_content_not_delivered')]
                 snapshot = {**snapshot, 'view': view, 'basis_digest': refreshed['basis_digest'],
-                            'source_sequence': refreshed['source_sequence'],
-                            'manifest_digest': hashlib.sha256(body.encode('utf-8')).hexdigest()}
+                            'source_sequence': refreshed['source_sequence']}
                 result = evaluate(self, db, view, fields)
+            snapshot['view']['conclusion_decision'] = result
+            body = json.dumps(snapshot['view'], ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+            if len(body) > 32000:
+                raise ValidationError(f'decision_package_too_large: {len(body)} bytes; narrow the declared scope explicitly')
+            snapshot['manifest_digest'] = hashlib.sha256(body).hexdigest()
             draft_id = self._next(db, 'conclusion_draft', 'CD')
-            data = {'view': snapshot['view'], 'evaluation': result, 'fields': fields, 'snapshot_id': snapshot['snapshot_id'],
+            data = {'format_version': 2, 'view': snapshot['view'], 'evaluation': result, 'fields': fields, 'snapshot_id': snapshot['snapshot_id'],
                     'versions': contract_versions(self, db, host, session),
                     'material_content_in_snapshot': snapshot['view'].get('material_content_in_snapshot', [])}
             db.execute('INSERT INTO conclusion_drafts VALUES(?,?,?,?,?,?,?,?,?)',
@@ -397,6 +413,8 @@ class EvidenceConclusionStore:
         if not draft:
             raise ValidationError('A conclusion draft for the current generation is required')
         data = json.loads(draft['data'])
+        if data.get('format_version') != 2:
+            raise ConflictError('conclusion_draft_format_changed: prepare the conclusion again')
         current = build_evidence_view(self, db, data['view']['roots'])
         if current['basis_digest'] != draft['basis_digest']:
             raise EvidenceBasisChanged('conclusion', basis_changes(data['view'], current['view']))
@@ -421,7 +439,7 @@ class EvidenceConclusionStore:
         ranges = []
         for receipt_id in set(receipt_ids):
             receipt = db.execute('SELECT * FROM evidence_read_receipts WHERE receipt_id=? AND draft_id=? '
-                                 'AND generation=? AND host_id=? AND session_id=? AND plugin_instance_id=? AND digest=?',
+                                 "AND generation=? AND host_id=? AND session_id=? AND plugin_instance_id=? AND digest=? AND part='decision'",
                                  (receipt_id, draft_id, run['generation'], host, session, instance_id, draft['manifest_digest'])).fetchone()
             if receipt:
                 ranges.append((receipt['start_offset'], receipt['end_offset']))
@@ -431,7 +449,7 @@ class EvidenceConclusionStore:
             if start > end:
                 break
             end = max(end, stop)
-        if end < len(body):
+        if end < len(body.encode('utf-8')):
             raise ConflictError('Complete evidence must be delivered to the current model request')
         result = evaluate(self, db, data['view'], data['fields'])
 

@@ -156,13 +156,30 @@ def deliver_draft(host, draft_id, instance='plugin-1'):
     page = host.call('query', collection='evidence', draft_id=draft_id, limit=100)
     pages = []
     while True:
-        end = page['cursor']['offset'] if page['cursor'] else page['total_chars']
-        pages.append({'snapshot_id': page['snapshot_id'], 'offset': page['offset'], 'end': end,
+        end = page['end']
+        pages.append({'snapshot_id': page['snapshot_id'], 'draft_id': draft_id, 'part': page.get('part', 'manifest'), 'offset': page['offset'], 'end': end,
                       'manifest_digest': page['manifest_digest'], 'chunk_digest': hashlib.sha256(page['chunk'].encode()).hexdigest()})
         if not page['cursor']:
             break
         page = host.call('query', collection='evidence', cursor=page['cursor'], limit=100)
     return host.call('evidence_observed', pages=pages, plugin_instance_id=instance)['receipt_ids']
+
+
+def deliver_material(host, ref, limit=16384):
+    page = host.call('query', collection='evidence', material_ref=ref, limit=limit)
+    pages, chunks = [], []
+    while True:
+        chunks.append(page['chunk'])
+        pages.append({'snapshot_id': page['snapshot_id'], 'part': 'material', 'material_ref': ref,
+                      'model_message_id': f'model-step-{len(pages)}', 'offset': page['offset'], 'end': page['end'],
+                      'manifest_digest': page['manifest_digest'], 'chunk_digest': hashlib.sha256(page['chunk'].encode()).hexdigest()})
+        if not page['cursor']:
+            break
+        page = host.call('query', collection='evidence', cursor=page['cursor'], limit=limit)
+    for i in range(0, len(pages), 100):
+        result = host.call('evidence_observed', pages=pages[i:i+100], plugin_instance_id='plugin-1')
+        assert not result['rejected']
+    return ''.join(chunks)
 
 
 def test_evidence_conclusion_uses_bound_report_and_delivered_draft(completed):
@@ -425,7 +442,8 @@ def test_blind_review_independence_uses_actual_assigned_inputs(tmp_path, assigne
     link(host, obligation, f"pub/{review['publication_id']}#review", review_type='citation_scope',
          specialist_task_id=task['task_id'], result='supports')
     host.call('conclusion_contract', contract='evidence-v1')
-    page = host.call('query', collection='evidence', refs=[claim['ref']], include_materials=[source])
+    deliver_material(host, source)
+    page = host.call('query', collection='evidence', refs=[claim['ref']])
     draft = host.call('conclusion_prepare', model_call=True, fields={**fields([claim['ref']]),
         'snapshot_id':page['snapshot_id'], 'review_requirements':[
             {'target_ref':claim['ref'],'types':['citation_scope'],'independent':True}]})
@@ -466,7 +484,8 @@ def test_core_file_must_be_delivered_and_verified_again_at_conclusion(tmp_path):
     missing = host.call('query',collection='evidence',refs=[claim['ref']])
     declaration = {**fields([claim['ref']]),'snapshot_id':missing['snapshot_id']}
     assert 'Core evidence' in host.error('conclusion_prepare',model_call=True,fields=declaration)
-    page = host.call('query',collection='evidence',refs=[claim['ref']],include_materials=[source_ref])
+    deliver_material(host, source_ref)
+    page = host.call('query',collection='evidence',refs=[claim['ref']])
     draft = host.call('conclusion_prepare',model_call=True,fields={**declaration,'snapshot_id':page['snapshot_id']})
     publication = host.call('publish',status='complete',summary='final',gaps=[],knowledge_refs=[claim['ref']],
         items=[{'item_id':'report','kind':'text','content':{'text':'Result is 7'}}],

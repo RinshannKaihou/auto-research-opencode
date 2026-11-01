@@ -47,3 +47,18 @@ test('completed batches survive another batch timing out', async () => {
   expect(delivery.forCall('main','message','finish')).toEqual(['valid'])
   expect(issues.sort()).toEqual(['evidence_snapshot_expired','timeout'])
 })
+
+test('material pages become durable only after their model step produces a response', async () => {
+  const delivery=new EvidenceDelivery()
+  const material={snapshot_id:'material-1',part:'material',material_ref:'pub/P-1#data',offset:0,end:6,
+    chunk:'中文',total_bytes:6,cursor:null,manifest_digest:'material-digest'}
+  delivery.result('main','call','research_query',material)
+  delivery.stepStarted('main','model-message')
+  let early=0
+  await delivery.request('main',result(material),async()=>{early++;return {receipt_ids:[]}},100)
+  expect(early).toBe(0)
+  let seen:any[]=[]
+  await delivery.confirmMaterials('main','model-message',async pages=>{seen=pages;return {receipt_ids:['accepted']}})
+  expect(seen[0].model_message_id).toBe('model-message')
+  expect(seen[0].material_ref).toBe('pub/P-1#data')
+})

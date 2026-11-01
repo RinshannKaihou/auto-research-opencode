@@ -2302,3 +2302,28 @@ test('evidence conclusion requires the actual draft pages in the model request',
   expect(conclusion.evidence.review_coverage.status).toBe('unreviewed')
   expect(conclusion.evidence.appendix_ref).toContain('#evidence-appendix')
 })
+
+test('material pages are confirmed when the coordinator actually responds', async () => {
+  const host = await load()
+  await host.command('init','ses_main',{goal:'Answer from a frozen file'})
+  await host.command('conclusion-contract','ses_main',{contract:'evidence-v1'})
+  writeFileSync(join(project,'measurement.txt'),'温度😀\r\nMeasured value: 7\r\n')
+  const source=await host.call('research_publish','ses_main',{status:'complete',summary:'measurement',gaps:[],
+    items:[{item_id:'data',kind:'text',source_path:'measurement.txt'}],knowledge_refs:[]})
+  const ref=`pub/${source.publication_id}#data`
+  const claim=await host.call('research_record','ses_main',{kind:'claim',statement:'Measured value is 7',
+    evidence_refs:[ref],visibility:'project'})
+  const material=await host.tools.get('research_query').execute({collection:'evidence',material_ref:ref},
+    {sessionID:'ses_main',messageID:'read-material',id:'material-page',agent:'build'})
+  const request=modelRequest('ses_main')
+  request.messages=[{role:'tool',content:[{type:'tool-result',id:'material-page',name:'research_query',
+    result:{type:'text',value:material.content}}]}] as any
+  host.events.push({id:'material-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'material-response',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items.length>0,'material step')
+  await host.hooks.get('context')!(request)
+  const response=await host.tools.get('research_query').execute({collection:'evidence',refs:[claim.ref],limit:16384},
+    {sessionID:'ses_main',messageID:'material-response',id:'after-material',agent:'build'})
+  const view=JSON.parse(JSON.parse(response.content).chunk)
+  expect(view.materials.find((item:any)=>item.ref===ref).material_read.complete).toBe(true)
+})
