@@ -454,7 +454,7 @@ class RuntimeStore:
             from .exploration_store import check_exploration_task
             check = check_exploration_task(self, db, task_id)
             if not check['allowed']:
-                return {'claimed': False, 'reason': check['reason'], 'state': 'queued'}
+                return {'claimed': False, 'reason': check['reason'], 'state': check['state']}
             active = db.execute("SELECT COUNT(*) FROM exploration_tasks WHERE state IN ('starting','running','stopping','unverified')").fetchone()[0]
             if active >= concurrency:
                 return {'claimed': False, 'reason': 'capacity', 'state': 'queued'}
@@ -534,9 +534,11 @@ class RuntimeStore:
                                  (host, session)).fetchone()
             notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=? AND recipient=?',
                                 (notification_id, session)).fetchone()
+            exploration = notice and notice['kind'] == 'exploration_result'
+            matched = notice and (notice['task_id'] in json.loads(current['waiting']) or exploration and notice['task_id'] is None)
             if (actor['pause_reason'] != 'wait' or not notice or notice['state'] != 'delivered'
-                    or notice['kind'] not in {'finished', 'stopped', 'failed', 'unknown'}
-                    or notice['task_id'] not in json.loads(current['waiting'])):
+                    or notice['kind'] not in {'finished', 'stopped', 'failed', 'unknown', 'exploration_result'}
+                    or not matched or exploration and not self._exploration_notice_pending(db, notice)):
                 raise ConflictError('The coordinator is not waiting for this delivered result')
             if previous:
                 details = json.loads(previous['details'])
@@ -560,12 +562,21 @@ class RuntimeStore:
             details = json.loads(row['details'])
             if details['host'] != host or details['message_id'] != message_id:
                 raise ConflictError('Coordinator wake confirmation does not match')
+            notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=?', (details['notification_id'],)).fetchone()
+            if notice and notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                raise ConflictError('Exploration result is no longer pending')
             db.execute("UPDATE workflow_sessions SET waiting='[]',pause_reason=NULL WHERE host_id=? AND session_id=? AND pause_reason='wait'",
                        (host, session))
             db.execute("UPDATE workflow_intents SET state='delivered',updated_at=? WHERE intent_id=?", (timestamp(), intent_id))
             self._event(db, 'runtime.wake_delivered', {'intent_id': intent_id})
             return {'intent_id': intent_id, 'state': 'delivered'}
         return self._mutate('runtime.wake_confirm', payload, operation, work)
+
+    @staticmethod
+    def _exploration_notice_pending(db, notice):
+        return bool(db.execute('SELECT 1 FROM exploration_results r JOIN exploration_scopes s ON s.scope_id=r.scope_id '
+            'JOIN workflow_project p ON p.generation=s.generation WHERE p.id=1 AND r.result_id=? '
+            'AND r.handled_by_decision IS NULL AND p.main_session_id=?', (notice['reference'], notice['recipient'])).fetchone())
 
     def notification_begin(self, host, session, notification_id, operation, text=None):
         """Reserve a stable host message before attempting delivery once."""
@@ -580,6 +591,9 @@ class RuntimeStore:
                                 (notification_id, session)).fetchone()
             if not role or role['role'] != 'main' or role['detached'] or not notice:
                 raise ValidationError('Notification does not belong to the current coordinator')
+            if notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
+                return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
             intent_id = 'notification:' + notification_id
             previous = db.execute('SELECT * FROM workflow_intents WHERE intent_id=?', (intent_id,)).fetchone()
             if previous:
@@ -876,6 +890,10 @@ class RuntimeStore:
                                     (wake_intent_id, session)).fetchone()
                 if not intent or intent['state'] != 'submitting' or json.loads(intent['details'])['host'] != host:
                     raise ConflictError('Coordinator wake is not authorized')
+                notice = db.execute('SELECT * FROM workflow_notifications WHERE notification_id=?',
+                                    (json.loads(intent['details'])['notification_id'],)).fetchone()
+                if notice and notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
+                    raise ConflictError('Exploration result is no longer pending')
             if launch_intent_id:
                 launch = db.execute("SELECT * FROM workflow_intents WHERE intent_id=? AND kind='node_launch'",
                                     (launch_intent_id,)).fetchone()

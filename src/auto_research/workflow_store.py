@@ -158,7 +158,13 @@ class WorkflowStore:
             "tasks": ("exploration_tasks", f"state IN {live} OR session_id=?", (session_id,)),
             "notifications": (
                 "workflow_notifications",
-                "state='pending' OR (state='delivered' AND task_id IN (SELECT j.value FROM workflow_sessions w,json_each(w.waiting) j WHERE w.detached=0 AND w.pause_reason IN ('wait','project_wait')))",
+                "state='pending' OR (state='delivered' AND task_id IN (SELECT j.value FROM workflow_sessions w,json_each(w.waiting) j WHERE w.detached=0 AND w.pause_reason IN ('wait','project_wait')))" +
+                (" OR (state='delivered' AND kind='exploration_result' AND task_id IS NULL "
+                 "AND EXISTS (SELECT 1 FROM workflow_sessions w WHERE w.session_id=recipient AND w.detached=0 AND w.pause_reason='wait') "
+                 "AND EXISTS (SELECT 1 FROM exploration_results r JOIN exploration_scopes s ON s.scope_id=r.scope_id "
+                 "JOIN workflow_project p ON p.generation=s.generation WHERE r.result_id=workflow_notifications.reference AND r.handled_by_decision IS NULL) "
+                 "AND NOT EXISTS (SELECT 1 FROM workflow_intents i WHERE i.intent_id='notification-wake:' || workflow_notifications.notification_id AND i.state='delivered'))"
+                 if db.execute('PRAGMA user_version').fetchone()[0] >= 15 else ''),
                 (),
             ),
             "intents": ("workflow_intents", "session_id=? AND kind='jobs'", (session_id,)),

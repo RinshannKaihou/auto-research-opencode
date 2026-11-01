@@ -280,5 +280,5 @@ def test_schema9_readonly_and_upgrade_keep_historical_completion(tmp_path):
         assert [tuple(r) for r in db.execute('SELECT * FROM node_checkpoints')] == original
     with sqlite3.connect(host.root / '.research/schema-9-backup.sqlite3') as db:
         assert db.execute('PRAGMA user_version').fetchone()[0] == 9
-    from auto_research.schema14 import migrate_schema14
-    migrate_schema14(store.db_path)  # latest migration is idempotent
+    from auto_research.schema15 import migrate_schema15
+    migrate_schema15(store.db_path)  # latest migration is idempotent

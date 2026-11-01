@@ -586,7 +586,15 @@ export default Plugin.define({
           const run = state.workflow?.run?.state
           const pause = state.workflow?.session?.pause_reason
           if (state.project?.config?.exploration_policy !== 'exploration-v1') {
-            for (const name of ['research_scope', 'research_route', 'research_decide']) delete request.tools[name]
+            for (const name of ['research_scope', 'research_route']) delete request.tools[name]
+            if (!state.exploration_closing_allowed) delete request.tools.research_decide
+            else if (request.tools.research_decide) {
+              const spec=TOOLS.find(tool=>tool.name==='research_decide')!.parameters
+              const closing=Object.fromEntries(Object.entries(spec).filter(([key])=>key!=='next_work')
+                .map(([key,value])=>[key,key==='action' ? {...value,enum:['defer','propose_stop']} : value]))
+              request.tools.research_decide.input=parameters(closing) as typeof request.tools.research_decide.input
+              request.tools.research_decide.description='Exploration is off. Consider existing results and close or defer routes; do not create new work.'
+            }
           }
           const evidenceContract = state.project?.config?.conclusion_contract === 'evidence-v1'
           if (!evidenceContract) delete request.tools.research_prepare_conclusion
@@ -802,7 +810,7 @@ export default Plugin.define({
         case "context-policy":
           return research.contextPolicy(needsSession(sessionID, action), args.policy)
         case "exploration":
-          return research.explorationPolicy(needsSession(sessionID, action), args.mode)
+          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
         case "conclusion-contract":
           return research.conclusionContract(needsSession(sessionID, action), args.contract)
         case "guidance":

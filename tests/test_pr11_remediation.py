@@ -29,6 +29,21 @@ def test_generation_contract_changes_without_rewriting_previous_generation(tmp_p
             (0, 'evidence-v1'), (1, 'evidence-v1')]
 
 
+def test_completed_project_can_disable_exploration_for_next_generation(completed):
+    host, _, _, _, claim, _ = completed
+    host.call('exploration_policy', mode='on')
+    draft, publication = prepare_and_publish(host, claim)
+    result = host.call('conclude', fields={'draft_id':draft['draft_id'],
+        'final_ref':f"pub/{publication['publication_id']}#report",'summary':'Completed'},
+        delivery_receipts=deliver_draft(host, draft['draft_id']), plugin_instance_id='plugin-1')
+    policy = host.call('exploration_policy', mode='off')
+    assert policy['effective_for'] == 'next_generation' and policy['conclusion_contract'] == 'evidence-v1'
+    host.call('workflow', action='run', fields={'state':'running','new_generation':True})
+    assert host.call('conclusion_contract')['conclusion_contract'] == 'legacy-v1'
+    with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
+        assert db.execute('SELECT conclusion_id FROM project_conclusions WHERE generation=0').fetchone()[0] == result['conclusion_id']
+
+
 def test_schema15_preserves_notifications_and_migrates_current_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(native_store, 'SCHEMA_VERSION', 14)
     host = Host(tmp_path)

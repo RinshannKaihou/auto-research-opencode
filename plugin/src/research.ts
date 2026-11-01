@@ -372,7 +372,7 @@ export class Research {
       for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
       this.changed(root)
     }
-    return { message: `探索策略：${state.exploration_policy}\n上下文策略：${state.context_policy}\n结项契约：${state.conclusion_contract}（研究代 ${state.generation}）`, state }
+    return { message: `探索策略：${state.exploration_policy}${state.effective_for==='next_generation' ? '（从下一研究代生效）' : ''}\n上下文策略：${state.context_policy}\n结项契约：${state.conclusion_contract}（研究代 ${state.generation}）`, state }
   }
 
   async conclusionContract(sessionID: string, contract?: string | null): Promise<CommandResult> {

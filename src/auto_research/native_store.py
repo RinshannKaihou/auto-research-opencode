@@ -80,6 +80,80 @@ def _number(value: Any, label: str) -> float:
 from .workflow_store import WorkflowStore, DDL, migrate_schema3
 
 
+def normalize_proposal(question, why_now, plan, inputs=None, purpose="explore", strategy="continue",
+                       anchor_ref=None, question_ref=None, root_reason=None, predecessors=None, *, enforce_protocol=False):
+    supplied_inputs = inputs is not None
+    inputs = [] if inputs is None else inputs
+    if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
+        raise ValidationError("inputs must be research reference strings")
+    if root_reason is not None:
+        root_reason = _text(root_reason, "root_reason")
+    predecessors = [] if predecessors is None else predecessors
+    if not isinstance(predecessors, list) or not all(
+        isinstance(item, dict) for item in predecessors
+    ):
+        raise ValidationError("predecessors must be a list of declarations")
+    if root_reason and predecessors:
+        raise ValidationError("Choose exactly one of root_reason or predecessors")
+    if enforce_protocol and not (root_reason or predecessors):
+        raise ValidationError("Choose exactly one of root_reason or predecessors")
+    fixed_inputs: list[str] = []
+    normalized_predecessors = []
+    seen_dependencies = set()
+    for index, predecessor in enumerate(predecessors):
+        node_id = _text(predecessor.get("node_id"), f"predecessors[{index}].node_id")
+        relation_type = predecessor.get("relation_type")
+        if relation_type not in {"depends_on", "branches_from", "revises"}:
+            raise ValidationError("predecessor relation_type is not allowed")
+        rationale = _text(
+            predecessor.get("rationale"), f"predecessors[{index}].rationale"
+        )
+        refs = predecessor.get("input_refs")
+        if not isinstance(refs, list) or (relation_type == "depends_on" and not refs) or not all(
+            isinstance(ref, str) and ref.strip() for ref in refs
+        ):
+            raise ValidationError("predecessor input_refs must be nonempty reference lists")
+        key = (node_id, relation_type)
+        if key in seen_dependencies:
+            raise ValidationError("Duplicate predecessor declaration")
+        seen_dependencies.add(key)
+        refs = [ref.strip() for ref in refs]
+        normalized_predecessors.append(
+            {
+                "node_id": node_id,
+                "relation_type": relation_type,
+                "rationale": rationale,
+                "input_refs": refs,
+            }
+        )
+        for ref in refs:
+            if ref not in fixed_inputs:
+                fixed_inputs.append(ref)
+    if predecessors:
+        if supplied_inputs and inputs != fixed_inputs:
+            raise ValidationError("inputs must exactly match predecessor input_refs")
+        inputs = fixed_inputs
+    if strategy not in {"continue", "redirect", "anchor"}:
+        raise ValidationError("strategy must be continue, redirect, or anchor")
+    if strategy == "anchor" and not anchor_ref:
+        raise ValidationError("anchor strategy requires anchor_ref")
+    payload = {
+        "question": _text(question, "question"),
+        "why_now": _text(why_now, "why_now"),
+        "plan": _text(plan, "plan"),
+        "inputs": inputs,
+        "purpose": _text(purpose, "purpose"),
+        "strategy": strategy,
+        "anchor_ref": anchor_ref,
+        "question_ref": question_ref,
+        "origin_kind": "root" if root_reason else "derived" if predecessors else "legacy_unresolved",
+        "root_reason": root_reason,
+        "predecessors": normalized_predecessors,
+    }
+
+    return payload
+
+
 class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, AdoptionStore, RuntimeStore, ReviewStore, ConclusionStore, QueryStore, MemoryStore, WorkflowStore):
     """Transactional store used only by the native DSH plugin."""
 
@@ -555,6 +629,30 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
 
         return self._mutate("detach", payload, request_id, work)
 
+    def validate_proposal_references(self, db, payload):
+        qref = payload['question_ref']
+        question = None
+        if qref:
+            kid, revision = parse_knowledge_ref(qref)
+            question_row = db.execute('SELECT e.kind FROM knowledge_entries e JOIN knowledge_revisions r USING(knowledge_id) '
+                                      'WHERE e.knowledge_id=? AND r.revision=?', (kid, revision)).fetchone()
+            if not question_row:
+                raise NotFoundError(f'Unknown research reference: {qref}')
+            if question_row['kind'] != 'open_question':
+                raise ValidationError('question_ref must identify an open_question')
+            question = (kid, revision)
+        for ref in payload['inputs']:
+            self._require_ref(db, ref)
+        if payload['anchor_ref']:
+            self._require_ref(db, payload['anchor_ref'])
+        for predecessor in payload['predecessors']:
+            if not db.execute('SELECT 1 FROM nodes WHERE node_id=?', (predecessor['node_id'],)).fetchone():
+                raise NotFoundError(f"Unknown predecessor node: {predecessor['node_id']}")
+            for ref in predecessor['input_refs']:
+                if self._ref_node_id(db, ref) != predecessor['node_id']:
+                    raise ValidationError(f"Input {ref} is not owned by predecessor {predecessor['node_id']}")
+        return question
+
     def propose(
         self,
         question: str,
@@ -574,74 +672,9 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
         control_actor: tuple[str, str] | None = None,
         _db: sqlite3.Connection | None = None,
     ) -> dict:
-        supplied_inputs = inputs is not None
-        inputs = [] if inputs is None else inputs
-        if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
-            raise ValidationError("inputs must be research reference strings")
-        if root_reason is not None:
-            root_reason = _text(root_reason, "root_reason")
-        predecessors = [] if predecessors is None else predecessors
-        if not isinstance(predecessors, list) or not all(
-            isinstance(item, dict) for item in predecessors
-        ):
-            raise ValidationError("predecessors must be a list of declarations")
-        if root_reason and predecessors:
-            raise ValidationError("Choose exactly one of root_reason or predecessors")
-        if enforce_protocol and not (root_reason or predecessors):
-            raise ValidationError("Choose exactly one of root_reason or predecessors")
-        fixed_inputs: list[str] = []
-        normalized_predecessors = []
-        seen_dependencies = set()
-        for index, predecessor in enumerate(predecessors):
-            node_id = _text(predecessor.get("node_id"), f"predecessors[{index}].node_id")
-            relation_type = predecessor.get("relation_type")
-            if relation_type not in {"depends_on", "branches_from", "revises"}:
-                raise ValidationError("predecessor relation_type is not allowed")
-            rationale = _text(
-                predecessor.get("rationale"), f"predecessors[{index}].rationale"
-            )
-            refs = predecessor.get("input_refs")
-            if not isinstance(refs, list) or (relation_type == "depends_on" and not refs) or not all(
-                isinstance(ref, str) and ref.strip() for ref in refs
-            ):
-                raise ValidationError("predecessor input_refs must be nonempty reference lists")
-            key = (node_id, relation_type)
-            if key in seen_dependencies:
-                raise ValidationError("Duplicate predecessor declaration")
-            seen_dependencies.add(key)
-            refs = [ref.strip() for ref in refs]
-            normalized_predecessors.append(
-                {
-                    "node_id": node_id,
-                    "relation_type": relation_type,
-                    "rationale": rationale,
-                    "input_refs": refs,
-                }
-            )
-            for ref in refs:
-                if ref not in fixed_inputs:
-                    fixed_inputs.append(ref)
-        if predecessors:
-            if supplied_inputs and inputs != fixed_inputs:
-                raise ValidationError("inputs must exactly match predecessor input_refs")
-            inputs = fixed_inputs
-        if strategy not in {"continue", "redirect", "anchor"}:
-            raise ValidationError("strategy must be continue, redirect, or anchor")
-        if strategy == "anchor" and not anchor_ref:
-            raise ValidationError("anchor strategy requires anchor_ref")
-        payload = {
-            "question": _text(question, "question"),
-            "why_now": _text(why_now, "why_now"),
-            "plan": _text(plan, "plan"),
-            "inputs": inputs,
-            "purpose": _text(purpose, "purpose"),
-            "strategy": strategy,
-            "anchor_ref": anchor_ref,
-            "question_ref": question_ref,
-            "origin_kind": "root" if root_reason else "derived" if predecessors else "legacy_unresolved",
-            "root_reason": root_reason,
-            "predecessors": normalized_predecessors,
-        }
+        payload = normalize_proposal(question, why_now, plan, inputs, purpose, strategy, anchor_ref, question_ref,
+                                     root_reason, predecessors, enforce_protocol=enforce_protocol)
+        inputs, anchor_ref, normalized_predecessors = payload['inputs'], payload['anchor_ref'], payload['predecessors']
 
         def work(db: sqlite3.Connection) -> dict:
             self._project(db)
@@ -650,20 +683,11 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
                 require_new_work(db, *control_actor, manual=True, waiting=True, role='main')
             from .runtime_budget import check_node
             check_node(self, db)
+            question = self.validate_proposal_references(db, payload)
             node_id = self._next(db, "node", "X")
             qref = payload["question_ref"]
             if qref:
-                kid, revision = parse_knowledge_ref(qref)
-                question_row = db.execute(
-                    "SELECT e.kind,r.statement FROM knowledge_entries e "
-                    "JOIN knowledge_revisions r USING(knowledge_id) "
-                    "WHERE e.knowledge_id=? AND r.revision=?",
-                    (kid, revision),
-                ).fetchone()
-                if not question_row:
-                    raise NotFoundError(f"Unknown research reference: {qref}")
-                if question_row["kind"] != "open_question":
-                    raise ValidationError("question_ref must identify an open_question")
+                kid, revision = question
             else:
                 knowledge = self._record_knowledge_in_tx(
                     db,
@@ -691,21 +715,6 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
                 "created_at": _now(),
                 "closed_at": None,
             }
-            for ref in inputs:
-                self._require_ref(db, ref)
-            if anchor_ref:
-                self._require_ref(db, anchor_ref)
-            for predecessor in normalized_predecessors:
-                if not db.execute(
-                    "SELECT 1 FROM nodes WHERE node_id=?", (predecessor["node_id"],)
-                ).fetchone():
-                    raise NotFoundError(f"Unknown predecessor node: {predecessor['node_id']}")
-                for ref in predecessor["input_refs"]:
-                    owner = self._ref_node_id(db, ref)
-                    if owner != predecessor["node_id"]:
-                        raise ValidationError(
-                            f"Input {ref} is not owned by predecessor {predecessor['node_id']}"
-                        )
             db.execute(
                 "INSERT INTO nodes "
                 "(node_id,question,why_now,plan,inputs,purpose,strategy,anchor_ref,question_ref,"

@@ -2226,6 +2226,59 @@ test('exploration chooses one durable probe through the ordinary node scheduler'
   expect(concluded.evidence.appendix_ref).toContain('#evidence-appendix')
 })
 
+test('a stale queued exploration wakes the coordinator after another node finishes', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'Choose an approach'})
+  await host.command('exploration','ses_main',{mode:'on'})
+  host.turn.start('ses_main')
+  const ordinary=await host.call('research_propose','ses_main',{question:'Existing work',why_now:'now',plan:'measure',root_reason:'first'})
+  await host.call('research_dispatch','ses_main',{node_id:ordinary.node_id})
+  const scope=await host.call('research_scope','ses_main',{changes:{objective:'Choose',task_kind:'selection'}})
+  const route=await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'Probe',rationale:'Compare',critical_assumption:'Tail differs'}})
+  const view=await host.call('research_query','ses_main',{collection:'evidence',refs:[]})
+  const decision=await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
+    route_refs:[route.ref],action:'probe',reason:'Measure',next_work:{route_refs:[route.ref],
+      question:'Tail?',why_now:'now',plan:'measure',root_reason:'first'}})
+  await host.call('research_route','ses_main',{scope_ref:scope.ref,route_ref:decision.route_refs[0],
+    reason:'Changed premise',changes:{critical_assumption:'New workload'}})
+  await host.call('research_wait','ses_main',{task_ids:[decision.work.task_id]})
+  host.turn.end('ses_main')
+  const child=host.created[0]!
+  host.turn.start(child)
+  await host.call('research_finish',child,{state:'finished',summary:'Existing work completed'})
+  host.turn.end(child)
+  await until(()=>host.said('ses_main').some(item=>item.text.includes('探索工作未启动')),'stale exploration notice')
+  await until(()=>host.said('ses_main').some(item=>item.resume && item.text.includes('等待的节点有了结果')),'stale exploration wake')
+  const results=await host.call('research_query','ses_main',{collection:'exploration_results'})
+  expect(results.items.some((item:any)=>item.kind==='stale')).toBe(true)
+  expect(host.created).toHaveLength(1)
+})
+
+test('turning exploration off wakes the waiting coordinator and retains closing decisions', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'Choose an approach'})
+  await host.command('exploration','ses_main',{mode:'on'})
+  host.turn.start('ses_main')
+  const ordinary=await host.call('research_propose','ses_main',{question:'Existing work',why_now:'now',plan:'measure',root_reason:'first'})
+  await host.call('research_dispatch','ses_main',{node_id:ordinary.node_id})
+  const scope=await host.call('research_scope','ses_main',{changes:{objective:'Choose',task_kind:'selection'}})
+  const route=await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'Probe',rationale:'Compare',critical_assumption:'Tail differs'}})
+  const view=await host.call('research_query','ses_main',{collection:'evidence',refs:[]})
+  const decision=await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
+    route_refs:[route.ref],action:'probe',reason:'Measure',next_work:{route_refs:[route.ref],
+      question:'Tail?',why_now:'now',plan:'measure',root_reason:'first'}})
+  await host.call('research_wait','ses_main',{task_ids:[decision.work.task_id]})
+  host.turn.end('ses_main')
+  await host.command('exploration','ses_main',{mode:'off'})
+  await until(()=>host.said('ses_main').some(item=>item.resume && item.text.includes('等待的节点有了结果')),'disabled exploration wake')
+  const context=modelRequest('ses_main')
+  await host.hooks.get('context')!(context)
+  const spec=(context.tools.research_decide.input as any).properties
+  expect(spec.next_work).toBeUndefined()
+  expect(spec.action.enum).toEqual(['defer','propose_stop'])
+  expect(context.tools.research_scope).toBeUndefined()
+})
+
 test('a durable exploration decision resumes exactly once after host restart', async () => {
   const first = await load()
   await first.command('auto','ses_main',{goal:'Choose an approach'})

@@ -59,7 +59,7 @@ const IDLE_LIMIT = 3
 const ACTIVE_TASK = new Set(["starting", "running", "stopping", "unverified"])
 const LIVE_TASK = new Set(["queued", ...ACTIVE_TASK, "waiting"])
 /** Node reports that end a wait; a publication notice is delivered without waking. */
-const WAKING = new Set(["finished", "stopped", "failed", "unknown"])
+const WAKING = new Set(["finished", "stopped", "failed", "unknown", "exploration_result"])
 const NOTICE_OUTCOME: Record<string, string> = {
   finished: "已完成",
   stopped: "受阻停止",
@@ -397,6 +397,9 @@ export class Engine {
 
   private async noticeText(root: string, notice: any): Promise<string> {
     const payload = notice.payload ?? {}
+    if (notice.kind === 'exploration_result') {
+      return `探索工作未启动：${payload.reason}。待处理结果 ${payload.result_id}；请读取探索结果并决定下一步。`
+    }
     const pubs = await this.research.storage
       .request("project_read", { root, view: "page", collection: "publications", node_id: payload.node_id, limit: 5 })
       .catch(() => null)
@@ -451,7 +454,7 @@ export class Engine {
     }
     // A waited task may have ended before the coordinator started waiting.
     const wakeNotice = [...delivered, ...notices.filter((item: any) => item.state === "delivered")]
-      .find((item: any) => waiting.includes(item.task_id) && WAKING.has(item.kind))
+      .find((item: any) => WAKING.has(item.kind) && (waiting.includes(item.task_id) || item.kind === 'exploration_result' && !item.task_id))
     const canWake =
       wakeNotice && row?.pause_reason === "wait" && state.workflow?.run?.state === "running" && !this.busy.has(main)
     if (canWake) {
@@ -478,11 +481,12 @@ export class Engine {
     if (!main) return
     let state = await this.state(main)
     if (state.workflow?.run?.state !== "running") return
+    let settled = false
     if (state.project?.config?.exploration_policy === 'exploration-v1') {
       const intents: string[] = await this.call('exploration_pending', main)
       for (const intent_id of intents) {
         const result: any = await this.call('exploration_materialize', main, { intent_id })
-        if (result.state === 'stale') await this.say(main, '探索依据发生变化，请重新读取结果并选择下一步。').catch(() => {})
+        if (['stale','failed','cancelled'].includes(result.state)) settled = true
         if (result.state === 'waiting_budget') await this.say(main, `探索工作等待预算：${result.reason}`).catch(() => {})
       }
       if (intents.length) state = await this.state(main)
@@ -492,11 +496,9 @@ export class Engine {
     for (const task of tasks.filter((item) => item.state === "queued")) {
       if (active >= this.concurrency) break
       try {
-        if (state.schema_version >= 13) {
-          const check: any = await this.call('exploration_task_check', main, { task_id: task.task_id })
-          if (!check.allowed) continue
-        }
-        if (await this.startTask(root, main, task)) active++
+        const result = await this.startTask(root, main, task)
+        if (result === 'started') active++
+        if (result === 'settled') settled = true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if ((error as any)?.unsent_rolled_back) {
@@ -533,16 +535,17 @@ export class Engine {
           : `节点 ${task.node_id} 启动失败：${message}`).catch(() => {})
       }
     }
+    if (settled) await this.deliver(root)
   }
 
-  private async startTask(root: string, main: string, task: any): Promise<boolean> {
+  private async startTask(root: string, main: string, task: any): Promise<'started' | 'settled' | 'skipped'> {
     let workspace: string | null = task.cwd
     if (!workspace) {
       const prepared = await this.call("prepare_branch", main, { node_id: task.node_id }, `${task.task_id}:prepare`)
       workspace = prepared.workspace as string
     }
     const launch = await this.call("node_launch_claim", main, { task_id: task.task_id, concurrency: this.concurrency })
-    if (!launch.claimed) return false
+    if (!launch.claimed) return ['exploration_basis_changed','exploration_disabled'].includes(launch.reason) ? 'settled' : 'skipped'
     let createAttempted = false
     let createConfirmed = !!launch.reuse
     let kickoffAttempted = false
@@ -598,7 +601,7 @@ export class Engine {
       // Inside the coordinator's own dispatch call the tool result already says this.
       if (!this.busy.has(main)) await this.say(main, `已启动节点 ${task.node_id} 的执行会话（任务 ${task.task_id}）。`).catch(() => {})
       this.research.notifyChanged(root)
-      return true
+      return 'started'
     } catch (error) {
       const stage = (error as any)?.code === 'research_execution_unverified' ? undefined
         : !createConfirmed && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
@@ -625,7 +628,17 @@ export class Engine {
       if (state.workflow?.run?.state !== 'running') return {...decision, work:{state:'pending',reason:'awaiting_auto'}}
       const work = await this.call<any>('exploration_materialize', sessionID, {intent_id:decision.intent_id})
       if (work.state === 'materialized') await this.schedule(root)
+      else if (['stale','failed','cancelled'].includes(work.state)) await this.deliver(root)
       return {...decision, work}
+    })
+  }
+
+  explorationPolicy(sessionID:string,mode?:string | null): Promise<CommandResult> {
+    const root=this.research.requireAssociated(sessionID)
+    return this.serial(root,async()=>{
+      const result=await this.research.explorationPolicy(sessionID,mode)
+      if (mode==='off') await this.deliver(root)
+      return result
     })
   }
 

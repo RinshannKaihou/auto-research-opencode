@@ -100,6 +100,36 @@ def _changes(store, db, fields, allowed):
     return value
 
 
+def settle_exploration_work(store, db, row, state, reason):
+    """Settle unstarted work and create its durable coordinator result."""
+    details = json.loads(row['details'])
+    task_id = details.get('task_id')
+    if task_id:
+        task = db.execute('SELECT state FROM exploration_tasks WHERE task_id=?', (task_id,)).fetchone()
+        if not task or task['state'] != 'queued':
+            return None
+        db.execute("UPDATE exploration_tasks SET state='cancelled',error=?,updated_at=? WHERE task_id=? AND state='queued'",
+                   (reason, now(), task_id))
+    details['settlement'] = {'state': state, 'reason': reason}
+    db.execute('UPDATE workflow_intents SET state=?,details=?,updated_at=? WHERE intent_id=?',
+               (state, encoded(details), now(), row['intent_id']))
+    route_ids = [_parse_ref(ref, 'route')[0] for ref in details['route_refs']]
+    result_id = store._exploration_result_in_scope(db, details['scope_id'], f"intent:{row['intent_id']}:{state}",
+        state, None, {'intent_id': row['intent_id'], 'task_id': task_id, 'node_id': details.get('node_id'),
+                      'reason': reason, 'route_ids': route_ids})
+    if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+        recipient = db.execute('SELECT main_session_id FROM workflow_project WHERE id=1').fetchone()[0]
+        notification_id = 'notice-' + hashlib.sha256(('exploration:' + result_id).encode()).hexdigest()[:24]
+        body = {'kind':'exploration_result', 'result_id':result_id, 'intent_id':row['intent_id'],
+                'scope_id':details['scope_id'], 'generation':details['generation'], 'reason':reason,
+                'task_id':task_id, 'node_id':details.get('node_id')}
+        db.execute('INSERT OR IGNORE INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)',
+                   (notification_id, task_id, recipient, 'exploration_result', result_id, encoded(body), 'pending', now()))
+    store._event(db, 'exploration.work_settled', {'intent_id':row['intent_id'], 'task_id':task_id,
+                                                  'result_id':result_id, 'state':state, 'reason':reason})
+    return {'intent_id':row['intent_id'], 'task_id':task_id, 'state':state, 'reason':reason, 'result_id':result_id}
+
+
 def check_exploration_task(store, db, task_id):
     """Check and settle a queued exploration task under the launch transaction."""
     from .evidence_read import build_evidence_view
@@ -111,13 +141,11 @@ def check_exploration_task(store, db, task_id):
         return {"allowed": True, "exploration": False}
     details = json.loads(row["details"])
     if store._project(db)["config"].get("exploration_policy") != "exploration-v1":
-        return {"allowed": False, "reason": "exploration_disabled"}
+        settle_exploration_work(store, db, row, 'cancelled', 'exploration_disabled')
+        return {"allowed": False, "reason": "exploration_disabled", 'state':'cancelled'}
     if build_evidence_view(store, db, details["roots"])["basis_digest"] != details["basis_digest"]:
-        db.execute("UPDATE workflow_intents SET state='stale',updated_at=? WHERE intent_id=?", (now(), row["intent_id"]))
-        db.execute("UPDATE exploration_tasks SET state='cancelled',error='exploration_basis_changed',updated_at=? "
-                   "WHERE task_id=? AND state='queued'", (now(), task_id))
-        store._event(db, "exploration.work_stale", {"intent_id": row["intent_id"], "task_id": task_id})
-        return {"allowed": False, "reason": "exploration_basis_changed"}
+        settle_exploration_work(store, db, row, 'stale', 'exploration_basis_changed')
+        return {"allowed": False, "reason": "exploration_basis_changed", 'state':'cancelled'}
     return {"allowed": True, "exploration": True}
 
 
@@ -152,6 +180,12 @@ class ExplorationStore:
                         from .conclusion_policy import set_contract
                         set_contract(db, run['generation'], 'evidence-v1', 'exploration')
             self._set_project_config(db, config)
+            if mode == 'off' and run['state'] != 'complete':
+                rows = list(db.execute("SELECT * FROM workflow_intents WHERE kind='exploration_work' "
+                    "AND state IN ('pending','waiting_budget','materialized') AND json_extract(details,'$.generation')=?",
+                    (run['generation'],)))
+                for row in rows:
+                    settle_exploration_work(self, db, row, 'cancelled', 'exploration_disabled')
             after = {"exploration_policy": config["exploration_policy"],
                      "context_policy": config.get("context_policy", "memory-v2"),
                      "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
@@ -256,8 +290,9 @@ class ExplorationStore:
             require_controller(db)
             run = _main(db, host, session)
             require_new_work(db, host, session, manual=True, waiting=True, role="main")
-            if self._project(db)["config"].get("exploration_policy", "off") != "exploration-v1":
-                raise ConflictError("Exploration is disabled")
+            enabled = self._project(db)["config"].get("exploration_policy", "off") == "exploration-v1"
+            if not enabled and (fields.get('next_work') is not None or fields.get('action') not in {'defer', 'propose_stop'}):
+                raise ConflictError('Exploration is disabled; only closing decisions are allowed')
             if not snapshot or snapshot["generation"] != run["generation"]:
                 raise ConflictError("evidence_snapshot_expired: read the evidence again")
             scope_id, revision = _parse_ref(fields.get("scope_ref"), "scope")
@@ -303,6 +338,12 @@ class ExplorationStore:
                     raise ValidationError("next_work needs root_reason or predecessors")
                 if action in {"defer", "propose_stop"}:
                     raise ValidationError("A deferred or stopped decision cannot schedule work")
+                from .native_store import normalize_proposal
+                proposal = normalize_proposal(next_work['question'], next_work['why_now'], next_work['plan'],
+                    next_work.get('inputs'), next_work.get('work_kind', 'probe'), next_work.get('strategy', 'continue'),
+                    next_work.get('anchor_ref'), next_work.get('question_ref'), next_work.get('root_reason'),
+                    next_work.get('predecessors'), enforce_protocol=True)
+                self.validate_proposal_references(db, proposal)
             supersede = fields.get('supersede_intent_ids', [])
             if not isinstance(supersede, list) or any(not isinstance(item, str) for item in supersede):
                 raise ValidationError('supersede_intent_ids must be a list')
@@ -411,23 +452,29 @@ class ExplorationStore:
                 raise ConflictError("Exploration intent is not pending")
             require_new_work(db, host, session, role="main", waiting=True)
             if self._project(db)["config"].get("exploration_policy") != "exploration-v1":
-                raise ConflictError("Exploration is disabled")
+                return settle_exploration_work(self, db, row, 'cancelled', 'exploration_disabled')
             current = build_evidence_view(self, db, details["roots"])
             if current["basis_digest"] != details["basis_digest"]:
-                db.execute("UPDATE workflow_intents SET state='stale',updated_at=? WHERE intent_id=?", (now(), intent_id))
-                return {"intent_id": intent_id, "state": "stale", "reason": "exploration_basis_changed"}
+                return settle_exploration_work(self, db, row, 'stale', 'exploration_basis_changed')
             try:
                 check_node(self, db)
             except BudgetError as error:
                 db.execute("UPDATE workflow_intents SET state='waiting_budget',updated_at=? WHERE intent_id=?", (now(), intent_id))
                 return {"intent_id": intent_id, "state": "waiting_budget", "reason": str(error)}
             work = details["next_work"]
-            node = self.propose(work["question"], work["why_now"], work["plan"], intent_id + ":node",
-                inputs=work.get("inputs"), purpose=work.get("work_kind", "probe"), strategy=work.get("strategy", "continue"),
-                anchor_ref=work.get('anchor_ref'), question_ref=work.get('question_ref'),
-                root_reason=work.get("root_reason"), predecessors=work.get("predecessors"), enforce_protocol=True,
-                asserted_at={"host_id": host, "session_id": session, "turn": None, "operation_id": operation},
-                control_actor=(host, session), _db=db)
+            db.execute('SAVEPOINT exploration_propose')
+            try:
+                node = self.propose(work["question"], work["why_now"], work["plan"], intent_id + ":node",
+                    inputs=work.get("inputs"), purpose=work.get("work_kind", "probe"), strategy=work.get("strategy", "continue"),
+                    anchor_ref=work.get('anchor_ref'), question_ref=work.get('question_ref'),
+                    root_reason=work.get("root_reason"), predecessors=work.get("predecessors"), enforce_protocol=True,
+                    asserted_at={"host_id": host, "session_id": session, "turn": None, "operation_id": operation},
+                    control_actor=(host, session), _db=db)
+            except (ValidationError, NotFoundError) as error:
+                db.execute('ROLLBACK TO exploration_propose')
+                db.execute('RELEASE exploration_propose')
+                return settle_exploration_work(self, db, row, 'failed', str(error))
+            db.execute('RELEASE exploration_propose')
             task = self.workflow(host, session, "task", {"node_id": node["node_id"]}, intent_id + ":task", _db=db)
             for ref in details["route_refs"]:
                 route_id, route_rev = _parse_ref(ref, "route")
@@ -463,6 +510,7 @@ class ExplorationStore:
             self._event(db, 'exploration.result_recorded', {'result_id': result_id, 'scope_id': scope_id, 'kind': kind})
             sequence = db.execute('SELECT COALESCE(MAX(event_id),0) FROM events').fetchone()[0]
             db.execute('UPDATE exploration_results SET source_sequence=? WHERE result_id=?', (sequence, result_id))
+        return result_id
 
     def exploration_record_change(self, db, target_ref, source_key, kind, source_ref):
         if db.execute('PRAGMA user_version').fetchone()[0] < 13 or not target_ref:
