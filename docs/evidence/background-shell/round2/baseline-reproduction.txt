@@ -1,0 +1,50 @@
+bun test v1.3.10 (30e609e0)
+
+test/background-reconcile.test.ts:
+53 | test('queued normal events exclude a session from lost-notice reconciliation',async()=>{
+54 |   const {engine,f}=fixture()
+55 |   await engine.pollShells(0)
+56 |   f.pending=true
+57 |   await engine.pollShells(15_000)
+58 |   expect(f.reads).toBe(1);expect(f.task).toBe('running');expect(f.pauses).toHaveLength(0)
+                                              ^
+error: expect(received).toBe(expected)
+
+Expected: "running"
+Received: "unverified"
+
+      at <anonymous> (<baseline>/plugin/test/background-reconcile.test.ts:58:42)
+(fail) queued normal events exclude a session from lost-notice reconciliation [5.67ms]
+61 | test('a terminal committed after the fresh read cannot cause a lost-notice pause',async()=>{
+62 |   const {engine,f}=fixture()
+63 |   await engine.pollShells(0)
+64 |   f.beforeUnknown=()=>{f.job='completed'}
+65 |   await engine.pollShells(15_000)
+66 |   expect(f.task).toBe('running');expect(f.pauses).toHaveLength(0)
+                      ^
+error: expect(received).toBe(expected)
+
+Expected: "running"
+Received: "unverified"
+
+      at <anonymous> (<baseline>/plugin/test/background-reconcile.test.ts:66:18)
+(fail) a terminal committed after the fresh read cannot cause a lost-notice pause
+89 |   f.read=()=>new Promise(resolve=>{release=resolve})
+90 |   const scan=engine.pollShells(0)
+91 |   while(!release)await Bun.sleep(1)
+92 |   try {
+93 |     const result=await Promise.race([engine.pause('main',root),Bun.sleep(100).then(()=>null)])
+94 |     expect(result).not.toBeNull();expect(f.run).toBe('paused')
+                            ^
+error: expect(received).not.toBeNull()
+
+Received: null
+
+      at <anonymous> (<baseline>/plugin/test/background-reconcile.test.ts:94:24)
+(fail) slow transcript I/O cannot hold the project command queue [104.92ms]
+
+ 0 pass
+ 10 filtered out
+ 3 fail
+ 4 expect() calls
+Ran 3 tests across 1 file. [204.00ms]

@@ -1199,12 +1199,13 @@ class RuntimeStore:
                     (session, row['intent_id'], host, shell_id)).fetchone():
                 raise ConflictError('Shell ID belongs to a different call')
             details['shell_id'] = shell_id
-            db.execute('UPDATE workflow_intents SET state=?,details=?,updated_at=? WHERE intent_id=?',
-                       (state, json.dumps(details, sort_keys=True), timestamp(), row['intent_id']))
             if state == 'finished':
                 db.execute('DELETE FROM workflow_intents WHERE intent_id=?', (row['intent_id'],))
-            elif state == 'unverified':
-                mark_shell_unverified(self, db, row)
+            else:
+                db.execute('UPDATE workflow_intents SET state=?,details=?,updated_at=? WHERE intent_id=?',
+                           (state, json.dumps(details, sort_keys=True), timestamp(), row['intent_id']))
+                if state == 'unverified':
+                    mark_shell_unverified(self, db, row)
             self._event(db, 'runtime.shell_result', {'session_id': session, 'call_id': call_id,
                                                     'shell_id': shell_id, 'state': state})
             return {'state': state, **details}
@@ -1269,11 +1270,12 @@ class RuntimeStore:
             if not row:
                 raise ConflictError('Shell call was not recorded')
             if row['state'] not in {'starting', 'running', 'unverified'}:
-                return {'state': row['state']}
+                return {'state': row['state'], 'changed': False}
+            changed = row['state'] != 'unverified'
             details = mark_shell_unverified(self, db, row)
             self._event(db, 'runtime.shell_unverified', {'session_id': session, 'call_id': call_id,
                                                         'task_id': details.get('task_id')})
-            return {'state': 'unverified'}
+            return {'state': 'unverified', 'changed': changed}
         return self._mutate('runtime.shell_unverified', payload, operation, work)
 
     def runtime_resume_session(self, host, session, target_session, expected_revision, operation):
@@ -1304,8 +1306,9 @@ class RuntimeStore:
                                   ('execution-start:' + (details.get('execution_token') or ''), target_session)).fetchone()
                 execution = json.loads(live['details']) if live else {}
                 if (shell['state'] == 'starting' and execution.get('host') == host
-                        and execution.get('generation') == run['generation'] and execution.get('message_id')
-                        and execution.get('reservation_id') and not execution.get('ambiguous')):
+                        and execution.get('generation') == run['generation']):
+                    if not execution.get('message_id') or not execution.get('reservation_id') or execution.get('ambiguous'):
+                        return {'resumed': False, 'reason': 'execution_binding_pending', 'task_id': details['task_id']}
                     continue
                 if shell['state'] != 'running':
                     mark_shell_unverified(self, db, shell)

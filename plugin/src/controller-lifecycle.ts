@@ -23,7 +23,11 @@ export interface RuntimeState {
   models: Map<string, ModelRef>
   specialistTools: Map<string, readonly string[]>
   specialistResearch: Set<string>
-  shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean }>
+  shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean; refused?: boolean; createdAt?: number }>
+  shellDelivered?: Set<string>
+  shellSeen?: Set<string>
+  shellLost?: Map<string, number>
+  shellPoll?: Map<string, { next: number; delay: number }>
   shellWake?: Map<string, { matched: boolean }>
   shellCalls?: Map<string, { sessionID: string; background: boolean; settled: Promise<void>; resolve: () => void }>
 }

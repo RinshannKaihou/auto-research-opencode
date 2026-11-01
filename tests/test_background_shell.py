@@ -168,8 +168,8 @@ def test_foreground_results_do_not_accumulate_intents_and_pending_query_uses_ind
     host.call('runtime_shell_result', session=sid, call_id='foreground',state='finished',shell_id=None)
     with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
         assert db.execute("SELECT COUNT(*) FROM workflow_intents WHERE kind='native_shell'").fetchone()[0] == 0
-        plan = db.execute("EXPLAIN QUERY PLAN SELECT * FROM workflow_intents WHERE kind='native_shell' AND session_id=? AND state='running'",(sid,)).fetchall()
-        assert 'native_shell_pending' in str(plan)
+        plan = db.execute("EXPLAIN QUERY PLAN SELECT * FROM workflow_intents WHERE kind='native_shell' AND session_id=? AND state IN ('starting','running','unverified') AND json_extract(details,'$.host')=? AND json_extract(details,'$.generation')=? ORDER BY rowid",(sid,'host',0)).fetchall()
+        assert 'SEARCH workflow_intents USING INDEX native_shell_' in str(plan)
 
 
 def test_shell_without_an_active_task_is_rejected(tmp_path):
@@ -195,3 +195,25 @@ def test_resume_pause_sets_stay_in_sync():
     source=(Path(__file__).parents[1]/'plugin/src/engine.ts').read_text()
     ts=re.search(r'const RESUMABLE = new Set\(\[(.*?)\]\)',source).group(1)
     assert set(re.findall(r'[\"\']([a-z_]+)[\"\']',ts)) == RESUMABLE_SESSION_PAUSES
+
+
+def test_a_terminal_shell_cannot_be_changed_to_unverified_by_a_late_scan(tmp_path):
+    host, sid, task = setup_node(tmp_path)
+    host.call('runtime_shell_begin', session=sid, call_id='scan')
+    host.call('runtime_shell_result', session=sid, call_id='scan', state='running', shell_id='sh_scan')
+    host.call('runtime_shell_notice', session=sid, shell_id='sh_scan', message_id='msg_scan',outcome='completed',exit_code=0)
+    assert host.call('runtime_shell_unverified', session=sid,call_id='scan') == {'state':'completed','changed':False}
+    with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
+        assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?',(task,)).fetchone()[0] == 'running'
+
+
+def test_resume_refuses_an_unbound_live_start_without_declaring_its_exit_unknown(tmp_path):
+    host, sid, task = setup_node(tmp_path)
+    host.call('runtime_execution_start', session=sid, execution_token='exec_unbound',ambiguous=True)
+    host.call('runtime_shell_begin', session=sid,call_id='unbound',execution_token='exec_unbound')
+    revision=host.call('status')['workflow']['run']['control_revision']
+    result=host.call('runtime_resume_session',target_session=sid,expected_revision=revision)
+    assert result['reason']=='execution_binding_pending'
+    assert host.call('runtime_shell_status',session=sid)['starting']==1
+    with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
+        assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?',(task,)).fetchone()[0]=='running'

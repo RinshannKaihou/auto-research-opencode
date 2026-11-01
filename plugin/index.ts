@@ -68,6 +68,8 @@ export default Plugin.define({
     const earlyEvents: any[] = []
     const eventChains = new Map<string, Promise<void>>()
     const failedEvents = new Map<string, any[]>()
+    const shellCalls = lifecycle.state.shellCalls ??= new Map()
+    const shellSeen = lifecycle.state.shellSeen ??= new Set()
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
       'session.inbox.enqueued', 'session.inbox.delivered', 'session.execution.interrupted', 'session.tool.failed'])
@@ -75,6 +77,14 @@ export default Plugin.define({
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
     const queueEvent = (event: any) => {
+      if (event?.type === 'session.tool.failed' && !shellCalls.has(`${event.data?.sessionID}:${event.data?.id}`)) {
+        telemetryHandler?.(event); return
+      }
+      if (event?.type === 'session.inbox.enqueued' && event.data?.item?.payload?.metadata?.source === 'shell' &&
+          typeof event.data?.inboxID === 'string') {
+        shellSeen.add(`${event.data.sessionID}:${event.data.inboxID}`)
+        if (shellSeen.size > 1024) shellSeen.delete(shellSeen.values().next().value!)
+      }
       if (event?.type === 'session.inbox.enqueued' && event.data?.item?.payload?.metadata?.source !== 'shell') {
         telemetryHandler?.(event); return
       }
@@ -258,6 +268,7 @@ export default Plugin.define({
         await verifyController(sessionID, true)
         return (await ctx.session.context({ sessionID })) as any[]
       },
+      eventsPending: (sessionID) => eventGap || eventChains.has(sessionID) || failedEvents.has(sessionID),
       recoveryMessages: async (sessionID) => {
         requireCurrent()
         const messages = await ctx.session.context({ sessionID })
@@ -275,7 +286,6 @@ export default Plugin.define({
     const externalStarts = new Map<string,number>()
     // The host may enqueue a very fast shell's terminal notice while the
     // execute.after hook is still persisting its shell ID.
-    const shellCalls = lifecycle.state.shellCalls ??= new Map()
     let specialists!: Specialists
     const beforeTool = async (request: any) => {
       if (!lifecycle.current() && !RESEARCH_READS.has(request.tool)) {
@@ -341,7 +351,8 @@ export default Plugin.define({
             `shell-begin:${request.sessionID}:${request.id}`)
         } catch (error) {
           resolve(); shellCalls.delete(key)
-          throw new ToolError({message:String(error),metadata:{code:'research_control_paused',retryable:false,allow_fallback:false}})
+          throw new ToolError({message:error instanceof Error ? error.message : String(error),
+            metadata:{code:(error as any)?.code ?? 'research_storage_unavailable',retryable:false,allow_fallback:false}})
         }
       }
       if (TOOLS.some(tool => tool.name === request.tool)) return
@@ -794,9 +805,15 @@ export default Plugin.define({
         if (call) {
           // OpenCode 2.2.5 omits execute.after for foreground failure/abort.
           // Its terminal tool event arrives after the foreground shell is killed.
-          await research.call('runtime_shell_result', sessionID, {call_id:callID,
-            state:call.background ? 'unverified' : 'finished',shell_id:null}, `shell-result:${sessionID}:${callID}`)
-          call.resolve(); shellCalls.delete(key); externalStarts.delete(key)
+          try {
+            await research.call('runtime_shell_result', sessionID, {call_id:callID,
+              state:call.background ? 'unverified' : 'finished',shell_id:null}, `shell-result:${sessionID}:${callID}`)
+          } catch (error) {
+            observations.append(root,{phase:'coverage_gap',source:'shell_failure_result',session_id:sessionID,
+              error_code:(error as any)?.code ?? 'storage_unavailable'})
+          } finally {
+            call.resolve(); shellCalls.delete(key); externalStarts.delete(key)
+          }
         }
       }
       else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)

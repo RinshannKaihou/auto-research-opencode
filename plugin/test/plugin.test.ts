@@ -1379,20 +1379,47 @@ describe("autonomous research", () => {
     expect((await host.rpc().session({sessionID:child})).externalStarting).toBe(0)
   })
 
-  test('a lost completion event is detected by the periodic transcript scan', async () => {
-    const {host,child}=await shellNode('lost terminal event')
-    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'lost_event',input:{background:true}})
-    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'lost_event',status:'completed',result:{metadata:{status:'running',shellID:'sh_lost_event'}}})
-    host.turn.end(child)
-    await Bun.sleep(80)
-    const original=host.ctx.session.context
-    host.ctx.session.context=async(args:any)=>args.sessionID===child ? [
-      {type:'synthetic',id:'msg_lost_event',metadata:{source:'shell',shellID:'sh_lost_event',state:'completed',exit:0}}
-    ] : original(args)
-    await until(async()=>(await host.page('tasks')).items[0].state==='unverified','lost terminal reconciled',18_000)
-    expect((await host.rpc().session({sessionID:child})).externalRunning).toBe(0)
-    expect((await host.command('resume','ses_main')).message).toContain('/research recover task')
-  },20_000)
+  test('storage failure while settling a native failure cannot block its terminal event', async () => {
+    const {host,child}=await shellNode('failed event storage gap')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'storage_abort',input:{}})
+    const original=StorageClient.prototype.request
+    let attempts=0
+    const spy=spyOn(StorageClient.prototype,'request').mockImplementation(async function(method,fields,operation){
+      if(method==='runtime_shell_result'){attempts++;throw new Error('temporary storage failure')}
+      return original.call(this,method,fields,operation)
+    })
+    try {
+      host.events.push({id:'storage_tool_failed',type:'session.tool.failed',data:{sessionID:child,id:'storage_abort',error:{type:'aborted'}}})
+      host.turn.end(child,'interrupted')
+      await until(async()=>(await host.page('tasks')).items[0].state==='unverified','terminal reconciliation after result gap')
+      expect(attempts).toBe(1)
+      expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
+      expect((await host.command('resume','ses_main')).message).toContain('/research recover task')
+    } finally {spy.mockRestore()}
+  })
+
+  test('shell begin preserves the storage error code instead of claiming the project is paused', async () => {
+    const {host,child}=await shellNode('begin error classification')
+    const original=StorageClient.prototype.request
+    const spy=spyOn(StorageClient.prototype,'request').mockImplementation(async function(method,fields,operation){
+      if(method==='runtime_shell_begin')throw Object.assign(new Error('storage offline'),{code:'storage_offline'})
+      return original.call(this,method,fields,operation)
+    })
+    try {
+      await expect(host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'begin_error',input:{}}))
+        .rejects.toMatchObject({metadata:{code:'storage_offline'}})
+      expect((await host.page('tasks')).items[0].state).toBe('running')
+    } finally {spy.mockRestore()}
+  })
+
+  test('untracked tool failures do not consume the research event queue', async () => {
+    const {host,child}=await shellNode('unrelated failure flood')
+    for(let i=0;i<300;i++)host.events.push({id:`untracked_${i}`,type:'session.tool.failed',data:{sessionID:child,id:`other_${i}`,error:{type:'tool.execution'}}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','terminal after unrelated events')
+    expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
 
   test('an interrupted call without an after hook has an immediate operator recovery path', async () => {
     const {host,child}=await shellNode('orphaned shell')
