@@ -2141,6 +2141,10 @@ test('exploration chooses one durable probe through the ordinary node scheduler'
   expect(host.created).toHaveLength(1)
   expect(host.said(host.created[0]!).some(item=>item.text.includes('信息不足'))).toBe(true)
   const context = modelRequest('ses_main')
+  host.events.push({id:'exploration-preview-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'exploration-preview',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:exploration-preview'),'exploration context step')
   await host.hooks.get('context')!(context)
   expect(JSON.stringify(context.system)).toContain('exploration')
   expect(Object.keys(context.tools)).toContain('research_decide')
@@ -2325,6 +2329,10 @@ test('evidence conclusion requires the actual draft pages in the model request',
   const host = await load()
   await host.command('init','ses_main',{goal:'Answer a bounded question'})
   const legacy = modelRequest('ses_main')
+  host.events.push({id:'legacy-preview-step',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'legacy-preview',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:legacy-preview'),'legacy context step')
   await host.hooks.get('context')!(legacy)
   expect(Object.keys((legacy.tools.research_conclude.input as any).properties).sort()).toEqual(['final_ref','gaps','outcome','review','summary'])
   expect((legacy.tools.research_conclude.input as any).required).toContain('review')
