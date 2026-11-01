@@ -19,6 +19,7 @@ export interface RuntimeState {
   endedEvents: Map<string, string[]>
   retried: Set<string>
   queues: Map<string, Promise<unknown>>
+  lastScheduledScope?: Map<string,string>
   models: Map<string, ModelRef>
   specialistTools: Map<string, readonly string[]>
   specialistResearch: Set<string>

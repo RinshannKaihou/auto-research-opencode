@@ -165,7 +165,7 @@ export function ResearchBoard(props: {
         if (run !== generation) return
         setGraph(null)
         setNextCursor(page.cursor)
-        nextRows = (page.items ?? []).map((route:any) => ({id:route.ref,code:route.route_id,title:route.title,data:route}))
+        nextRows = (page.items ?? []).map((route:any) => ({id:route.ref,code:route.route_id,title:`${route.scope_id ?? ''} · ${route.title}`,data:route}))
       } else if (target === "process") {
         const [nodes, dependencies, attempts, taskPage, sessions, publications, snapshots, knowledge] = await pages([
           "nodes",
@@ -707,7 +707,11 @@ export function ResearchBoard(props: {
                     {(route) => <box flexDirection="column">
                       <text fg={colors.base}>{route().title}</text>
                       <text fg={colors.muted}>{`状态  ${ROUTE_STATUS[route().disposition] ?? route().disposition} · 版本 ${route().revision}`}</text>
+                      <text fg={colors.muted}>{`范围  ${route().scope_id} · 目标版本 ${route().goal_version}`}</text>
                       <text fg={colors.base}>{`理由  ${route().rationale}`}</text>
+                      <For each={route().relations ?? []}>{relation => <text fg={colors.link}>{`关系  ${relation.kind} → ${relation.route_ref}`}</text>}</For>
+                      <For each={route().component_refs ?? []}>{ref => <text fg={colors.link}>{`组合组件  ${ref}`}</text>}</For>
+                      <For each={route().baseline_refs ?? []}>{ref => <text fg={colors.link}>{`冻结基线  ${ref}`}</text>}</For>
                       <text fg={colors.base}>{`关键假设  ${route().critical_assumption}`}</text>
                       <Show when={route().disposition_reason}><text fg={colors.base}>{`处置理由  ${route().disposition_reason}`}</text></Show>
                       <Show when={route().reactivation_condition}><text fg={colors.base}>{`恢复条件  ${route().reactivation_condition}`}</text></Show>

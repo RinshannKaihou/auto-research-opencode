@@ -7,7 +7,8 @@ from uuid import uuid4
 
 from .errors import ValidationError, BudgetError, ConflictError, ResearchControlError, ResearchExecutionUnverified
 
-LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost'}
+LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost',
+          'shared_work_budget', 'resource_capacities'}
 SOURCE_ALGORITHM = 'source-worker-v1'
 
 
@@ -123,6 +124,7 @@ def view(store, db, host, session):
             'deadline_at':stored['deadline_at'] if stored else None, 'expired':expired,'reason':reason,
             'tokens_observed':sum(tokens) if tokens else None,'cost_observed':sum(costs) if costs else None,
             'usage_coverage':'observed_subset','scope':'plugin autonomous dispatch; external processes unmetered',
+            'exploration': exploration_budget_view(store, db),
             'run_state':row['state'] if row else None}
 
 
@@ -135,6 +137,194 @@ def check_node(store, db):
 def publication_materials(db, publication):
     return [tuple(row) for row in db.execute('''SELECT kind,content,object_version,object_kind,source_path,knowledge_refs
         FROM publication_items WHERE publication_id=? ORDER BY kind,content,object_version,object_kind,source_path,knowledge_refs''',(publication,))]
+
+
+def _resource_requirements(value):
+    if not isinstance(value, dict) or any(
+            not isinstance(name, str) or not name.strip() or len(name) > 200
+            or type(amount) is not int or amount <= 0 for name, amount in value.items()):
+        raise ValidationError('Resources must map nonempty names to positive integer units')
+    return value
+
+
+def _allocations_available(db):
+    return db.execute('PRAGMA user_version').fetchone()[0] >= 16
+
+
+def exploration_budget_view(store, db):
+    """Planned work units and resource leases, never inferred actual expenditure."""
+    if not _allocations_available(db):
+        return {'available': False, 'semantics': 'legacy'}
+    generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+    limits = store._project(db)['config'].get('runtime_budget', {})
+    rows = list(db.execute('SELECT a.*,r.state,r.generation FROM exploration_allocations a '
+                          'JOIN runtime_budget_reservations r USING(reservation_id) '
+                          'WHERE r.generation=? ORDER BY a.rowid', (generation,)))
+    allocations = []
+    for row in rows:
+        item = dict(row)
+        item['resources'] = json.loads(item['resources'])
+        item['actual_usage_status'] = 'unknown' if item['actual_usage'] is None else 'observed'
+        allocations.append(item)
+    by_scope = {}
+    for item in allocations:
+        totals = by_scope.setdefault(item['scope_id'], {'allocated': 0, 'reserved': 0, 'committed': 0,
+                                                       'released': 0, 'work_items': 0, 'actual_usage': None})
+        totals['work_items'] += 1
+        if item['state'] != 'released':
+            totals['allocated'] += item['amount']
+        if item['state'] in {'reserved', 'committed', 'released'}:
+            totals[item['state']] += item['amount']
+    held = list(db.execute("SELECT a.intent_id,a.task_id,a.resources,a.resource_state,r.generation,t.state task_state "
+        "FROM exploration_allocations a JOIN runtime_budget_reservations r USING(reservation_id) "
+        "LEFT JOIN exploration_tasks t ON t.task_id=a.task_id WHERE a.resource_state IN ('held','uncertain') "
+        "ORDER BY a.rowid"))
+    resource_usage = {}
+    leases = []
+    for row in held:
+        item = dict(row)
+        item['resources'] = json.loads(item['resources'])
+        if not item['resources']:
+            continue  # Also hide empty leases written by an earlier E3 build.
+        leases.append(item)
+        for name, amount in item['resources'].items():
+            resource_usage[name] = resource_usage.get(name, 0) + amount
+    return {'available': True, 'unit': 'work_units', 'limit': limits.get('shared_work_budget'),
+            'allocated': sum(item['amount'] for item in allocations if item['state'] != 'released'),
+            'reserved': sum(item['amount'] for item in allocations if item['state'] == 'reserved'),
+            'committed': sum(item['amount'] for item in allocations if item['state'] == 'committed'),
+            'released': sum(item['amount'] for item in allocations if item['state'] == 'released'),
+            'actual_usage': None, 'actual_usage_status': 'unknown',
+            'accounting': 'planned work allocations; actual tokens/cost remain separate observations',
+            'allocations': allocations, 'by_scope': by_scope,
+            'resource_capacities': limits.get('resource_capacities') or {},
+            'resources_held': resource_usage, 'resource_leases': leases,
+            'resource_coverage': 'declared managed work; external exit requires operator verification'}
+
+
+def reserve_exploration_work(store, db, intent_id, details):
+    """Reserve one shared work item in the caller's decision transaction."""
+    if not _allocations_available(db):
+        return {'available': False, 'semantics': 'legacy'}
+    work = details['next_work']
+    amount = work.get('budget_amount', 1)
+    if type(amount) not in {int, float} or not math.isfinite(amount) or amount <= 0:
+        raise ValidationError('budget_amount must be a finite positive number of work units')
+    resources = _resource_requirements(work.get('resources', {}))
+    limits = store._project(db)['config'].get('runtime_budget', {})
+    capacities = limits.get('resource_capacities') or {}
+    for name, requested in resources.items():
+        if name not in capacities or requested > capacities[name]:
+            raise ValidationError(f'Resource {name} needs an explicit sufficient capacity')
+    existing = db.execute('SELECT a.*,r.state,r.generation FROM exploration_allocations a '
+                          'JOIN runtime_budget_reservations r USING(reservation_id) WHERE intent_id=?',
+                          (intent_id,)).fetchone()
+    if existing:
+        if (existing['amount'] != amount or json.loads(existing['resources']) != resources
+                or existing['generation'] != details['generation'] or existing['scope_id'] != details['scope_id']):
+            raise ConflictError('Exploration work allocation identity changed')
+        return dict(existing)
+    used = db.execute("SELECT COALESCE(SUM(a.amount),0) FROM exploration_allocations a "
+                      "JOIN runtime_budget_reservations r USING(reservation_id) "
+                      "WHERE r.generation=? AND r.state!='released'", (details['generation'],)).fetchone()[0]
+    limit = limits.get('shared_work_budget')
+    if limit is not None and used + amount > limit:
+        raise BudgetError(f'Shared exploration work budget exceeded: allocated={used}, requested={amount}, limit={limit}')
+    reservation = 'exploration-budget:' + hashlib.sha256(intent_id.encode()).hexdigest()[:32]
+    db.execute('INSERT INTO runtime_budget_reservations VALUES(?,?,?,?,?,?,?,?)',
+               (reservation, details['generation'], 'exploration_work', None, 'project', intent_id,
+                'reserved', timestamp()))
+    db.execute('INSERT INTO exploration_allocations VALUES(?,?,?,?,?,?,?,?,?,?)',
+               (reservation, intent_id, details['scope_id'], None, amount, 'work_units',
+                json.dumps(resources, sort_keys=True), 'unclaimed', None, timestamp()))
+    return {'reservation_id': reservation, 'intent_id': intent_id, 'amount': amount,
+            'unit': 'work_units', 'state': 'reserved', 'actual_usage': None}
+
+
+def materialize_exploration_work(store, db, intent_id, task_id):
+    if not _allocations_available(db):
+        return
+    row = db.execute('SELECT reservation_id,task_id FROM exploration_allocations WHERE intent_id=?',
+                     (intent_id,)).fetchone()
+    if not row:
+        return
+    if row['task_id'] and row['task_id'] != task_id:
+        raise ConflictError('Exploration allocation already belongs to another task')
+    db.execute('UPDATE exploration_allocations SET task_id=?,updated_at=? WHERE intent_id=?',
+               (task_id, timestamp(), intent_id))
+    db.execute("UPDATE runtime_budget_reservations SET state='committed' WHERE reservation_id=? AND state='reserved'",
+               (row['reservation_id'],))
+
+
+def release_exploration_work(store, db, intent_id):
+    """Release only work with no host submission, not completed/uncertain usage."""
+    if not _allocations_available(db):
+        return {'released': False, 'reason': 'legacy'}
+    row = db.execute('SELECT * FROM exploration_allocations WHERE intent_id=?', (intent_id,)).fetchone()
+    if not row:
+        return {'released': False, 'reason': 'no_allocation'}
+    if row['task_id']:
+        task = db.execute('SELECT state FROM exploration_tasks WHERE task_id=?', (row['task_id'],)).fetchone()
+        submitted = db.execute("SELECT 1 FROM workflow_intents WHERE kind='node_launch' "
+            "AND json_extract(details,'$.task_id')=? AND state!='not_sent' LIMIT 1", (row['task_id'],)).fetchone()
+        if not task or task['state'] not in {'queued', 'cancelled'} or submitted:
+            return {'released': False, 'reason': 'work_may_have_started'}
+    db.execute("UPDATE runtime_budget_reservations SET state='released' WHERE reservation_id=?", (row['reservation_id'],))
+    db.execute("UPDATE exploration_allocations SET resource_state='released',updated_at=? WHERE intent_id=?",
+               (timestamp(), intent_id))
+    return {'released': True, 'reservation_id': row['reservation_id']}
+
+
+def _release_task_resources(db, task_id):
+    if _allocations_available(db):
+        db.execute("UPDATE exploration_allocations SET resource_state='released',updated_at=? WHERE task_id=?",
+                   (timestamp(), task_id))
+
+
+def claim_exploration_resources(store, db, task_id):
+    if not _allocations_available(db):
+        return {'allowed': True, 'exploration': False}
+    row = db.execute('SELECT * FROM exploration_allocations WHERE task_id=?', (task_id,)).fetchone()
+    if not row:
+        return {'allowed': True, 'exploration': False}
+    requested = json.loads(row['resources'])
+    if not requested:
+        _release_task_resources(db, task_id)
+        return {'allowed': True, 'exploration': True, 'resources': {}}
+    if row['resource_state'] in {'held', 'uncertain'}:
+        return {'allowed': True, 'exploration': True, 'resources': requested}
+    capacities = store._project(db)['config'].get('runtime_budget', {}).get('resource_capacities') or {}
+    occupied = {}
+    for lease in db.execute("SELECT resources FROM exploration_allocations WHERE resource_state IN ('held','uncertain')"):
+        for name, amount in json.loads(lease['resources']).items():
+            occupied[name] = occupied.get(name, 0) + amount
+    missing = {name: {'requested': amount, 'held': occupied.get(name, 0), 'capacity': capacities.get(name)}
+               for name, amount in requested.items()
+               if name not in capacities or occupied.get(name, 0) + amount > capacities[name]}
+    if missing:
+        blockers = []
+        for lease in db.execute("SELECT a.task_id,a.resources,a.resource_state,t.state task_state "
+                "FROM exploration_allocations a LEFT JOIN exploration_tasks t USING(task_id) "
+                "WHERE a.resource_state IN ('held','uncertain') ORDER BY a.rowid"):
+            shared = {name: amount for name, amount in json.loads(lease['resources']).items() if name in missing}
+            if shared:
+                blockers.append({'task_id': lease['task_id'], 'state': lease['resource_state'],
+                                 'task_state': lease['task_state'], 'resources': shared})
+        current_main = db.execute('SELECT main_session_id FROM workflow_project WHERE id=1').fetchone()[0]
+        body = {'kind': 'resource_wait', 'task_id': task_id, 'resources': missing, 'blockers': blockers,
+                'recovery_commands': [f"/research recover resource {item['task_id']} <外部进程退出核实原因>"
+                    for item in blockers if item['task_state'] in {'finished', 'failed', 'cancelled'}]}
+        notice = 'resource-wait:' + hashlib.sha256(json.dumps([current_main, body], sort_keys=True).encode()).hexdigest()[:24]
+        # Reuse the existing durable delivery protocol. A repeated scheduler
+        # claim (including after restart) must not produce another message.
+        db.execute('INSERT OR IGNORE INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)',
+                   (notice, task_id, current_main, 'resource_wait', None,
+                    json.dumps(body, sort_keys=True), 'pending', timestamp()))
+        return {'allowed': False, 'reason': 'waiting_resource', 'state': 'queued', 'resources': missing,
+                'blockers': blockers, 'notification_id': notice}
+    db.execute("UPDATE exploration_allocations SET resource_state='held',updated_at=? WHERE reservation_id=?",
+               (timestamp(), row['reservation_id']))
+    return {'allowed': True, 'exploration': True, 'resources': requested}
 
 
 class RuntimeStore:
@@ -202,6 +392,7 @@ class RuntimeStore:
                 if not task or task['state'] != 'starting' or task['session_id'] != details['session_id'] or latest['intent_id'] != intent_id:
                     raise ConflictError('Task changed; preserve the current recovery state')
                 db.execute("UPDATE exploration_tasks SET state='queued',error=?,updated_at=? WHERE task_id=?", (reason[:2000], timestamp(), details['task_id']))
+                _release_task_resources(db, details['task_id'])
                 recent = list(db.execute("SELECT state FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=? AND intent_id!=? ORDER BY rowid DESC LIMIT 2",
                                          (details['task_id'], intent_id)))
                 paused = len(recent) == 2 and all(item['state'] == 'not_sent' for item in recent)
@@ -394,8 +585,31 @@ class RuntimeStore:
             details = {'task_id': task_id, 'launch_id': launch['intent_id'] if launch else None,
                        'session_id': task['session_id'], 'reason': reason.strip(), 'verified_by': 'user'}
             self._event(db, 'runtime.task_exit_confirmed', details)
+            _release_task_resources(db, task_id)
             return {'task_id': task_id, 'state': 'failed', 'exit_verified_by': 'user'}
         return self._mutate('runtime.recovery_confirm_exit', payload, operation, work)
+
+    def runtime_resources_release(self, host, session, task_id, reason, operation):
+        """Host/operator attestation of external exit; never a model assertion."""
+        from .controller import CURRENT_MODEL_CALL
+        if CURRENT_MODEL_CALL.get():
+            raise ValidationError('Resource exit verification is a host/operator-only action')
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
+            raise ValidationError('An operator verification reason is required')
+        payload = dict(host=host, session=session, task_id=task_id, reason=reason.strip())
+
+        def work(db):
+            actor = db.execute("SELECT role,detached FROM workflow_sessions WHERE host_id=? AND session_id=?", (host, session)).fetchone()
+            task = db.execute('SELECT * FROM exploration_tasks WHERE task_id=?', (task_id,)).fetchone()
+            run = db.execute('SELECT main_session_id FROM workflow_project WHERE id=1').fetchone()
+            if (not actor or actor['role'] != 'main' or actor['detached'] or run['main_session_id'] != session
+                    or not task or task['state'] not in {'finished', 'failed', 'cancelled'}):
+                raise ConflictError('Only the current main may verify external exit of a terminal project task; reconcile unverified execution first')
+            _release_task_resources(db, task_id)
+            self._event(db, 'runtime.resources_exit_verified', payload)
+            return {'task_id': task_id, 'resources_released': True, 'exit_verified_by': 'user',
+                    'work_budget_released': False, 'actual_usage_status': 'unknown'}
+        return self._mutate('runtime.resources_release', payload, operation, work)
 
     def recovery_retry_task(self, host, session, task_id, reason, operation):
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
@@ -451,6 +665,9 @@ class RuntimeStore:
                 raise ValidationError('The task does not belong to this coordinator')
             if task['state'] != 'queued':
                 return {'claimed': False, 'reason': 'already_claimed', 'state': task['state']}
+            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
+            if task['generation'] != run['generation']:
+                raise ConflictError('The task belongs to an earlier research generation')
             from .exploration_store import check_exploration_task
             check = check_exploration_task(self, db, task_id)
             if not check['allowed']:
@@ -458,9 +675,13 @@ class RuntimeStore:
             active = db.execute("SELECT COUNT(*) FROM exploration_tasks WHERE state IN ('starting','running','stopping','unverified')").fetchone()[0]
             if active >= concurrency:
                 return {'claimed': False, 'reason': 'capacity', 'state': 'queued'}
-            run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
-            if task['generation'] != run['generation']:
-                raise ConflictError('The task belongs to an earlier research generation')
+            resources = claim_exploration_resources(self, db, task_id)
+            if not resources['allowed']:
+                error = 'waiting_resource: ' + json.dumps(resources.get('resources', {}), sort_keys=True)
+                if task['error'] != error:
+                    db.execute('UPDATE exploration_tasks SET error=?,updated_at=? WHERE task_id=?',
+                               (error, timestamp(), task_id))
+                return {'claimed': False, **resources}
             launch_no = db.execute("SELECT COUNT(*) FROM workflow_intents WHERE kind='node_launch' AND json_extract(details,'$.task_id')=?",
                                    (task_id,)).fetchone()[0] + 1
             reuse = bool(db.execute("SELECT 1 FROM workflow_sessions WHERE session_id=? AND detached=0 AND role='node_core'",
@@ -591,6 +812,11 @@ class RuntimeStore:
                                 (notification_id, session)).fetchone()
             if not role or role['role'] != 'main' or role['detached'] or not notice:
                 raise ValidationError('Notification does not belong to the current coordinator')
+            if notice['kind'] == 'resource_wait' and not db.execute(
+                    "SELECT 1 FROM exploration_tasks WHERE task_id=? AND state='queued'",
+                    (notice['task_id'],)).fetchone():
+                db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
+                return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
             if notice['kind'] == 'exploration_result' and not self._exploration_notice_pending(db, notice):
                 db.execute("UPDATE workflow_notifications SET state='claimed' WHERE notification_id=?", (notification_id,))
                 return {'notification_id': notification_id, 'state': 'claimed', 'send': False}
@@ -737,6 +963,11 @@ class RuntimeStore:
             result = self._finish_in_tx(db, host, session, details['state'], {'reason': details['summary']})
             db.execute("UPDATE exploration_tasks SET state='finished',updated_at=? WHERE task_id=? AND session_id=?",
                        (timestamp(), details['task_id'], session))
+            if _allocations_available(db):
+                db.execute("UPDATE exploration_allocations SET resource_state=CASE WHEN resources='{}' "
+                           "THEN 'released' ELSE 'uncertain' END,updated_at=? "
+                           "WHERE task_id=? AND resource_state='held'",
+                           (timestamp(), details['task_id']))
             db.execute("UPDATE workflow_sessions SET pause_reason='segment_complete' WHERE session_id=?", (session,))
             db.execute("UPDATE workflow_intents SET state='completed',updated_at=? WHERE intent_id=?", (timestamp(), intent_id))
             self._event(db, 'runtime.node_finish_committed', {'intent_id': intent_id, 'task_id': details['task_id']})
@@ -835,9 +1066,11 @@ class RuntimeStore:
     def runtime_budget_set(self, host, session, limits, reason, operation):
         if not isinstance(limits, dict) or set(limits)-LIMITS or not isinstance(reason,str) or not reason.strip():
             raise ValidationError('Explicit runtime limits and reason required')
-        if any(value is not None and (type(value) not in ({int,float} if key=='max_cost' else {int})
-                or not math.isfinite(value) or value<=0) for key,value in limits.items()):
-            raise ValidationError('Runtime limits must be positive integers (cost may be fractional) or null (disabled)')
+        if any(value is not None and (type(value) not in ({int,float} if key in {'max_cost','shared_work_budget'} else {int})
+                or not math.isfinite(value) or value<=0) for key,value in limits.items() if key != 'resource_capacities'):
+            raise ValidationError('Runtime limits must be positive integers (cost/shared work may be fractional) or null (disabled)')
+        if 'resource_capacities' in limits and limits['resource_capacities'] is not None:
+            _resource_requirements(limits['resource_capacities'])
         payload = dict(host=host,session=session,limits=limits,reason=reason)
         def work(db):
             config = self._project(db)['config']
@@ -959,6 +1192,8 @@ class RuntimeStore:
                 return {'stopped':False,**state}
             affected_tasks = list(db.execute("SELECT task_id,node_id,state FROM exploration_tasks "
                 "WHERE state IN ('queued','starting','running','waiting','stopping')"))
+            from .workflow_store import cancel_unstarted_exploration
+            settled_tasks = cancel_unstarted_exploration(self, db, state['generation'], 'budget_exhausted')
             db.execute("UPDATE workflow_project SET state='paused' WHERE id=1")
             db.execute("UPDATE project SET control='paused'")
             db.execute("UPDATE exploration_tasks SET state='cancelled',error='wall_clock_budget: queued request cancelled',updated_at=? WHERE state='queued'",(timestamp(),))
@@ -967,6 +1202,8 @@ class RuntimeStore:
             db.execute("UPDATE workflow_intents SET state='revoked',updated_at=? WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')", (timestamp(),))
             db.execute("UPDATE workflow_sessions SET pause_reason='budget' WHERE detached=0")
             for task in affected_tasks:
+                if task['task_id'] in settled_tasks:
+                    continue
                 outcome = 'cancelled' if task['state'] == 'queued' else 'unverified'
                 self.exploration_record_result(db, task['node_id'], f"task:{task['task_id']}:{outcome}",
                     outcome, None, {'task_id': task['task_id'], 'reason': 'budget_exhausted'})

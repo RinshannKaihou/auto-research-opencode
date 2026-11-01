@@ -1,0 +1,39 @@
+{
+  "scenario": "resource",
+  "used_external_model": false,
+  "classification": "actual OpenCode host + scripted loopback provider",
+  "opencode_version": "opencode v2.2.5",
+  "plugin_source_digest": "3e4a803e17a2802fdfde058ba42ff0bcf119546c0319f6350f97f73fda374e2c",
+  "plugin_source_files": 76,
+  "passed": false,
+  "error": "RuntimeError: RuntimeError: Public tool rejected the fixture action: {'type': 'unknown', 'message': 'Current pending results must be considered or explicitly recorded as unprocessed'}",
+  "stage": 16,
+  "actions": [
+    "research_scope",
+    "research_scope",
+    "research_route",
+    "research_route",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_publish",
+    "research_decide",
+    "research_finish",
+    "research_wait",
+    "research_wait",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_decide",
+    "research_publish",
+    "research_query",
+    "research_finish",
+    "research_prepare_conclusion"
+  ],
+  "failures": [
+    "RuntimeError: Public tool rejected the fixture action: {'type': 'unknown', 'message': 'Current pending results must be considered or explicitly recorded as unprocessed'}",
+    "RuntimeError: Public prepare tool did not create a conclusion draft"
+  ],
+  "host_log_tail": "server listening on http://127.0.0.1:65083\n",
+  "trace": "host-resource-trace.json.gz"
+}

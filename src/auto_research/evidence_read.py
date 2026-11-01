@@ -51,13 +51,18 @@ def basis_changes(before, after):
             'added_results': sorted(new_results - old_results), 'handled_results': sorted(old_results - new_results),
             'scope_before': (before.get('scope') or {}).get('ref'),
             'scope_after': (after.get('scope') or {}).get('ref'),
+            'scopes_before': [item['ref'] for item in before.get('scopes', [])],
+            'scopes_after': [item['ref'] for item in after.get('scopes', [])],
+            'scope_exclusions_changed': before.get('scope_exclusions', []) != after.get('scope_exclusions', []),
+            'exploration_exclusions_changed': before.get('exploration_exclusions', []) != after.get('exploration_exclusions', []),
+            'scope_decisions_changed': before.get('scope_decisions', []) != after.get('scope_decisions', []),
             'core_scope_before': before.get('conclusion_scope'),
             'core_scope_after': after.get('conclusion_scope'),
             'risks_changed': before['risks'] != after['risks'],
             'reviews_changed': before['review_history'] != after['review_history']}
 
 
-def build_evidence_view(store, db, refs):
+def build_evidence_view(store, db, refs, scope_id=None):
     """Read one structural view under the caller's SQLite read transaction."""
     if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref for ref in refs):
         raise ValidationError("Evidence roots must be a list of fixed references")
@@ -65,15 +70,79 @@ def build_evidence_view(store, db, refs):
     bound = epistemic.read_bound(db)
     generation = db.execute("SELECT generation FROM workflow_project WHERE id=1").fetchone()[0]
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    scope = _current_scope(db, generation) if version >= 13 else None
-    routes, pending = [], []
-    if scope:
+    scopes = []
+    if version >= 13:
+        # Keep the compatibility projection while making the complete generation
+        # the default evidence boundary. Local exploration reads are explicit.
+        rows = db.execute('SELECT s.* FROM exploration_scopes s JOIN '
+            '(SELECT scope_id,MAX(revision) revision FROM exploration_scopes WHERE generation=? GROUP BY scope_id) x '
+            'ON s.scope_id=x.scope_id AND s.revision=x.revision ORDER BY s.scope_id', (generation,))
+        scopes = [_decode(row, 'scope') for row in rows]
+    if scope_id is not None:
+        scopes = [item for item in scopes if item['scope_id'] == scope_id]
+        if not scopes:
+            raise ValidationError('Unknown exploration scope in the current generation')
+    scope = scopes[0] if scope_id is not None else (_current_scope(db, generation) if version >= 13 else None)
+    routes, pending, scope_decisions = [], [], []
+    for selected_scope in scopes:
         rows = db.execute("SELECT r.* FROM exploration_routes r JOIN "
                           "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "
-                          "ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (scope["scope_id"],))
-        routes = [_decode(row, "route") for row in rows]
-        pending = [{**dict(row), "data": json.loads(row["data"])} for row in db.execute(
-            "SELECT * FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL ORDER BY result_id", (scope["scope_id"],))]
+                          "ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (selected_scope["scope_id"],))
+        routes.extend(_decode(row, "route") for row in rows)
+        pending.extend({**dict(row), "data": json.loads(row["data"])} for row in db.execute(
+            "SELECT * FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL ORDER BY result_id", (selected_scope["scope_id"],)))
+        decision = db.execute('SELECT * FROM exploration_decisions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1',
+                              (selected_scope['scope_id'],)).fetchone()
+        if decision:
+            scope_decisions.append({**dict(decision), 'data': json.loads(decision['data']),
+                                    'actor': json.loads(decision['actor'])})
+
+    conclusion_scope = store._project(db)['config'].get('conclusion_review_scope') if scope_id is None else None
+    if conclusion_scope and conclusion_scope['generation'] != generation:
+        conclusion_scope = None
+    exclusions = []
+    if scope_id is None and version >= 14:
+        for row in db.execute("SELECT event_id,data FROM events WHERE kind='conclusion.scope_changed' "
+                              "AND json_extract(data,'$.after.generation')=? AND json_array_length(data,'$.removed')>0 "
+                              "ORDER BY event_id", (generation,)):
+            change = json.loads(row['data'])
+            if (change.get('after') or {}).get('generation') == generation and change.get('removed'):
+                exclusions.append({'event_id': row['event_id'], **change})
+    retained_core = set((conclusion_scope or {}).get('refs', []))
+    retained_core.update(ref for item in exclusions for ref in item['removed'])
+    # Closing a scope or never promoting its observation to a core claim does
+    # not erase the declared scientific evidence. Local work deliberately does
+    # not inherit other candidates' references; its selection is narrower.
+    exploration_refs = set()
+    exploration_exclusions = []
+    if scope_id is None:
+        for item in [*scopes, *routes]:
+            for field in ('baseline_refs', 'question_refs', 'hypothesis_refs', 'evidence_refs'):
+                exploration_refs.update(item.get(field) or [])
+        # Version history is the authority for removals; no parallel ledger or
+        # copied historical cards are needed. Keep only precise removed refs and
+        # the reason recorded by the revision that removed them.
+        for kind, table in (('scope', 'exploration_scopes'), ('route', 'exploration_routes')):
+            if version < 13:
+                break
+            predicate = 'generation=?' if kind == 'scope' else (
+                'scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?)')
+            previous = None
+            for row in db.execute(f'SELECT {kind}_id ident,revision,data FROM {table} WHERE {predicate} '
+                                  f'ORDER BY {kind}_id,revision', (generation,)):
+                data = json.loads(row['data'])
+                declared = {ref for field in ('baseline_refs', 'question_refs', 'hypothesis_refs', 'evidence_refs')
+                            for ref in data.get(field) or []}
+                if previous and previous[0] == row['ident']:
+                    removed = sorted(previous[2] - declared)
+                    if removed:
+                        exploration_exclusions.append({'kind': kind, 'id': row['ident'],
+                            'before_ref': f"explore/{kind}/{row['ident']}@{previous[1]}",
+                            'after_ref': f"explore/{kind}/{row['ident']}@{row['revision']}",
+                            'removed_refs': removed, 'reason': data.get('reason') or data.get('disposition_reason'),
+                            'reason_status': 'recorded' if data.get('reason') or data.get('disposition_reason') else 'unknown'})
+                        exploration_refs.update(removed)
+                previous = (row['ident'], row['revision'], declared)
 
     records, edges, materials, limitations, publication_checks = {}, [], {}, [], {}
     pending_publication_checks = []
@@ -102,7 +171,7 @@ def build_evidence_view(store, db, refs):
         edges.append(edge)
         enqueue(edge['used_ref'])
 
-    for ref in refs:
+    for ref in sorted(set(refs) | retained_core | exploration_refs):
         enqueue(ref)
     while queue:
         ref = queue.pop()
@@ -293,11 +362,10 @@ def build_evidence_view(store, db, refs):
         risk["risk_id"] = "risk-" + _hash(risk)[:24]
     for limitation in limitations:
         limitation["risk_id"] = "limit-" + _hash(limitation)[:24]
-    conclusion_scope = store._project(db)['config'].get('conclusion_review_scope')
-    if conclusion_scope and conclusion_scope['generation'] != generation:
-        conclusion_scope = None
-    view = {"roots": refs, "scope": scope, "conclusion_scope": conclusion_scope,
-            "routes": routes, "pending_results": pending,
+    view = {"roots": refs, "scope": scope, "scopes": scopes, "scope_id": scope_id,
+            "scope_exclusions": exclusions, "retained_core_refs": sorted(retained_core), "conclusion_scope": conclusion_scope,
+            'exploration_exclusions': exploration_exclusions,
+            "routes": routes, "pending_results": pending, 'scope_decisions': scope_decisions,
             "records": [records[key] for key in sorted(records)], "edges": sorted(edges, key=encoded),
             "materials": [materials[key] for key in sorted(materials)],
             "publication_checks": [dict(ref=key, **publication_checks[key]) for key in sorted(publication_checks)],
@@ -308,6 +376,34 @@ def build_evidence_view(store, db, refs):
             "raw_material_read": "not_assessed"}
     return {"project_id": store._project(db)["project_id"], "generation": generation,
             "source_sequence": bound, "basis_digest": _hash(view), "view": view}
+
+
+def scope_work_basis(store, db, roots, scope_id, route_refs, *, ignore_review_scope_events=False):
+    """Scientific dependencies of approved work, independent of other candidates.
+
+    Route identities select their *current* revision, so a subsequent revision of
+    a selected route invalidates the approval. New results do not cancel work;
+    changed fixed evidence, current knowledge, challenges and scope versions do.
+    """
+    from .exploration_store import _latest, _parse_ref
+    selected = [_latest(db, 'route', _parse_ref(ref, 'route')[0]) for ref in route_refs]
+    if any(item['scope_id'] != scope_id for item in selected):
+        raise ValidationError('Work routes must belong to the selected scope')
+    scope = _latest(db, 'scope', scope_id)
+    relevant = set(roots)
+    for item in [scope, *selected]:
+        for field in ('baseline_refs', 'question_refs', 'hypothesis_refs', 'evidence_refs'):
+            relevant.update(item.get(field) or [])
+    view = build_evidence_view(store, db, sorted(relevant), scope_id=scope_id)['view']
+    view['routes'] = sorted(selected, key=lambda item: item['route_id'])
+    view['pending_results'] = []
+    view['scope_decisions'] = []
+    if ignore_review_scope_events:
+        # Another node can enter or leave the same input's review scope without
+        # changing the underlying evidence or its substantive review findings.
+        view['review_history'] = [event for event in view['review_history']
+                                  if event['action'] not in {'promoted', 'reentered', 'out_of_scope'}]
+    return _hash(view)
 
 
 class EvidenceCache:
@@ -343,15 +439,15 @@ class EvidenceCache:
                 material['read_error'] = str(error)
         return view
 
-    def open(self, store, refs, include_materials=None, host=None, session=None):
+    def open(self, store, refs, include_materials=None, host=None, session=None, scope_id=None):
         with store._read() as db:
-            snapshot = build_evidence_view(store, db, refs)
+            snapshot = build_evidence_view(store, db, refs, scope_id=scope_id)
         if include_materials:
             raise ValidationError('evidence_read_contract_changed: use material_ref to read frozen material')
         self.annotate_materials(store, snapshot['view'], host, session)
         snapshot.update(host_id=host, session_id=session)
         with store._read() as db:
-            if build_evidence_view(store, db, refs)['basis_digest'] != snapshot['basis_digest']:
+            if build_evidence_view(store, db, refs, scope_id=scope_id)['basis_digest'] != snapshot['basis_digest']:
                 raise ConflictError('evidence_basis_changed: read the evidence again')
         return self._remember(store, snapshot)
 
@@ -367,6 +463,8 @@ class EvidenceCache:
                         'host_id': row['host_id'], 'session_id': row['session_id'],
                         'draft_id': draft_id, 'view': view, 'snapshot_id': snapshot_id, 'root': str(store.root),
                         'format_version': data.get('format_version', 1)}
+            if data.get('delivery_manifest'):
+                snapshot['delivery_manifest'] = data['delivery_manifest']
         body = json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         digest = hashlib.sha256(body.encode('utf-8')).hexdigest()
         if digest != row['manifest_digest']:
@@ -403,7 +501,9 @@ class EvidenceCache:
         return snapshot
 
     def page(self, store, *, refs=None, include_materials=None, draft_id=None, snapshot_id=None, cursor=None,
-             material_ref=None, limit=4096, host=None, session=None):
+             material_ref=None, limit=None, host=None, session=None, scope_id=None):
+        if cursor is not None and not isinstance(cursor, dict):
+            raise ValidationError('Evidence cursor must be an object')
         if material_ref or (cursor and cursor.get('part') == 'material'):
             return self.materials.page(store, material_ref, cursor, limit)
         if cursor:
@@ -418,7 +518,7 @@ class EvidenceCache:
         else:
             offset = 0
         if snapshot_id is None:
-            snapshot_id = self.open_draft(store, draft_id) if draft_id else self.open(store, refs or [], include_materials, host, session)
+            snapshot_id = self.open_draft(store, draft_id) if draft_id else self.open(store, refs or [], include_materials, host, session, scope_id)
         try:
             snapshot = self.get(store, snapshot_id)
         except ConflictError:
@@ -429,11 +529,13 @@ class EvidenceCache:
             raise ValidationError('Evidence cursor belongs to another conclusion draft')
         if refs is not None and sorted(set(refs)) != snapshot["view"]["roots"]:
             raise ConflictError("read_view_changed: evidence roots changed")
+        if scope_id is not None and scope_id != snapshot['view'].get('scope_id'):
+            raise ConflictError('read_view_changed: exploration scope changed')
         is_decision = snapshot.get('draft_id') and snapshot.get('format_version') == 2
         source = snapshot['body'].encode('utf-8') if is_decision else snapshot['body']
-        if not isinstance(offset, int) or offset < 0 or offset > len(source):
+        if type(offset) is not int or offset < 0 or offset > len(source):
             raise ValidationError("Invalid evidence cursor offset")
-        limit = max(4 if is_decision else 1, min(int(limit or 4096), 16384))
+        limit = max(4 if is_decision else 1, min(int(limit or (16384 if is_decision else 4096)), 16384))
         end = min(offset + limit, len(source))
         if is_decision:
             while end < len(source) and source[end] & 0xc0 == 0x80:
@@ -450,6 +552,7 @@ class EvidenceCache:
             "offset": offset, "end": end, "chunk": chunk, "total_chars": len(snapshot["body"]),
             **({'part': 'decision', 'offset_unit': 'utf8_byte', 'total_bytes': len(source)} if is_decision else {}),
             "draft_id": snapshot.get('draft_id'),
+            **({'delivery_manifest': snapshot['delivery_manifest']} if offset == 0 and snapshot.get('delivery_manifest') else {}),
             "cursor": {"snapshot_id": snapshot_id, "offset": end,
                        **({'draft_id': snapshot['draft_id']} if snapshot.get('draft_id') else {})}
                       if end < len(source) else None,

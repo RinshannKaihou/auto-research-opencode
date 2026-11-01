@@ -44,6 +44,7 @@ for (const file of [
   'schema13.py',
   'schema14.py',
   'schema15.py',
+  'schema16.py',
   'workflow_store.py',
   'workbench_read.py',
   'publication_display.py',

@@ -54,6 +54,13 @@ export function RuntimeDetail(props: { context: Context; summary: any; session: 
         <text fg={colors.muted}>{`自主调度预算 · 主会话当前工作对象已预留 ${props.summary.runtime_budget.turns} 轮 / ${props.summary.runtime_budget.limits.max_session_turns ?? '未配置'} · 交付未核实 ${props.summary.runtime_budget.unconfirmed_reservations} · 节点 ${props.summary.runtime_budget.total_nodes} / ${props.summary.runtime_budget.limits.max_total_nodes ?? '未配置'}`}</text>
         <text fg={colors.muted}>{`截止 ${props.summary.runtime_budget.deadline_at ?? '未配置'} · token/cost 仅覆盖已观测调用；外部进程未计量`}</text>
         <text fg={colors.muted}>{`已观测 token ${props.summary.runtime_budget.tokens_observed ?? '未知'} / ${props.summary.runtime_budget.limits.max_tokens ?? '未配置'} · cost ${props.summary.runtime_budget.cost_observed ?? '未知'} / ${props.summary.runtime_budget.limits.max_cost ?? '未配置'}`}</text>
+        <Show when={props.summary.runtime_budget.exploration?.available}>
+          <text fg={colors.muted}>{`共同计划投入 ${props.summary.runtime_budget.exploration?.allocated} / ${props.summary.runtime_budget.exploration?.limit ?? '未配置'} work units · 预留 ${props.summary.runtime_budget.exploration?.reserved} · 已投入 ${props.summary.runtime_budget.exploration?.committed} · 实际用量未知`}</text>
+          <text fg={colors.muted}>资源仅覆盖声明的受管工作；外部进程退出须人工核实。</text>
+          <For each={Object.entries(props.summary.runtime_budget.exploration?.resource_capacities ?? {})}>
+            {([name,capacity]) => <text fg={colors.muted}>{`${name}  占用 ${props.summary.runtime_budget.exploration?.resources_held?.[name] ?? 0} / ${capacity}`}</text>}
+          </For>
+        </Show>
       </Show>
       <Field context={props.context} label="研究主会话" value={run().main_session_id ?? "无"} dim />
       <Section context={props.context} title="节点任务" count={props.tasks.length}>

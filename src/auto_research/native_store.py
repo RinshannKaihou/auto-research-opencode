@@ -31,6 +31,7 @@ from .schema12 import ensure_schema12, migrate_schema12
 from .schema13 import ensure_schema13, migrate_schema13
 from .schema14 import ensure_schema14, migrate_schema14
 from .schema15 import ensure_schema15, migrate_schema15
+from .schema16 import ensure_schema16, migrate_schema16
 from .conclusion_policy import current_contract
 from .controller import ControllerStore, require_controller, CURRENT_MODEL_CALL
 from .conclusion_store import ConclusionStore
@@ -42,7 +43,7 @@ from .evidence_conclusion import EvidenceConclusionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -211,6 +212,9 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             if version == 14 and SCHEMA_VERSION >= 15:
                 migrate_schema15(self.db_path)
                 version = 15
+            if version == 15 and SCHEMA_VERSION >= 16:
+                migrate_schema16(self.db_path)
+                version = 16
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -385,6 +389,8 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             ensure_schema14(db)
         if SCHEMA_VERSION >= 15:
             ensure_schema15(db)
+        if SCHEMA_VERSION >= 16:
+            ensure_schema16(db)
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager

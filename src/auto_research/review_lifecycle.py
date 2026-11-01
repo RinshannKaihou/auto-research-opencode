@@ -244,9 +244,8 @@ def reconcile(store, db, operation):
         scopes.setdefault('project', set()).update(closure(store, db, conclusion['refs']))
         known_project = True
     if db.execute('PRAGMA user_version').fetchone()[0] >= 13:
-        from .exploration_store import _current_scope, _decode
-        exploration = _current_scope(db, gen)
-        if exploration:
+        from .exploration_store import _scopes, _decode
+        for exploration in _scopes(db, gen):
             refs = []
             for row in db.execute("SELECT r.* FROM exploration_routes r JOIN "
                     "(SELECT route_id,MAX(revision) revision FROM exploration_routes WHERE scope_id=? GROUP BY route_id) x "

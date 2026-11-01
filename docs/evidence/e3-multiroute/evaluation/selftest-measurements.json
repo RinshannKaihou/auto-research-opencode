@@ -1,0 +1,865 @@
+{
+  "kind": "scripted_fixture_http_measurements",
+  "real_model_effect": "not_run",
+  "runs": {
+    "run-001": {
+      "used": 3,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524321.891145,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524321.936511,
+          "measurement_id": "M-5d2cca7a10ecab94"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524321.9480581
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524321.95117,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524321.993918,
+          "measurement_id": "M-035d270f3ecdd8f7"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524321.997751,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524322.0431511,
+          "measurement_id": "M-05d8b9d19dca1ec3"
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-5d2cca7a10ecab94",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-035d270f3ecdd8f7",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              139.659,
+              140.258,
+              139.773,
+              140.492,
+              139.798
+            ],
+            "mean": 139.996
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-05d8b9d19dca1ec3",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              65.154,
+              65.062,
+              64.758,
+              65.084,
+              65.464
+            ],
+            "mean": 65.1044
+          }
+        }
+      }
+    },
+    "run-002": {
+      "used": 4,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524322.0825028,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524322.1279411,
+          "measurement_id": "M-0e1821b8cd1cfa92"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524322.135937
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524322.139124,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524322.1845279,
+          "measurement_id": "M-d8d020652096c6db"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524322.1887648,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524322.234179,
+          "measurement_id": "M-eb1e797af6571599"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:AB",
+          "at": 1793524322.2386189,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:AB",
+          "at": 1793524322.2840252,
+          "measurement_id": "M-0a87a1d5087cfd90"
+        },
+        {
+          "kind": "budget_rejected",
+          "key": "measure:baseline",
+          "at": 1793524324.594203
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-0e1821b8cd1cfa92",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-d8d020652096c6db",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              70.307,
+              69.585,
+              70.185,
+              69.986,
+              69.902
+            ],
+            "mean": 69.993
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-eb1e797af6571599",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              80.373,
+              80.296,
+              80.243,
+              79.693,
+              80.373
+            ],
+            "mean": 80.1956
+          }
+        },
+        "measure:AB": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-0a87a1d5087cfd90",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "AB",
+            "action": "measure",
+            "samples": [
+              119.933,
+              120.389,
+              120.138,
+              119.929,
+              120.354
+            ],
+            "mean": 120.14860000000002
+          }
+        }
+      }
+    },
+    "run-003": {
+      "used": 4,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524322.3268049,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524322.368899,
+          "measurement_id": "M-0e1821b8cd1cfa92"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524322.3788831
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524322.3824189,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524322.4279308,
+          "measurement_id": "M-d8d020652096c6db"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524322.432967,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524322.4778318,
+          "measurement_id": "M-eb1e797af6571599"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:AB",
+          "at": 1793524322.482686,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:AB",
+          "at": 1793524322.528311,
+          "measurement_id": "M-0a87a1d5087cfd90"
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-0e1821b8cd1cfa92",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-d8d020652096c6db",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              70.307,
+              69.585,
+              70.185,
+              69.986,
+              69.902
+            ],
+            "mean": 69.993
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-eb1e797af6571599",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              80.373,
+              80.296,
+              80.243,
+              79.693,
+              80.373
+            ],
+            "mean": 80.1956
+          }
+        },
+        "measure:AB": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-0a87a1d5087cfd90",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/steady@1",
+            "workload": "steady",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "AB",
+            "action": "measure",
+            "samples": [
+              119.933,
+              120.389,
+              120.138,
+              119.929,
+              120.354
+            ],
+            "mean": 120.14860000000002
+          }
+        }
+      }
+    },
+    "run-004": {
+      "used": 3,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524322.5760262,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524322.621792,
+          "measurement_id": "M-2758093ef284073d"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524322.6316721
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524322.6369479,
+          "work_units": 1
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524322.6374478,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524322.6829472,
+          "measurement_id": "M-4d66931cb0b5f72f"
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524323.340153,
+          "measurement_id": "M-5e065ad6a077a725"
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-2758093ef284073d",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-5e065ad6a077a725",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              60.15,
+              60.103,
+              60.374,
+              59.521,
+              60.412
+            ],
+            "mean": 60.112
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-4d66931cb0b5f72f",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              80.029,
+              79.9,
+              79.602,
+              80.246,
+              79.923
+            ],
+            "mean": 79.94
+          }
+        }
+      }
+    },
+    "run-005": {
+      "used": 3,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524323.403554,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524323.4493902,
+          "measurement_id": "M-2758093ef284073d"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524323.459714
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524323.464721,
+          "work_units": 1
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524323.4652941,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524323.510442,
+          "measurement_id": "M-4d66931cb0b5f72f"
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524324.17011,
+          "measurement_id": "M-5e065ad6a077a725"
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-2758093ef284073d",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-4d66931cb0b5f72f",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              80.029,
+              79.9,
+              79.602,
+              80.246,
+              79.923
+            ],
+            "mean": 79.94
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-5e065ad6a077a725",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/production@1",
+            "workload": "production",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              60.15,
+              60.103,
+              60.374,
+              59.521,
+              60.412
+            ],
+            "mean": 60.112
+          }
+        }
+      }
+    },
+    "run-006": {
+      "used": 3,
+      "events": [
+        {
+          "kind": "begin",
+          "key": "calibrate",
+          "at": 1793524324.234567,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "calibrate",
+          "at": 1793524324.280471,
+          "measurement_id": "M-5d2cca7a10ecab94"
+        },
+        {
+          "kind": "reuse",
+          "key": "calibrate",
+          "at": 1793524324.291142
+        },
+        {
+          "kind": "begin",
+          "key": "measure:A",
+          "at": 1793524324.29509,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:A",
+          "at": 1793524324.340866,
+          "measurement_id": "M-035d270f3ecdd8f7"
+        },
+        {
+          "kind": "begin",
+          "key": "measure:B",
+          "at": 1793524324.345875,
+          "work_units": 1
+        },
+        {
+          "kind": "complete",
+          "key": "measure:B",
+          "at": 1793524324.391964,
+          "measurement_id": "M-05d8b9d19dca1ec3"
+        }
+      ],
+      "cache": {
+        "calibrate": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-5d2cca7a10ecab94",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": null,
+            "action": "calibrate"
+          }
+        },
+        "measure:A": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-035d270f3ecdd8f7",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "A",
+            "action": "measure",
+            "samples": [
+              139.659,
+              140.258,
+              139.773,
+              140.492,
+              139.798
+            ],
+            "mean": 139.996
+          }
+        },
+        "measure:B": {
+          "state": "complete",
+          "result": {
+            "measurement_id": "M-05d8b9d19dca1ec3",
+            "baseline_ref": "fixture/baseline@1",
+            "data_ref": "fixture/burst@1",
+            "workload": "burst",
+            "metric": "request_latency_mean",
+            "unit": "ms",
+            "environment": "isolated-synthetic-service-v1",
+            "repeats": 5,
+            "uncertainty": {
+              "kind": "deterministic_fixture_range",
+              "half_width": 0.5
+            },
+            "correctness": "pass",
+            "synthetic_measurement": true,
+            "variant": "B",
+            "action": "measure",
+            "samples": [
+              65.154,
+              65.062,
+              64.758,
+              65.084,
+              65.464
+            ],
+            "mean": 65.1044
+          }
+        }
+      }
+    },
+    "run-007": {
+      "used": 0,
+      "events": [],
+      "cache": {}
+    },
+    "run-008": {
+      "used": 0,
+      "events": [],
+      "cache": {}
+    }
+  }
+}

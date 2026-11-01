@@ -1,5 +1,14 @@
 /** Plain-text summaries of ledger state for /research dialogs. */
 
+export function runtimeBudgetSummary(budget: any): any {
+  const {exploration, ...runtime} = budget
+  if (!exploration) return runtime
+  const {allocations = [], resource_leases = [], by_scope = {}, ...totals} = exploration
+  return {...runtime, exploration:{...totals, allocations_total:allocations.length,
+    resource_leases_total:resource_leases.length, scopes_total:Object.keys(by_scope).length,
+    expand:{collection:'exploration_budget'}}}
+}
+
 const RUN_STATES: Record<string, string> = {
   manual: "手动",
   running: "自主推进中",
@@ -133,10 +142,11 @@ export const USAGE = [
   "/research stop                停止新工作并请求中断；在途执行需核实（需确认）",
   "/research status              查看项目和本会话状态",
   "/research recover controller <原因>  人工核对后接管身份不明的控制器（需确认）",
-  "/research recover task|specialist <任务 ID> <原因>  核实执行已退出（需确认）",
+  "/research recover task|specialist|resource <任务 ID> <原因>  核实执行已退出（需确认）",
   "/research recover delivery report|wake <通知 ID> delivered|not-sent <原因>  核对投递（需确认）",
   "/research retry <任务 ID> <原因>  重新执行已核实退出的节点（需确认）",
-  "/research budget [turns|nodes|seconds|tokens|cost <正数|off> <原因>]  查看或改额；仅 cost 允许小数",
+  "/research budget [turns|nodes|seconds|tokens|cost|work <正数|off> <原因>]  查看或改额；cost/work 允许小数；work 为计划投入单位",
+  "/research budget resource <名称> <容量> <原因>  配置受管测量资源容量",
   "/research board               打开研究看板（只读）",
   "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
   "/research guidance [路径 [--version v]]  查看或登记科研指导文档",

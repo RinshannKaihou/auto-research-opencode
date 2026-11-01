@@ -1,0 +1,244 @@
+bun test v1.3.10 (30e609e0)
+
+test/dialog.test.tsx:
+(pass) text taller than the screen scrolls inside the dialog instead of running off it [16.51ms]
+(pass) on a 12-row screen the text gets the 3-row minimum and the hint still shows [2.37ms]
+(pass) short text keeps the dialog as small as the text, wrapped lines included [1.91ms]
+(pass) showText resolves when the dialog closes, like the host alert [0.13ms]
+
+test/board.test.ts:
+(pass) process rail > draws a branch and a merge, leaving implied edges to the detail [0.71ms]
+(pass) process rail > independent roots get their own lanes [0.08ms]
+(pass) process channels > execution, delivery and knowledge are derived separately [0.22ms]
+(pass) process channels > titles fall back to the question's first clause
+(pass) process channels > fit counts wide characters as two cells
+(pass) shared channels > run, session and task states map onto the execution channel
+(pass) shared channels > knowledge belongs to nodes through cited publications and snapshots [0.14ms]
+(pass) host runtime > OpenTUI values are imported only from .tsx files [0.64ms]
+
+test/observations.test.ts:
+(pass) rejected operations retain independent observations and never serialize arguments [1.10ms]
+Research observation write failed (ENOTDIR)
+(pass) observation I/O failure cannot change a successful domain result [0.35ms]
+(pass) transport metrics count source snapshots and omit undefined wire fields [0.57ms]
+
+test/research-board.test.tsx:
+(pass) multi-scope overview and route detail disclose provisional work and frozen inputs [33.61ms]
+(pass) exploration routes remain in the research view at 80 columns [15.20ms]
+(pass) exploration routes remain in the research view at 132 columns [10.30ms]
+(pass) risk view at 80 columns explains unknown coverage and opens original report [138.58ms]
+(pass) risk view at 132 columns explains unknown coverage and opens original report [112.89ms]
+(pass) R2 review at 80 columns separates completed tasks from unresolved risk [21.13ms]
+(pass) R2 review at 132 columns separates completed tasks from unresolved risk [20.79ms]
+(pass) knowledge list reaches item 101 and requests complete conditions [28.59ms]
+(pass) risk identities and explanations preserve distinct checks and uncertainty [0.33ms]
+(pass) process knowledge counts include entries beyond the first page [5.06ms]
+(pass) directory materials page to file 101, open it, and return to the same directory [68.61ms]
+(pass) three primary destinations retain results, checks and sessions at 80 columns [45.71ms]
+(pass) three primary destinations retain results, checks and sessions at 132 columns [38.77ms]
+(pass) late evidence responses cannot overwrite a new selection or view (j) [18.49ms]
+(pass) late evidence responses cannot overwrite a new selection or view (2) [17.82ms]
+(pass) closing a file discards its pending continuation [79.87ms]
+(pass) changed risk pages ask for explicit refresh without retaining stale rows or retrying [26.93ms]
+
+test/plugin.test.ts:
+(pass) an attachment that saw no registry discovers a later research association [209.94ms]
+(pass) negative membership cache skips repeated misses and invalidates on registry writes [151.33ms]
+(pass) ready event health is valid JSON in status and session RPC responses [100.47ms]
+(pass) a lost execution-start response retries the same token and retains inbox authorization [176.92ms]
+(pass) a lost execution-end response retries persistence without losing or duplicating continuation [332.28ms]
+(pass) unrelated native telemetry cannot poison research event control [164.70ms]
+(pass) failed event persistence still permits pause and stop [263.01ms]
+(pass) explicit resume replays a held terminal after storage recovers and continues once [295.77ms]
+(pass) a disconnected event subscription can be re-established by explicit resume [239.00ms]
+(pass) resume reconciles a coordinator terminal missed during an event-stream disconnect [265.86ms]
+(pass) a failure before session creation leaves one queued task that can be resumed [237.76ms]
+(pass) workspace aliases of the same project share a single live controller [248.33ms]
+Research execution follow-up paused: transient preflight storage failure
+(pass) continuation preflight check 1 failure preserves the task and refunds only the unsent turn [431.65ms]
+Research execution follow-up paused: transient preflight storage failure
+(pass) continuation preflight check 2 failure preserves the task and refunds only the unsent turn [421.60ms]
+Research execution follow-up paused: host response lost after acceptance
+(pass) an accepted continuation with a lost host response remains unverified and charged [312.06ms]
+(pass) a terminal with unresolved membership is retained and visible until replay [398.21ms]
+(pass) unresolved ordinary membership is bounded and cannot freeze known research continuation [255.55ms]
+(pass) three consecutive unsent launches pause scheduling instead of creating an endless retry stream [247.35ms]
+(pass) finish mismatch selects the active task when session history contains an older finished task [211.31ms]
+(pass) wait while paused returns the structured control error with no fallback permission [136.24ms]
+(pass) R2 dispatch observes local and backend rejection without recording input text [121.71ms]
+(pass) checkpoint query returns a bound base and stale writes are never refreshed automatically [142.86ms]
+(pass) R2 exposes one narrow family and automatically freezes the base from the delivered model request [175.40ms]
+(pass) autonomous turns stop at the durable cap; duplicate end events and restart cannot bypass it [341.41ms]
+(pass) native usage records actual variant once and external observations omit command content [127.55ms]
+(pass) wall deadline interrupts an active native session without waiting for a model end event [1114.59ms]
+(pass) a failed deadline refresh keeps the existing stop timer armed [1106.79ms]
+(pass) slow workspace metadata leaves backend queries responsive and remains optional for kickoff [688.41ms]
+(pass) wall deadline during node launch keeps its execution unverified [230.71ms]
+(pass) real node source edits prevent idle pauses while the turn budget still stops continuation [362.97ms]
+(pass) slow native telemetry cannot block event binding or introduce an invocation metadata dependency [144.07ms]
+(pass) sessions outside a project > see an unchanged request apart from this plugin's tools [0.97ms]
+(pass) sessions outside a project > never start Python when no registry exists [0.51ms]
+(pass) autonomous research > coordinator native limits persist in manual and reject stale tool calls [122.15ms]
+(pass) autonomous research > coordinator native limits persist in paused and reject stale tool calls [170.55ms]
+(pass) autonomous research > coordinator native limits persist in stopped and reject stale tool calls [172.57ms]
+(pass) autonomous research > coordinator native limits persist in complete and reject stale tool calls [169.68ms]
+(pass) autonomous research > detaching a quiet main restores ordinary tools without changing other sessions [99.32ms]
+(pass) autonomous research > missing and unrecognized associated roles cannot inherit node execution rights [198.37ms]
+(pass) autonomous research > conclusion rejects missing contracts and bad final refs without ending work [186.46ms]
+(pass) autonomous research > notification failure preserves the committed conclusion across restart [198.17ms]
+(pass) autonomous research > runs goal → nodes → node sessions → synthesis → conclusion (legacy) [713.17ms]
+(pass) autonomous research > runs goal → nodes → node sessions → synthesis → conclusion (r1) [743.94ms]
+(pass) autonomous research > a coordinator that forgets to wait is put into waiting, not paused as idle [303.32ms]
+(pass) autonomous research > queued dispatch distinguishes capacity from a pause after acceptance [221.74ms]
+(pass) autonomous research > a pause after task acceptance leaves it queued without launching [147.07ms]
+(pass) autonomous research > autonomous turns use the model selected in the TUI, for the coordinator and every node [200.26ms]
+(pass) autonomous research > roles see only their own tools and their own research context [219.76ms]
+(pass) autonomous research > research sessions never get the built-in subagent and question tools [219.22ms]
+(pass) autonomous research > a session that stops writing the ledger is paused after three turns [362.13ms]
+(pass) autonomous research > a failed turn is retried once, then the session pauses [161.39ms]
+(pass) autonomous research > user interrupts pause the session; the engine's own interrupts do not [359.34ms]
+(pass) autonomous research > pause stops continuation after the current turn; resume continues [296.34ms]
+(pass) autonomous research > a paused node finishes its current turn without waking the coordinator [254.63ms]
+(pass) autonomous research > a first-turn inbox event can authorize a paused node finish without a visible started event [242.96ms]
+(pass) autonomous research > a new node turn after pause cannot inherit the previous drain authorization [272.48ms]
+(pass) autonomous research > a new user message during pause revokes the existing turn's drain authorization [221.54ms]
+(pass) autonomous research > coordinator cannot execute native or unknown tools through an old request [121.96ms]
+(pass) autonomous research > paused context replaces continue instructions and cannot propose new work [144.63ms]
+(pass) autonomous research > a restart leaves a running project paused until the user resumes it [251.14ms]
+(pass) autonomous research > a failed finish turn can finish in the next authorized turn [236.35ms]
+(pass) autonomous research > a interrupted finish turn can finish in the next authorized turn [289.13ms]
+(pass) autonomous research > warm reload correlates the second node turn instead of the original kickoff [325.04ms]
+(pass) autonomous research > warm reload preserves a node paused after a verified terminal event [344.45ms]
+(pass) autonomous research > warm reload settles a saved finish when its terminal was persisted before handoff [286.13ms]
+(pass) autonomous research > same-process plugin reload preserves running research and a pending node finish [302.05ms]
+(pass) autonomous research > a still-live prior attachment forwards role checks and research tools to the new controller [308.40ms]
+(pass) autonomous research > a missed terminal event is reconciled once from the exact kickoff [487.44ms]
+(pass) autonomous research > a lost kickoff response leaves one unverified launch without a second session [387.85ms]
+(pass) autonomous research > a restarted host does not start a second turn for an unverified node [329.66ms]
+(pass) autonomous research > a real restart also reconciles in-flight work when the project was already paused [316.02ms]
+(pass) autonomous research > a user message in a research session is kept as guidance [137.70ms]
+(pass) autonomous research > auto with text on an existing project keeps the goal and records the text as guidance [212.75ms]
+(pass) autonomous research > auto with text is refused, not dropped, while research runs or is paused, or when too long [152.95ms]
+(pass) autonomous research > auto with text waits until the coordinator's current turn ends [190.96ms]
+(pass) autonomous research > a guidance note that cannot be filed still starts the run and says so [125.31ms]
+(pass) autonomous research > a turn that starts while auto sets up the run gets no kickoff, and the result says so [213.11ms]
+(pass) autonomous research > an instance opened in a subdirectory never drives the project [174.42ms]
+(pass) autonomous research > status works on the home screen, before any session exists [54.62ms]
+(pass) node specialists > blind system stays private during membership-error [259.72ms]
+(pass) node specialists > blind system stays private during membership-timeout [1756.40ms]
+(pass) node specialists > blind system stays private during handoff [257.59ms]
+(pass) node specialists > a node delegates a read-only specialist and gets its report back [333.21ms]
+(pass) node specialists > interrupting the delegating call cancels the specialist and frees its slot [305.93ms]
+(pass) node specialists > an unexpected host error after specialist submission still interrupts the live child [260.62ms]
+(pass) node specialists > specialist pre-create failure is incomplete with no unknown executor or occupied slot [224.69ms]
+Research controller initialization: operator recovery required
+(pass) node specialists > a blind specialist can read only its assigned input while controller recovery is pending [324.63ms]
+(pass) node specialists > stopping research also requests interruption of a running specialist [289.59ms]
+(pass) node specialists > a batch runs specialists side by side up to the node's limit; beyond it nothing starts [290.93ms]
+(pass) node specialists > a blind reviewer sees only its assigned inputs, without the project or OpenCode's prompt [288.54ms]
+(pass) node specialists > a restart keeps an active specialist unverified until its exit is checked [365.69ms]
+(pass) node specialists > warm reload reattaches a specialist with its original scope and deadline [410.60ms]
+(pass) storage > reports a missing Python instead of hanging [2.54ms]
+(pass) command parsing > maps /research input to actions [1.91ms]
+(pass) board text > status identifies unverified execution and its recovery command [0.94ms]
+(pass) board text > historical completion reports a missing contract, not an inferred review [2.30ms]
+(pass) board text > status counts the conclusion lists and leaves the entries to the board [1.22ms]
+(pass) board text > labels the newest publication as latest, not final, and hides display items [0.77ms]
+(pass) board text > rows lead with a short code and the content, not the full reference [0.48ms]
+(pass) board text > runtime detail does not repeat the conclusion record [0.70ms]
+(pass) board text > overview shows the final report once and a newer publication as latest [1.28ms]
+(pass) board text > kind chips come from server totals, not from the loaded page [1.12ms]
+(pass) board text > unreadable files read as plain language [1.16ms]
+(pass) R1 context policy switches through the host and remains opt-in [131.50ms]
+(pass) switching context policy clears cached and in-flight legacy context [0.50ms]
+(pass) exploration chooses one durable probe through the ordinary node scheduler [828.76ms]
+(pass) a stale queued exploration wakes the coordinator after another node finishes [368.14ms]
+(pass) turning exploration off wakes the waiting coordinator and retains closing decisions [329.65ms]
+2308 |   })
+2309 |   try {
+2310 |     await expect(first.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
+2311 |       route_refs:[route.ref],action:'probe',reason:'Resolve the tail assumption',next_work:{route_refs:[route.ref],
+2312 |         question:'Does tail differ?',why_now:'Choose direction',plan:'Measure',root_reason:'First probe'}}))
+2313 |       .rejects.toThrow('host interrupted before materialization')
+                      ^
+error:
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (/private/tmp/e3-pr-ETlItyG0/repo/plugin/test/plugin.test.ts:2313:16)
+(fail) a durable exploration decision resumes exactly once after host restart [156.36ms]
+(pass) evidence conclusion requires the actual draft pages in the model request [213.94ms]
+(pass) material pages are confirmed when the coordinator actually responds [156.38ms]
+(pass) a missing frozen material does not block the coordinator or credit its page [227.50ms]
+(pass) unrelated coordinator tools do not wait for a stalled material confirmation [2163.99ms]
+(pass) material delivery remains complete after earlier pages leave the model context [166.67ms]
+(pass) node execution observation waits only after evidence conclusion is adopted [213.40ms]
+(pass) warm recovery loads the evidence contract before allowing executable work [386.61ms]
+2608 |       {key:'specific',budget_amount:2,route_refs:[b.ref],question:'B target?',why_now:'B differs',plan:'Measure B',root_reason:'Independent probe'},
+2609 |     ]})
+2610 |   expect(decision.intent_ids).toHaveLength(2)
+2611 |   expect(decision.works).toHaveLength(2)
+2612 |   expect(host.created).toHaveLength(1)
+2613 |   const budget=JSON.parse((await host.command('budget','ses_main')).message.split('\n').slice(1).join('\n'))
+                           ^
+SyntaxError: JSON Parse error: Unrecognized token '逐'
+      at <anonymous> (/private/tmp/e3-pr-ETlItyG0/repo/plugin/test/plugin.test.ts:2613:21)
+(fail) E3 tools materialize a shared probe and another route with one common allocation ledger [250.39ms]
+
+test/package.test.ts:
+(pass) release versions agree across Python and plugin metadata [1.15ms]
+(pass) packed backend starts, concludes and restarts without repository sources [896.31ms]
+
+test/review-fixes.test.ts:
+(pass) a transient capability failure is retried on the next call [1.02ms]
+(pass) a late receipt never upgrades the timed-out model request, and identical snapshots reuse it [21.24ms]
+(pass) detaching drops delivered bases and compacted outputs cannot reappear as trusted results [0.08ms]
+
+test/checkpoint-delivery.test.ts:
+(pass) a base is request-bound and frozen per call, including parallel calls and retry [0.06ms]
+(pass) successful result does not upgrade a base until its exact output enters a new model request [0.07ms]
+(pass) foreign-owner outputs and restart cannot silently supply a base [0.03ms]
+
+test/e3-multiroute.test.ts:
+(pass) a batch materializes every persisted intent once before ordinary scheduling [0.46ms]
+(pass) a manual batch stays durable and unmaterialized until explicit auto [0.10ms]
+(pass) a recorded batch reports partial materialization without asking for a duplicate decision [0.13ms]
+(pass) status and follow-up scheduling failures preserve the committed decision result [0.16ms]
+(pass) resource blocking delivers a durable operator notice instead of silently skipping [0.11ms]
+(pass) scope queues alternate while preserving order within each scope [0.04ms]
+(pass) E3 schemas expose exact scope, batches, comparison conditions and paged delivery [0.16ms]
+(pass) work budget and resource recovery preserve explicit host command boundaries [0.10ms]
+(pass) an older backend cannot silently run E3 tools [0.06ms]
+(pass) overview keeps multi-scope state and provisional decisions visible
+(pass) the budget command summary stays bounded as historical allocations accumulate [0.14ms]
+
+test/workspace-probe.test.ts:
+(pass) workspace worker excludes environments and hashes only changed source files [9.34ms]
+(pass) workspace entries limit returns unknown, never a partial digest [6.42ms]
+(pass) workspace files limit returns unknown, never a partial digest [6.39ms]
+(pass) workspace bytes limit returns unknown, never a partial digest [6.05ms]
+(pass) a blocked worker has a host deadline and cannot block host timers or queue more work [81.07ms]
+
+test/evidence-delivery.test.ts:
+(pass) only an exact visible evidence page is bound to the next assistant message [0.20ms]
+(pass) a late receipt cannot authorize the timed-out model request [1.21ms]
+(pass) completed batches survive another batch timing out [1.22ms]
+(pass) material pages become durable only after their model step produces a response [0.05ms]
+(pass) a late previous step cannot confirm a later request or a failed step [0.11ms]
+(pass) a failed material confirmation is visible in the next request [0.10ms]
+(pass) one rejected material page does not erase valid pages or poison later requests [0.26ms]
+(pass) a transport failure leaves the material page eligible for retry [0.11ms]
+(pass) material rejection indices are rebased across batches [0.60ms]
+(pass) a late rejection cannot undo a newer successful material confirmation [0.12ms]
+(pass) a slow batch reports only its own pages as unconfirmed [0.22ms]
+(pass) a late success for an older result cannot clear a newer failure [0.10ms]
+
+2 tests failed:
+(fail) a durable exploration decision resumes exactly once after host restart [156.36ms]
+(fail) E3 tools materialize a shared probe and another route with one common allocation ledger [250.39ms]
+
+ 183 pass
+ 2 fail
+ 910 expect() calls
+Ran 185 tests across 11 files. [34.54s]

@@ -1,0 +1,37 @@
+{
+  "scenario": "paged",
+  "used_external_model": false,
+  "classification": "actual OpenCode host + scripted loopback provider",
+  "opencode_version": "opencode v2.2.5",
+  "plugin_source_digest": "4d656b56d654ed299f6b527b0c823abdedd5ba2d345354e096c407acc54fa39c",
+  "plugin_source_files": 76,
+  "passed": false,
+  "error": "RuntimeError: RuntimeError: Public tool rejected the fixture action: {'type': 'unknown', 'message': 'Research request is too large'}",
+  "stage": 15,
+  "actions": [
+    "research_scope",
+    "research_scope",
+    "research_route",
+    "research_route",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_publish",
+    "research_decide",
+    "research_finish",
+    "research_wait",
+    "research_publish",
+    "research_finish",
+    "research_wait",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_decide",
+    "research_record"
+  ],
+  "failures": [
+    "RuntimeError: Public tool rejected the fixture action: {'type': 'unknown', 'message': 'Research request is too large'}"
+  ],
+  "host_log_tail": "server listening on http://127.0.0.1:49438\n",
+  "trace": "host-paged-trace.json.gz"
+}

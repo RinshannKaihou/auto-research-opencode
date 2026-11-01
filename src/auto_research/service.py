@@ -647,10 +647,10 @@ class NativeService:
         store = NativeStore(root, readonly=True)
         view = request.get("view")
         if view == 'evidence':
-            return self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit') if key in request})
+            return self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit', 'scope_id') if key in request})
         if view == 'page' and request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
             return store.exploration_page(request['collection'], **{key: request[key] for key in
-                ('cursor', 'limit', 'ref') if key in request})
+                ('cursor', 'limit', 'ref', 'scope_id') if key in request})
         if view == 'page' and request.get('collection') in {'review_candidates','review_obligations','review_events'}:
             return store.review_page(request['collection'], **{key:request[key] for key in
                 ('cursor','limit','node_id','trigger_kind','generation','scope_owner','state','target_ref','change_id','obligation_id') if key in request})
@@ -663,6 +663,7 @@ class NativeService:
                     'checkpoint_base': 'receipt-cas-v1' if version >= 11 else 'requires_migration',
                     'review_lifecycle': 'candidate-obligation-v1' if version>=11 else 'requires_migration',
                     'exploration_contract':'exploration-v1' if version >= 13 else 'requires_migration',
+                    'multiroute_contract':'multiroute-v1' if version >= 16 else 'requires_migration',
                     'evidence_contract':'evidence-v1' if version >= 14 else 'requires_migration',
                     'backend_version':__version__,
                     'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered'}
@@ -750,6 +751,7 @@ class NativeService:
                 'runtime_control_contract':'controller-launch-v1',
                 'review_lifecycle':'candidate-obligation-v1',
                 'exploration_contract':'exploration-v1', 'evidence_contract':'evidence-v1',
+                'multiroute_contract':'multiroute-v1',
                 'evidence_read':'snapshot-delivery-v2', 'backend_version':__version__,
                 'runtime_budget_scope':'plugin autonomous dispatch; token/cost observed subset; external processes unmetered',
                 "native_specialists": "foreground-one-shot",
@@ -1078,16 +1080,37 @@ class NativeService:
                     limit=request.get("limit", 32768),
                 )
             elif method == "query":
-                if request.get('collection') == 'evidence':
+                if request.get('collection') == 'exploration_budget':
+                    budget = store.runtime_budget_status(host_id, session_id)['exploration']
+                    items = ([{'kind':'allocation', **item} for item in budget.get('allocations', [])]
+                             + [{'kind':'resource_lease', **item} for item in budget.get('resource_leases', [])])
+                    digest = hashlib.sha256(json.dumps(budget, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+                    cursor = request.get('cursor')
+                    if cursor is not None and not isinstance(cursor, dict):
+                        raise ValidationError('Exploration budget cursor must be an object')
+                    cursor = cursor or {}
+                    if cursor and (cursor.get('digest') != digest or cursor.get('project_root') != str(root)):
+                        raise ConflictError('read_view_changed: refresh exploration budget')
+                    offset = cursor.get('offset', 0)
+                    if type(offset) is not int or offset < 0 or offset > len(items):
+                        raise ValidationError('Invalid exploration budget cursor offset')
+                    limit = max(1, min(int(request.get('limit') or 50), 100))
+                    summary = {key:value for key,value in budget.items() if key not in {'allocations','resource_leases'}}
+                    end = min(len(items), offset + limit)
+                    value = {'summary':summary, 'items':items[offset:end], 'total':len(items),
+                        'cursor': {'digest':digest, 'project_root':str(root), 'offset':end} if end < len(items) else None}
+                elif request.get('collection') == 'evidence':
                     value = self.evidence.page(store, host=host_id, session=session_id, **{key: request[key] for key in
-                        ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'material_ref', 'limit') if key in request})
+                        ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'material_ref', 'limit', 'scope_id') if key in request})
                 elif request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
                     value = store.exploration_page(request['collection'], **{key: request[key] for key in
-                        ('cursor', 'limit', 'ref') if key in request})
+                        ('cursor', 'limit', 'ref', 'scope_id') if key in request})
                 elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/scope/'):
                     value = store.exploration_page('exploration_scopes', ref=request['ref'])
                 elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/route/'):
                     value = store.exploration_page('exploration_routes', ref=request['ref'])
+                elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/decision/'):
+                    value = store.exploration_page('exploration_decisions', ref=request['ref'])
                 elif request.get('collection')=='adoptions':
                     value = store.adoptions(**{key:request[key] for key in ('cursor','limit','node_id') if key in request})
                 elif request.get('collection') in {'review_candidates','review_obligations','review_events'}:
@@ -1224,6 +1247,9 @@ class NativeService:
                                       "WHERE p.id=1 AND w.host_id=? AND w.session_id=? AND w.role='main' AND w.detached=0",
                                       (host_id, session_id)).fetchone()
                 for index, page in enumerate(pages):
+                    if not isinstance(page, dict):
+                        rejected.append({'index': index, 'reason': 'page_mismatch'})
+                        continue
                     if page.get('part') == 'material':
                         if not main:
                             rejected.append({'index': index, 'reason': 'wrong_session'})
@@ -1325,6 +1351,8 @@ class NativeService:
                 value = store.controller_adopt(host_id, session_id, request.get('reason'), self._operation(request))
             elif method == 'recovery_confirm_exit':
                 value = store.recovery_confirm_exit(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
+            elif method == 'runtime_resources_release':
+                value = store.runtime_resources_release(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
             elif method == 'recovery_retry_task':
                 value = store.recovery_retry_task(host_id, session_id, request['task_id'], request.get('reason'), self._operation(request))
             elif method == 'recovery_confirm_specialist':

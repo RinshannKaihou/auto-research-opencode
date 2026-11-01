@@ -1,0 +1,39 @@
+{
+  "scenario": "full",
+  "used_external_model": false,
+  "classification": "actual OpenCode host + scripted loopback provider",
+  "opencode_version": "opencode v2.2.5",
+  "plugin_source_digest": "60079caa3fe91fede75516bede6c8b4f11539caf7a3838f3dfe08682cd9c77af",
+  "plugin_source_files": 76,
+  "passed": false,
+  "error": "RuntimeError: IndexError: list index out of range",
+  "stage": 13,
+  "actions": [
+    "research_scope",
+    "research_route",
+    "research_route",
+    "research_query",
+    "research_decide",
+    "research_wait",
+    "research_publish",
+    "research_query",
+    "research_finish",
+    "research_decide",
+    "research_query",
+    "research_decide",
+    "research_publish",
+    "research_wait",
+    "research_finish",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_decide",
+    "research_wait",
+    "research_query"
+  ],
+  "failures": [
+    "IndexError: list index out of range"
+  ],
+  "host_log_tail": "server listening on http://127.0.0.1:57387\nResearch execution follow-up paused: The coordinator is not waiting for this delivered result\n",
+  "trace": "host-full-initial-failure-trace.json"
+}

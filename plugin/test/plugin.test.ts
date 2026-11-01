@@ -2307,10 +2307,13 @@ test('a durable exploration decision resumes exactly once after host restart', a
     return original.call(this,method,fields,operation)
   })
   try {
-    await expect(first.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
+    const recorded=await first.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:view.snapshot_id,
       route_refs:[route.ref],action:'probe',reason:'Resolve the tail assumption',next_work:{route_refs:[route.ref],
-        question:'Does tail differ?',why_now:'Choose direction',plan:'Measure',root_reason:'First probe'}}))
-      .rejects.toThrow('host interrupted before materialization')
+        question:'Does tail differ?',why_now:'Choose direction',plan:'Measure',root_reason:'First probe'}})
+    expect(recorded.decision_recorded).toBe(true)
+    expect(recorded.works[0]).toMatchObject({intent_id:recorded.intent_id,state:'unconfirmed'})
+    expect(recorded.errors[0]).toMatchObject({phase:'materialize',intent_id:recorded.intent_id,
+      reason:'Error: host interrupted before materialization'})
   } finally { spy.mockRestore() }
   expect((await first.page('nodes')).items).toHaveLength(0)
   cleanups.pop()!()
@@ -2590,3 +2593,37 @@ test('warm recovery loads the evidence contract before allowing executable work'
     expect(observed).toBe(1)
   } finally {unblock();spy.mockRestore()}
 },15000)
+
+test('E3 tools materialize a shared probe and another route with one common allocation ledger', async () => {
+  const host=await load()
+  await host.command('auto','ses_main',{goal:'Multi-route engineering fixture'})
+  await host.command('exploration','ses_main',{mode:'on'})
+  await host.command('budget','ses_main',{limit:'work',value:'3',reason:'Bound the shared fixture'})
+  await host.command('budget','ses_main',{limit:'resource',resource:'gpu:fixture',value:'1',reason:'Controlled measurement'})
+  const scope=await host.call('research_scope','ses_main',{changes:{objective:'Choose a measured route',task_kind:'selection'}})
+  const a=await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'A',rationale:'First route',critical_assumption:'Shared probe is representative'}})
+  const b=await host.call('research_route','ses_main',{scope_ref:scope.ref,changes:{title:'B',rationale:'Second route',critical_assumption:'Shared probe is representative',relations:[{kind:'competes_with',route_ref:a.ref}]}})
+  const other=await host.call('research_scope','ses_main',{changes:{objective:'Independent direction',task_kind:'discovery'}})
+  const evidence=await host.call('research_query','ses_main',{collection:'evidence',scope_id:scope.scope_id,refs:[]})
+  const decision=await host.call('research_decide','ses_main',{scope_ref:scope.ref,snapshot_id:evidence.snapshot_id,
+    route_refs:[a.ref,b.ref],action:'probe',reason:'One shared measurement, then a route-specific probe',work_batch:[
+      {key:'shared',budget_amount:1,resources:{'gpu:fixture':1},route_refs:[a.ref,b.ref],question:'Shared conditions?',why_now:'Both candidates need it',plan:'Measure once',root_reason:'Shared calibration'},
+      {key:'specific',budget_amount:2,route_refs:[b.ref],question:'B target?',why_now:'B differs',plan:'Measure B',root_reason:'Independent probe'},
+    ]})
+  expect(decision.intent_ids).toHaveLength(2)
+  expect(decision.works).toHaveLength(2)
+  expect(host.created).toHaveLength(1)
+  const budget=JSON.parse((await host.command('budget','ses_main')).message.split('\n').slice(1).join('\n'))
+  expect(budget.exploration.allocated).toBe(3)
+  expect(budget.exploration.allocations_total).toBe(2)
+  const allocationPage=await host.call('research_query','ses_main',{collection:'exploration_budget'})
+  expect(allocationPage.items.filter((item:any)=>item.kind==='allocation')).toHaveLength(2)
+  expect(budget.exploration.actual_usage_status).toBe('unknown')
+  const summary=await host.summary()
+  expect(summary.exploration).toMatchObject({scopes_total:2,active_scopes_total:2,routes_total:2})
+  expect(summary.exploration.scopes.map((item:any)=>item.scope_id)).toContain(other.scope_id)
+  const context=modelRequest('ses_main')
+  await host.hooks.get('context')!(context)
+  expect(JSON.stringify(context.system)).toContain('exploration_scopes')
+  expect(JSON.stringify(context.system)).toContain('scope_id')
+})

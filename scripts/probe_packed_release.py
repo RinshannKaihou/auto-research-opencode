@@ -21,8 +21,12 @@ def main():
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
     parser.add_argument('--e1e2', action='store_true', help='run E1/E2 instead of the basic node lifecycle')
+    parser.add_argument('--e3', action='store_true', help='run the multi-route lifecycle from an independent package')
+    parser.add_argument('--e3-output', type=Path, help='retain the E3 host summary and synthetic tool trace')
     parser.add_argument('--e1e2-scenario', choices=('full','stale','off','restart'), default='full')
     args = parser.parse_args()
+    if args.e3 and args.e1e2:
+        parser.error('Choose --e3 or --e1e2')
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
     root = Path(__file__).resolve().parents[1]
@@ -65,8 +69,11 @@ def main():
             'import auto_research.service; print(auto_research.service.__file__)'], cwd=release, env=env, text=True).strip()
         if Path(origin).resolve() != (package / 'python' / 'auto_research' / 'service.py').resolve():
             raise RuntimeError('Packed backend did not load from the extracted artifact')
-        script = 'probe_e1e2_run.py' if args.e1e2 else 'probe_research_run.py'
+        script = 'probe_e3_run.py' if args.e3 else 'probe_e1e2_run.py' if args.e1e2 else 'probe_research_run.py'
         command = [sys.executable, str(root / 'scripts' / script), '--plugin', str(package)]
+        if args.e3:
+            destination = args.e3_output or root / 'docs/evidence/e3-multiroute/runs/host-packed-full.json'
+            command.extend(['--output', str(destination.resolve())])
         if args.e1e2:
             command.extend(['--scenario', args.e1e2_scenario])
         if args.pause_node:
@@ -87,7 +94,7 @@ def main():
             command.append('--cold-restart-specialist')
         if args.warm_reload_specialist:
             command.append('--warm-reload-specialist')
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120 if args.e1e2 else 45)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=240 if args.e3 else 120 if args.e1e2 else 45)
         if result.returncode:
             sys.stderr.write(result.stdout + result.stderr)
             raise SystemExit(result.returncode)

@@ -31,7 +31,7 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
   const fakeBoard = async ({ view, fields: f = {} }: any) => {
     calls.push({ view, ...f })
     await beforeRead?.(view, f)
-    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 },runtime_budget:{available:true,turns:3,total_nodes:101,unconfirmed_reservations:1,limits:{max_session_turns:8,max_total_nodes:120,max_tokens:2000},tokens_observed:420,cost_observed:null,deadline_at:'2026-10-31T12:00:00Z'}, ...(withRoutes ? {exploration:{objective:'尾延迟优化',routes_total:1,pending_results_total:1,routes:[]}} : {}) }
+    if (view === "summary") return { project: { goal: "测试完整研究上下文" }, run: { state: "complete" }, counts: { nodes: 101, knowledge: 101 }, revision: 1, node_ids: ["X-001"], knowledge_kinds: ["claim"], knowledge_statuses: ["working"], review_queue: { pending_total: 101 },runtime_budget:{available:true,turns:3,total_nodes:101,unconfirmed_reservations:1,limits:{max_session_turns:8,max_total_nodes:120,max_tokens:2000},tokens_observed:420,cost_observed:null,deadline_at:'2026-10-31T12:00:00Z'}, ...(withRoutes ? {exploration:{objective:'尾延迟优化',scopes_total:2,active_scopes_total:1,pending_work_total:1,routes_total:1,pending_results_total:1,routes:[],scopes:[{ref:'explore/scope/ES-002@2',objective:'等待新负载',state:'deferred'}],latest_decisions:[{scope_id:'ES-001',decision_id:'ED-003',provisional:true,expected_results_total:2,missing_results_total:1}]}} : {}) }
     if (view === "presentation") return { status: "missing" }
     if (view === "reference_chunk") {
       const value = f.ref === "X-001" ? { node_id: "X-001", question: "Q" } : f.ref.startsWith("knowledge/") ? knowledge(Number(/K-(\d+)/.exec(f.ref)![1])) : { ...file, ref: f.ref, ...(folder ? { source_path: "materials", object_kind: "directory" } : {}) }
@@ -55,7 +55,7 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
       const after = f.cursor?.after ?? f.after ?? 0, count = f.limit ?? 100
       if (f.collection === "nodes") return { items: [{ node_id: "X-001", question: "Q" }], cursor: null }
       if (f.collection === 'exploration_routes') return {items:[{ref:'explore/route/ER-001@1',route_id:'ER-001',revision:1,
-        title:'服务回放',rationale:'直接观察目标指标',critical_assumption:'负载具有代表性',disposition:'deferred',
+        scope_id:'ES-001',goal_version:1,baseline_refs:['pub/P-003#base'],component_refs:['explore/route/ER-002@1'],relations:[{kind:'complements',route_ref:'explore/route/ER-002@1'}],title:'服务回放',rationale:'直接观察目标指标',critical_assumption:'负载具有代表性',disposition:'deferred',
         disposition_reason:'数据暂不足',reactivation_condition:'补充负载数据',evidence_refs:[target]}],total:1,cursor:null}
       if (f.collection === "sessions") return { items: [{ session_id: "main", role: "main", detached: false }], cursor: null }
       if (f.collection === "critical_now") return {
@@ -84,6 +84,21 @@ async function mounted(width = 132, folder = false, beforeRead?: (view: string, 
   await flush()
   return { screen, press, flush, calls, opened, changed: () => changed(), closed: () => closed, keys: () => layer().commands.map((v) => v.bind), frame: () => screen.captureCharFrame() }
 }
+
+test('multi-scope overview and route detail disclose provisional work and frozen inputs', async () => {
+  const ui=await mounted(132,false,undefined,true)
+  try {
+    expect(ui.frame()).toContain('1 活跃 / 2 全部')
+    expect(ui.frame()).toContain('等待新负载')
+    expect(ui.frame()).toContain('临时选择 ED-003')
+    await ui.press('2');await ui.press('b')
+    expect(ui.frame()).toContain('ES-001')
+    expect(ui.frame()).toContain('complements')
+    expect(ui.frame()).toContain('组合组件')
+    expect(ui.frame()).toContain('冻结基线')
+    expect(ui.frame()).toContain('pub/P-003#base')
+  } finally {ui.screen.renderer.destroy()}
+})
 
 test.each([80, 132])('exploration routes remain in the research view at %i columns', async width => {
   const ui = await mounted(width, false, undefined, true)
