@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/private/tmp/e3-pr-ETlItyG0/repo/scripts/probe_e3_run.py", line 521, in <module>
+    main()
+  File "/private/tmp/e3-pr-ETlItyG0/repo/scripts/probe_e3_run.py", line 417, in main
+    raise RuntimeError(provider.failures[-1])
+RuntimeError: RuntimeError: Public tool rejected the fixture action: {'type': 'unknown', 'message': 'Research request is too large'}

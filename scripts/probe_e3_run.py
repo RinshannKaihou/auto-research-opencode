@@ -75,7 +75,8 @@ class E3Provider(E1E2Provider):
         return {'key': key, 'route_refs': routes, 'question': 'E3:' + key,
                 'why_now': 'Controlled E3 engineering fixture', 'plan': 'Publish the deterministic fixture measurement',
                 'root_reason': 'Isolated test question ' + key, 'work_kind': kind,
-                'budget_amount': 1, 'inputs': inputs or []}
+                'budget_amount': 1, 'inputs': inputs or [],
+                **({'resources': {'gpu:fixture': 1}} if cls.scenario == 'resource' else {})}
 
     @classmethod
     def advance(cls, name, args):
@@ -218,6 +219,10 @@ class E3Provider(E1E2Provider):
     @classmethod
     def choose_multi(cls, body):
         stage = cls.stage
+        if stage >= 10 and any(not cls.task(key) or cls.task(key)[2] != 'finished' for key in ('multi-a', 'multi-b')):
+            # A tool call to research_wait ends the coordinator turn only when
+            # this provider stops responding. Yield until the native wake.
+            return None
         if stage in (0, 1):
             return cls.advance('research_scope', {'changes': {'objective': 'Independent active scope ' + str(stage + 1), 'task_kind': 'selection'}})
         scopes = cls.scopes()
@@ -241,7 +246,12 @@ class E3Provider(E1E2Provider):
                 'snapshot_id': cls.last_page(body)['snapshot_id'], 'result_ids': cls.pending(scope.split('/')[-1].split('@')[0]),
                 'action': 'propose_stop', 'reason': 'Stop this independently measured scope',
                 'route_changes': [{'route_ref': ref, 'disposition': 'adopted', 'reason': 'Fixture execution completed'} for ref in routes]})
-        return cls.final(body, 14)
+        if cls.scenario == 'paged' and 14 <= stage < 22:
+            # Keep each public RPC below the existing 64KiB transport limit;
+            # the aggregate decision still approaches the 256KiB delivery cap.
+            return cls.advance('research_record', {'kind': 'claim', 'statement': f'Measurement {stage - 13}: ' + '结果🙂' * 3000,
+                'visibility': 'project', 'evidence_refs': [cls.result_ref('multi-b')]})
+        return cls.final(body, 22 if cls.scenario == 'paged' else 14)
 
     def do_POST(self):
         cls = type(self)
@@ -275,13 +285,13 @@ class E3Provider(E1E2Provider):
                                     cls.trace.append({'stage': cls.stage, 'retry': 'late evidence changed the selection snapshot'})
                                     cls.stage = cls.latest_read_stage
                                     continue
-                                if not is_node and any(reason in str(value['error']) for reason in (
-                                        'conclusion_basis_changed', 'Pending results must be considered')):
+                                if not is_node and any(reason in str(value['error']).lower() for reason in (
+                                        'conclusion_basis_changed', 'pending results must be considered')):
                                     cls.trace.append({'stage': cls.stage, 'retry': 'late evidence requires a new stopping decision and draft'})
-                                    cls.stage = 10 if cls.scenario == 'multi' else 21
+                                    cls.stage = 10 if cls.scenario in {'multi', 'resource', 'paged'} else 21
                                     continue
                                 raise RuntimeError('Public tool rejected the fixture action: ' + str(value['error'])[:800])
-                choice = cls.choose_node(body) if is_node else (cls.choose_multi(body) if cls.scenario == 'multi' else cls.choose_full(body)) if 'research_dispatch' in names else None
+                choice = cls.choose_node(body) if is_node else (cls.choose_multi(body) if cls.scenario in {'multi', 'resource', 'paged'} else cls.choose_full(body)) if 'research_dispatch' in names else None
                 action, args = choice if choice else (None, None)
                 if action:
                     cls.actions.append(action)
@@ -311,7 +321,7 @@ class E3Provider(E1E2Provider):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--plugin', type=Path, default=Path(__file__).resolve().parents[1] / 'plugin')
-    parser.add_argument('--scenario', choices=('full', 'multi'), default='full')
+    parser.add_argument('--scenario', choices=('full', 'multi', 'resource', 'paged'), default='full')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     provider = E3Provider
@@ -396,15 +406,30 @@ def main():
                 command('init', {'goal': 'Isolated E3 engineering fixture'})
                 command('budget', {'limit': 'turns', 'value': '120', 'reason': 'Bound the synthetic fixture'})
                 command('budget', {'limit': 'work', 'value': '8', 'reason': 'One shared allowance across all scopes'})
+                if args.scenario == 'resource':
+                    command('budget', {'limit': 'resource', 'resource': 'gpu:fixture', 'value': '1',
+                                       'reason': 'Serialize declared synthetic resource work'})
                 command('exploration', {'mode': 'on'})
                 command('auto', {})
                 deadline = time.monotonic() + 100
                 state = None
+                resource_recovery = []
                 while time.monotonic() < deadline:
                     if provider.failures:
                         raise RuntimeError(provider.failures[-1])
                     with sqlite3.connect(provider.database) as db:
                         state = db.execute('SELECT state FROM workflow_project WHERE id=1').fetchone()[0]
+                        notices = db.execute("SELECT payload FROM workflow_notifications WHERE kind='resource_wait' "
+                                             "AND state='delivered' ORDER BY rowid").fetchall() if args.scenario == 'resource' else []
+                    if notices and not resource_recovery:
+                        payload = json.loads(notices[-1][0])
+                        blocker = next((item for item in payload['blockers'] if item['task_state'] == 'finished'), None)
+                        if blocker:
+                            assert blocker['state'] == 'uncertain'
+                            resource_recovery.append({'delivered_notice': payload, 'operator_action': 'recover resource',
+                                                      'verified_task': blocker['task_id']})
+                            command('recover', {'kind': 'resource', 'task_id': blocker['task_id'],
+                                                'reason': 'Synthetic fixture has no external device process; operator test attestation'})
                     if state in {'complete', 'paused', 'stopped'}:
                         break
                     time.sleep(.1)
@@ -420,7 +445,8 @@ def main():
                     scopes = [dict(row) for row in db.execute('SELECT scope_id,revision,data FROM exploration_scopes ORDER BY rowid')]
                 outcome.update(run_state=state, stage=provider.stage, actions=provider.actions,
                     decisions=decisions, tasks=tasks, allocations=allocations, bindings=bindings, scopes=scopes, intents=intents,
-                    evidence=json.loads(conclusion[0]) if conclusion else None)
+                    evidence=json.loads(conclusion[0]) if conclusion else None,
+                    **({'resource_recovery': resource_recovery} if args.scenario == 'resource' else {}))
                 assert state == 'complete', f'Fixture did not conclude: state={state}, stage={provider.stage}'
                 assert all(item['state'] == 'finished' for item in tasks)
                 assert sum(item['amount'] for item in allocations) <= 8
@@ -445,6 +471,28 @@ def main():
                 else:
                     assert len({item['scope_id'] for item in scopes}) == 2
                     assert len(outcome['evidence']['exploration_stop']['considered_scope_refs']) == 2
+                if args.scenario == 'resource':
+                    assert len(resource_recovery) == 1, 'No delivered resource wait notice and operator recovery observed'
+                    assert allocations[0]['resource_state'] == 'released'
+                    assert allocations[1]['resource_state'] == 'uncertain'
+                    assert all(json.loads(item['resources']) == {'gpu:fixture': 1} for item in allocations)
+                else:
+                    assert all(item['resource_state'] == 'released' for item in allocations)
+                if args.scenario == 'paged':
+                    draft = provider.rows('SELECT data FROM conclusion_drafts ORDER BY rowid DESC LIMIT 1')[0][0]
+                    manifest = json.loads(draft)['delivery_manifest']
+                    assert 230000 < manifest['total_bytes'] <= 256 * 1024
+                    pages = []
+                    for event in provider.trace:
+                        message = event.get('provider_visible_tool_message')
+                        if not message:
+                            continue
+                        pages.extend(value for value in objects(message) if value.get('part') == 'decision')
+                    assert len(pages) >= 14
+                    assert all('delivery_manifest' not in page for page in pages if page['offset'] > 0)
+                    outcome['paged_delivery'] = {'total_bytes': manifest['total_bytes'],
+                        'manifest_pages': len(manifest['pages']), 'observed_decision_pages': len(pages),
+                        'full_manifest_only_at_offset_zero': True, 'concluded_with_complete_current_request': True}
                 outcome['passed'] = True
             except Exception as error:
                 log.flush()
