@@ -1,0 +1,14 @@
+{
+  "scope": "read-only snapshot of a stable historical test project in a temporary directory",
+  "source_schema": 9,
+  "baseline_schema": 11,
+  "result_schema": 12,
+  "backup_schema": 11,
+  "historical_tables_compared": 62,
+  "historical_columns_and_rows_preserved": true,
+  "events": 67,
+  "requests": 64,
+  "synthetic_budget_added_for_preservation_check": true,
+  "integrity": "ok",
+  "source_unchanged_during_copy": true
+}

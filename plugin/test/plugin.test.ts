@@ -226,7 +226,7 @@ test('an attachment that saw no registry discovers a later research association'
     await creator.init('ses_main', project, 'membership fixture')
     await observer.confirmMembership('ses_main')
     expect(observer.roleOf('ses_main')).toBe('main')
-    expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(true)
+    expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(false)
     await observer.confirmMembership('ordinary')
     expect(observer.isAssociated('ordinary')).toBe(false)
   } finally {
@@ -834,6 +834,74 @@ describe("sessions outside a project", () => {
 })
 
 describe("autonomous research", () => {
+  for (const state of ['manual', 'paused', 'stopped', 'complete']) test(`coordinator native limits persist in ${state} and reject stale tool calls`, async () => {
+    const host = await load()
+    if (state === 'manual') await host.command('init', 'ses_main', { goal: 'persistent coordinator role' })
+    else {
+      await host.command('auto', 'ses_main', { goal: 'persistent coordinator role' })
+      if (state === 'paused') await host.command('pause', 'ses_main')
+      if (state === 'stopped') await host.command('stop', 'ses_main')
+      if (state === 'complete') {
+        const publication = await host.call('research_publish', 'ses_main', { status: 'complete', summary: 'report',
+          items: [{ item_id: 'report', kind: 'text', content: { text: 'unresolved' } }] })
+        await host.call('research_conclude', 'ses_main', { summary: 'done', final_ref: `pub/${publication.publication_id}#report`,
+          outcome: 'unresolved', gaps: ['unknown'], review: { status: 'unreviewed', refs: [], limitations: ['not reviewed'] } })
+      }
+    }
+    const blocked = ['shell', 'write', 'edit', 'websearch', 'webfetch', 'todowrite', 'mcp__unknown__action', 'research_unknown_plugin']
+    const request = modelRequest('ses_main')
+    for (const name of ['glob', 'grep', ...blocked]) request.tools[name] = { description: name, input: {} }
+    await host.hooks.get('context')!(request)
+    expect((await host.summary()).run.state).toBe(state)
+    for (const name of ['read', 'glob', 'grep']) {
+      expect(Object.keys(request.tools)).toContain(name)
+      await host.hooks.get('tool.execute.before')!({ tool: name, sessionID: 'ses_main', id: `read-${name}`, input: {} })
+    }
+    for (const name of blocked) {
+      expect(Object.keys(request.tools)).not.toContain(name)
+      await expect(host.hooks.get('tool.execute.before')!({ tool: name, sessionID: 'ses_main', id: `stale-${name}`, input: {} }))
+        .rejects.toMatchObject({ metadata: { code: 'research_role_violation', role: 'main', allow_fallback: false } })
+    }
+  })
+
+  test('detaching a quiet main restores ordinary tools without changing other sessions', async () => {
+    const host = await load()
+    await host.command('init', 'ses_main', { goal: 'detach boundary' })
+    const ordinary = modelRequest('ordinary')
+    ordinary.tools.webfetch = { description: 'webfetch', input: {} }
+    await host.hooks.get('context')!(ordinary)
+    expect(Object.keys(ordinary.tools)).toContain('shell')
+    expect(Object.keys(ordinary.tools)).toContain('webfetch')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ordinary', id: 'ordinary-call', input: {} })
+    expect((await host.command('detach', 'ses_main')).error).toBeUndefined()
+    const detached = modelRequest('ses_main')
+    await host.hooks.get('context')!(detached)
+    expect(Object.keys(detached.tools)).toContain('shell')
+    expect(Object.keys(detached.tools)).not.toContain('research_dispatch')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'detached-call', input: {} })
+  })
+
+  test('missing and unrecognized associated roles cannot inherit node execution rights', async () => {
+    for (const role of [undefined, 'unrecognized', 'exploration']) {
+      for (const name of ['read', 'glob', 'grep']) expect(keepsTool(name, true, role)).toBe(true)
+      for (const name of ['shell', 'write', 'webfetch', 'research_finish']) expect(keepsTool(name, true, role)).toBe(false)
+    }
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'unknown role' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+      const result = await original.call(this, method, fields, operation)
+      return method === 'session_membership' && fields?.session_id === child ? { ...result, session: { ...result.session, role: null } } : result
+    })
+    try {
+      await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'unknown-call', input: {} }))
+        .rejects.toMatchObject({ message: expect.stringContaining('研究角色尚未登记'), metadata: { role: 'unknown', allow_fallback: false } })
+    } finally { spy.mockRestore() }
+  })
+
   test("conclusion rejects missing contracts and bad final refs without ending work", async () => {
     const host = await load()
     await host.command("auto", "ses_main", { goal: "Find X" })
@@ -1064,7 +1132,8 @@ describe("autonomous research", () => {
       await host.hooks.get("context")!(request)
       expect(Object.keys(request.tools)).not.toContain("subagent")
       expect(Object.keys(request.tools)).not.toContain("question")
-      expect(Object.keys(request.tools)).toContain("shell")
+      if (sessionID === "ses_main") expect(Object.keys(request.tools)).not.toContain("shell")
+      else expect(Object.keys(request.tools)).toContain("shell")
     }
     const plain = modelRequest("ses_plain")
     await host.hooks.get("context")!(plain)
@@ -1186,6 +1255,16 @@ describe("autonomous research", () => {
     host.events.push({ type: 'session.inbox.delivered', data: { sessionID: child, inboxID: 'msg_unapproved_user' } })
     await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'after-steer', input: {} }))
       .rejects.toMatchObject({ metadata: { code: 'research_control_paused' } })
+  })
+
+  test("coordinator cannot execute native or unknown tools through an old request", async () => {
+    const host = await load()
+    await host.command("auto", "ses_main", { goal: "role fixture" })
+    for (const tool of ["shell", "edit", "write", "research_shell"]) {
+      await expect(host.hooks.get("tool.execute.before")!({ tool, sessionID: "ses_main", id: `blocked-${tool}`, input: {} }))
+        .rejects.toMatchObject({ metadata: { code: "research_role_violation", allow_fallback: false } })
+    }
+    await host.hooks.get("tool.execute.before")!({ tool: "read", sessionID: "ses_main", id: "read", input: {} })
   })
 
   test("paused context replaces continue instructions and cannot propose new work", async () => {
@@ -1348,7 +1427,8 @@ describe("autonomous research", () => {
     await first.hooks.get('context')!(request)
     expect(Object.keys(request.tools)).toContain('research_finish')
     expect(Object.keys(request.tools)).not.toContain('research_dispatch')
-    await first.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'old-main', input: {} })
+    await expect(first.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_main', id: 'old-main', input: {} }))
+      .rejects.toMatchObject({ metadata: { code: 'research_role_violation' } })
     const nodes = await first.call('research_query', child, { collection: 'nodes' })
     expect(nodes.items.some((item: any) => item.node_id === 'X-001')).toBe(true)
     release()
@@ -1708,6 +1788,40 @@ describe("node specialists", () => {
       expect(result).toMatchObject({ state: 'incomplete', exit_verified: true })
       expect(host.created).toHaveLength(1)
     } finally { spy.mockRestore() }
+  })
+
+  test('a blind specialist can read only its assigned input while controller recovery is pending', async () => {
+    const first = await load()
+    const workspace = await nodeAtWork(first)
+    mkdirSync(join(workspace, 'output'), { recursive: true })
+    writeFileSync(join(workspace, 'output', 'report.md'), 'assigned evidence for review')
+    const publication = await first.call('research_publish', first.created[0]!, { status: 'complete', summary: 'report',
+      items: [{ item_id: 'report', kind: 'report', source_path: 'output/report.md' }] })
+    const pending = first.call('research_delegate', first.created[0]!, { ...TASK, context_mode: 'blind', inputs: [`pub/${publication.publication_id}#report`] })
+    const child = await specialist(first, 1)
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (method === 'controller_attach') return Promise.reject(new Error('operator recovery required'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const second = await load()
+      await second.hooks.get('tool.execute.before')!({ tool: 'research_read_input', sessionID: child, id: 'safe-input', input: { input_id: 'input-1' } })
+      const input = await second.call('research_read_input', child, { input_id: 'input-1' })
+      expect(JSON.stringify(input)).toContain('assigned evidence for review')
+      await expect(second.call('research_read_input', child, { input_id: 'input-other' })).rejects.toThrow()
+      await expect(second.call('research_read_input', 'ordinary', { input_id: 'input-1' })).rejects.toThrow('没有关联')
+      const request = modelRequest(child)
+      request.system.push({ type: 'text', text: 'private workspace AGENTS and project goal' })
+      await second.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toContain('research_read_input')
+      expect(Object.keys(request.tools)).not.toContain('shell')
+      expect(JSON.stringify(request.system)).not.toContain('private workspace AGENTS')
+    } finally {
+      spy.mockRestore()
+      first.reply(child, 'review interrupted by controller handoff')
+      await pending
+    }
   })
 
   test("stopping research also requests interruption of a running specialist", async () => {

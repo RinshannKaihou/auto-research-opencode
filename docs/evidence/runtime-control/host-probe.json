@@ -1,0 +1,16 @@
+{
+  "host": "OpenCode 2.2.5",
+  "sdk": "@opencode/plugin 2.0.18",
+  "scope": "isolated temporary server, loopback only, no model call",
+  "create_statuses": [200, 200],
+  "synthetic_statuses": [200, 200],
+  "same_returned_inbox_id": true,
+  "inbox_items": 1,
+  "matching_messages_in_context": 0,
+  "plugin_setups": 2,
+  "reload_preserved_pid_and_epoch": true,
+  "limitations": [
+    "A resume:false synthetic input remained in the inbox and was absent from context.",
+    "The probe did not cover a live model execution, abort propagation, or a terminal-event gap."
+  ]
+}

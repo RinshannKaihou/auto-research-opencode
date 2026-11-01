@@ -1,0 +1,17 @@
+{
+  "host": "OpenCode 2.2.5",
+  "scope": "temporary project, isolated registry, loopback scripted provider and the repaired server plugin",
+  "control_session_role": "main",
+  "ordinary_session_advertised_shell": true,
+  "ordinary_shell_created_test_sentinel": true,
+  "coordinator_advertised_shell": false,
+  "scripted_unadvertised_shell_call_attempted": true,
+  "sentinel_created": false,
+  "forced_old_context_reintroduced_shell": true,
+  "forced_old_context_sentinel_created": false,
+  "terminal_outcome": "succeeded",
+  "finding": "A plugin attachment that had cached an absent registry initially failed this probe. Rechecking the individual session's current membership fixed the reproduced bypass.",
+  "limitations": [
+    "A separate test plugin reintroduced the original shell descriptor after request filtering; the scripted model's call still produced no side effect. This covers that direct old-context route, not every possible indirect tool facade."
+  ]
+}

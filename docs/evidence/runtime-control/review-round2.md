@@ -18,6 +18,8 @@
 
 当前 PR #9 全量结果：Python 612 passed；Bun 138 pass／0 fail；TypeScript 与 diff 检查通过。本轮原始宿主探针输出与运行方法见 [round2](round2/README.md)。PR #10 合入同一修复后另记堆叠验证，不以旧摘要代替新运行。
 
+PR #10 已合入同一修复，Python 源码和测试与 #9 完全一致；堆叠全量 Bun 146 pass／0 fail、746 断言，类型检查通过。真实宿主强插 shell 的探针也通过，普通会话对照产生副作用，主协调没有副作用；原始输出见 [forced-boundary.json](round2/forced-boundary.json)，完整本轮汇总见 [verification.json](round2/verification.json)。
+
 ## 保留的范围
 
 - 不因二审通过就合并或部署；保留 #9 → #10 的依赖顺序，通过审阅后一起升级。如果 #9 squash 合入，#10 需在固定新 base 上只重放边界改动并核对 diff，不能直接假定改 base 后差异不变；本轮不重写已有远程历史。
