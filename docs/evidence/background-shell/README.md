@@ -59,4 +59,3 @@ python3 -B scripts/probe_background_wait.py --scenario foreground-denied
 ```
 
 宿主 trace 的临时根路径用 `<tmp>` 替换，保留事件顺序、字段与测试命令。前台中断探针证明测试进程退出，不证明任意脱离宿主管理的子进程退出。辅助索引不消除既有请求幂等回执的增长；本轮没有清除历史回执或外部执行记录。
-

@@ -1,4 +1,3 @@
 
 > auto-research-opencode@0.1.1 typecheck
 > tsc --noEmit
-
