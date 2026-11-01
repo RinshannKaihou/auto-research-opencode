@@ -432,7 +432,9 @@ class EvidenceConclusionStore:
             package = decision_package(snapshot['view'], result)
             body = json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
             if len(body) > 32000:
-                raise ValidationError(f'decision_package_too_large: {len(body)} bytes; narrow the declared scope explicitly')
+                counts = {key:len(package[key]) for key in ('records','edges','materials','risks','limitations')}
+                raise ValidationError(f'decision_package_too_large: {len(body)} bytes (limit 32000); '
+                                      f'counts={encoded(counts)}; narrow the declared scope explicitly')
             snapshot['manifest_digest'] = hashlib.sha256(body).hexdigest()
             draft_id = self._next(db, 'conclusion_draft', 'CD')
             data = {'format_version': 2, 'view': snapshot['view'], 'decision_package':package,

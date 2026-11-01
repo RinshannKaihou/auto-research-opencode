@@ -481,3 +481,22 @@ def test_material_coverage_unions_duplicate_and_overlapping_ranges(tmp_path):
     host.call('evidence_observed',pages=[observed(last)],plugin_instance_id='plugin-1')
     complete = json.loads(host.call('query',collection='evidence',refs=[ref],limit=16384)['chunk'])['materials'][0]
     assert complete['material_read'] == {'complete':True,'covered_bytes':10}
+
+
+def test_oversized_decision_package_reports_size_and_scope_counts(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus',node_id=None,role='planner',mode='manual')
+    source = host.call('publish',status='complete',summary='data',gaps=[],knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','content':{'text':'measured value'}}])
+    claim = host.call('memory_write',action='record',fields={'kind':'claim','statement':'Measured '+('x'*33000),
+        'visibility':'project','evidence_refs':[f"pub/{source['publication_id']}#data"]})['ref']
+    host.call('conclusion_contract',contract='evidence-v1')
+    view = host.call('query',collection='evidence',refs=[claim])
+    error = host.error('conclusion_prepare',model_call=True,
+        fields={**fields([claim]),'snapshot_id':view['snapshot_id']})
+    assert 'decision_package_too_large' in error and 'limit 32000' in error
+    assert '"records": 1' in error and '"materials": 1' in error
+    assert 'narrow the declared scope explicitly' in error
+    with sqlite3.connect(host.root/'.research/state.sqlite3') as db:
+        assert db.execute('SELECT COUNT(*) FROM conclusion_drafts').fetchone()[0] == 0
