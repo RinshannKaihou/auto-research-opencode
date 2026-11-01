@@ -1215,17 +1215,43 @@ class NativeService:
                 if not isinstance(pages, list):
                     raise ValidationError('Evidence pages must be a list')
                 validated = []
-                for page in pages:
-                    snapshot = self.evidence.get(store, page.get('snapshot_id'))
+                rejected = []
+                with store._read() as db:
+                    store._association(db, host_id, session_id)
+                    generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+                for index, page in enumerate(pages):
+                    try:
+                        snapshot = self.evidence.get(store, page.get('snapshot_id'))
+                    except ValidationError:
+                        rejected.append({'index': index, 'reason': 'wrong_project'})
+                        continue
+                    except ConflictError:
+                        if not page.get('draft_id'):
+                            rejected.append({'index': index, 'reason': 'evidence_snapshot_expired'})
+                            continue
+                        try:
+                            snapshot = self.evidence.draft_snapshot(store, page['draft_id'], page.get('snapshot_id'))
+                        except (ConflictError, ValidationError):
+                            rejected.append({'index': index, 'reason': 'draft_unavailable'})
+                            continue
                     start, end = page.get('offset'), page.get('end')
+                    if snapshot['generation'] != generation:
+                        rejected.append({'index': index, 'reason': 'wrong_generation'})
+                        continue
+                    if (snapshot.get('draft_id') and (snapshot.get('host_id') != host_id or snapshot.get('session_id') != session_id)):
+                        rejected.append({'index': index, 'reason': 'wrong_session'})
+                        continue
                     if (type(start) is not int or type(end) is not int or not 0 <= start < end <= len(snapshot['body'])
+                            or page.get('draft_id', snapshot.get('draft_id')) != snapshot.get('draft_id')
                             or page.get('manifest_digest') != snapshot['manifest_digest']
                             or page.get('chunk_digest') != hashlib.sha256(snapshot['body'][start:end].encode('utf-8')).hexdigest()):
-                        raise ValidationError('Evidence page does not match its snapshot')
+                        rejected.append({'index': index, 'reason': 'page_mismatch'})
+                        continue
                     validated.append({'snapshot_id': snapshot['snapshot_id'], 'draft_id': snapshot.get('draft_id'),
                                       'generation': snapshot['generation'], 'offset': start, 'end': end,
                                       'digest': snapshot['manifest_digest']})
                 value = store.evidence_observed(host_id, session_id, request.get('plugin_instance_id'), validated, self._operation(request))
+                value['rejected'] = rejected
             elif method == "context_shadow":
                 value = store.context_shadow(host_id, session_id,
                     max_chars=request.get("max_chars", 12000), profile=request.get("profile"),

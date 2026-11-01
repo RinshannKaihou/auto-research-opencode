@@ -1,6 +1,7 @@
 """Regression cases for PR 11 review findings."""
 
 import argparse
+import hashlib
 import sqlite3
 
 import pytest
@@ -8,6 +9,9 @@ import pytest
 from auto_research import native_store, schema15
 from auto_research.maintenance_cli import execute
 from test_opencode_host import Host
+from test_context_policy import completed
+from test_evidence_conclusion import prepare_and_publish
+from auto_research.service import NativeService
 
 
 def test_generation_contract_changes_without_rewriting_previous_generation(tmp_path):
@@ -79,3 +83,28 @@ def test_readonly_export_supports_older_versions(tmp_path, monkeypatch, version)
     assert result['schema_version'] == version
     with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
         assert db.execute('PRAGMA user_version').fetchone()[0] == version
+
+
+def evidence_page(page):
+    return {'snapshot_id': page['snapshot_id'], 'draft_id': page.get('draft_id'),
+            'offset': page['offset'], 'end': page['cursor']['offset'] if page['cursor'] else page['total_chars'],
+            'manifest_digest': page['manifest_digest'],
+            'chunk_digest': hashlib.sha256(page['chunk'].encode()).hexdigest()}
+
+
+def test_expired_page_does_not_poison_valid_draft_and_restart(completed, tmp_path):
+    host, _, _, _, claim, _ = completed
+    draft, _ = prepare_and_publish(host, claim)
+    old = host.call('query', collection='evidence', refs=[])
+    for _ in range(17):
+        host.call('query', collection='evidence', refs=[])
+    current = host.call('query', collection='evidence', draft_id=draft['draft_id'], limit=127)
+    pages = [evidence_page(old), evidence_page(current)]
+    observed = host.call('evidence_observed', pages=pages, plugin_instance_id='p')
+    assert len(observed['receipt_ids']) == 1
+    assert observed['rejected'] == [{'index': 0, 'reason': 'evidence_snapshot_expired'}]
+    host.service = NativeService(tmp_path / 'registry.sqlite3')
+    observed = host.call('evidence_observed', pages=pages, plugin_instance_id='p')
+    assert len(observed['receipt_ids']) == 1 and observed['rejected'][0]['index'] == 0
+    second = host.call('query', collection='evidence', cursor=current['cursor'], limit=127)
+    assert second['draft_id'] == draft['draft_id'] and second['offset'] == 127

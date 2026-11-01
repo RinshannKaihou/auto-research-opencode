@@ -1,7 +1,8 @@
 /** Evidence receipts count only exact tool results visible in a model request. */
 import { createHash } from 'node:crypto'
 
-export type EvidencePage = { snapshot_id:string; offset:number; end:number; manifest_digest:string; chunk_digest:string }
+export type EvidencePage = { snapshot_id:string; draft_id?:string; offset:number; end:number; manifest_digest:string; chunk_digest:string }
+export type EvidenceAck = { receipt_ids:string[]; rejected?:{reason:string}[] }
 
 export class EvidenceDelivery {
   private active = new Map<string,string>()
@@ -29,11 +30,11 @@ export class EvidenceDelivery {
     const end = value.cursor?.offset ?? value.total_chars
     if (typeof value.offset !== 'number' || typeof end !== 'number' || end <= value.offset || typeof value.manifest_digest !== 'string') return
     this.outputs.set(`${session}:${id}`, { session, name, text:JSON.stringify(value,null,2), json:JSON.stringify(value),
-      page:{snapshot_id:value.snapshot_id,offset:value.offset,end,manifest_digest:value.manifest_digest,
+      page:{snapshot_id:value.snapshot_id,...(value.draft_id ? {draft_id:value.draft_id} : {}),offset:value.offset,end,manifest_digest:value.manifest_digest,
         chunk_digest:createHash('sha256').update(value.chunk,'utf8').digest('hex')} })
   }
 
-  async request(session:string, messages:any[], acknowledge:(pages:EvidencePage[])=>Promise<{receipt_ids:string[]}>, timeoutMs:number): Promise<void> {
+  async request(session:string, messages:any[], acknowledge:(pages:EvidencePage[],onBatch:(result:EvidenceAck)=>void)=>Promise<EvidenceAck | void>, timeoutMs:number): Promise<string[]> {
     const epoch=(this.epoch.get(session) ?? 0)+1
     this.epoch.set(session,epoch)
     this.delivered.delete(session)
@@ -52,19 +53,32 @@ export class EvidenceDelivery {
       if (matched) pages.push(output.page)
     }
     for (const [key,value] of this.outputs) if (value.session===session && !visible.has(key)) this.outputs.delete(key)
-    let receipts:string[]=[]
+    const receipts=new Set<string>()
+    const issues=new Set<string>()
+    let accepting=true
+    const collect=(result:EvidenceAck) => {
+      if (!accepting || this.epoch.get(session)!==epoch) return
+      for (const id of result.receipt_ids) receipts.add(id)
+      for (const item of result.rejected ?? []) issues.add(item.reason)
+    }
     if (pages.length && timeoutMs > 0) {
       let timer:ReturnType<typeof setTimeout> | undefined
       try {
-        const result=await Promise.race([acknowledge(pages),new Promise<undefined>(resolve=>{timer=setTimeout(()=>resolve(undefined),timeoutMs)})])
-        receipts=result?.receipt_ids ?? []
-      } catch { /* A failed delivery cannot authorize a conclusion. */ }
+        const result=await Promise.race([acknowledge(pages,collect),new Promise<'timeout'>(resolve=>{timer=setTimeout(()=>resolve('timeout'),timeoutMs)})])
+        if (result==='timeout') issues.add('timeout')
+        else if (result) collect(result)
+      } catch { issues.add('backend_unavailable') }
       finally { clearTimeout(timer) }
+    } else if (pages.length) {
+      issues.add('timeout')
     }
-    if (this.epoch.get(session)!==epoch) return
-    this.delivered.set(session,receipts)
+    accepting=false
+    if (this.epoch.get(session)!==epoch) return []
+    const accepted=[...receipts]
+    this.delivered.set(session,accepted)
     const active=this.active.get(session)
-    if (active) this.messages.set(`${session}:${active}`,receipts)
+    if (active) this.messages.set(`${session}:${active}`,accepted)
+    return [...issues]
   }
 
   forCall(session:string,message:string,id:string): string[] {

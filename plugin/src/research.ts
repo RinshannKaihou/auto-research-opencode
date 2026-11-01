@@ -557,13 +557,21 @@ export class Research {
       } finally {clearTimeout(timer)}
     }
     this.checkpoints.request(sessionID,messages,matches ? cached.checkpoint_owner : undefined,context)
-    await this.evidenceDelivery.request(sessionID,messages,async pages => {
+  }
+
+  async observeEvidence(sessionID:string,messages:any[],timeoutMs=MEMORY_TIMEOUT_MS): Promise<string[]> {
+    return this.evidenceDelivery.request(sessionID,messages,async (pages,onBatch) => {
       const batches = Array.from({length:Math.ceil(pages.length/100)},(_,i)=>pages.slice(i*100,(i+1)*100))
-      const observed = await Promise.all(batches.map(batch => {
-        const operation=createHash('sha256').update(JSON.stringify([this.instanceID,sessionID,batch])).digest('hex')
-        return this.call<{receipt_ids:string[]}>('evidence_observed',sessionID,{pages:batch},`evidence-observed:${operation}`)
+      const requestID=randomUUID()
+      await Promise.all(batches.map(async (batch,index) => {
+        try {
+          const result=await this.call<{receipt_ids:string[];rejected?:{reason:string}[]}>('evidence_observed',sessionID,
+            {pages:batch},`evidence-observed:${requestID}:${index}`)
+          onBatch(result)
+        } catch {
+          onBatch({receipt_ids:[],rejected:[{reason:'backend_unavailable'}]})
+        }
       }))
-      return {receipt_ids:observed.flatMap(item=>item.receipt_ids)}
-    },Math.max(0,deadline-performance.now()))
+    },Math.max(0,timeoutMs))
   }
 }

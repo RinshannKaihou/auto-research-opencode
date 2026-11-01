@@ -612,11 +612,16 @@ export default Plugin.define({
           }
         }
         const deadline=performance.now()+2000
+        const evidence = role==='main' || role==='node_core'
+          ? research.observeEvidence(request.sessionID,request.messages,Math.max(0,deadline-performance.now()))
+          : Promise.resolve([])
         const text = await research.memory(request.sessionID)
         if (text) {
           request.system.push({ type: "text", text })
           if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages,deadline-performance.now())
         }
+        const issues = await evidence
+        if (issues.length) request.system.push({type:'text',text:`Evidence delivery was not fully confirmed (${issues.join(', ')}). Re-read the affected pages and retry.`})
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)

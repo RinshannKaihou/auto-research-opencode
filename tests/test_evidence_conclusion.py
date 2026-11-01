@@ -488,4 +488,5 @@ def test_receipt_rejects_a_changed_or_redacted_page(tmp_path):
     end = page['cursor']['offset'] if page['cursor'] else page['total_chars']
     altered = {'snapshot_id':page['snapshot_id'],'offset':page['offset'],'end':end,
                'manifest_digest':page['manifest_digest'],'chunk_digest':hashlib.sha256(b'changed').hexdigest()}
-    assert 'does not match' in host.error('evidence_observed',pages=[altered],plugin_instance_id='plugin-1')
+    result = host.call('evidence_observed',pages=[altered],plugin_instance_id='plugin-1')
+    assert result['receipt_ids'] == [] and result['rejected'][0]['reason'] == 'page_mismatch'

@@ -278,7 +278,7 @@ class EvidenceCache:
             snapshot['view']['material_content_in_snapshot'] = sorted(ref for ref in selected if 'content_text' in materials[ref])
         return self._remember(store, snapshot)
 
-    def open_draft(self, store, draft_id):
+    def draft_snapshot(self, store, draft_id, snapshot_id=None):
         with store._read() as db:
             row = db.execute('SELECT * FROM conclusion_drafts WHERE draft_id=?', (draft_id,)).fetchone()
             if not row:
@@ -286,11 +286,17 @@ class EvidenceCache:
             view = json.loads(row['data'])['view']
             snapshot = {'project_id': store._project(db)['project_id'], 'generation': row['generation'],
                         'source_sequence': row['source_sequence'], 'basis_digest': row['basis_digest'],
-                        'draft_id': draft_id, 'view': view}
-        snapshot_id = self._remember(store, snapshot)
-        if self._snapshots[snapshot_id]['manifest_digest'] != row['manifest_digest']:
-            self._bytes -= self._snapshots.pop(snapshot_id)['size']
+                        'host_id': row['host_id'], 'session_id': row['session_id'],
+                        'draft_id': draft_id, 'view': view, 'snapshot_id': snapshot_id, 'root': str(store.root)}
+        body = json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        digest = hashlib.sha256(body.encode('utf-8')).hexdigest()
+        if digest != row['manifest_digest']:
             raise ConflictError('Conclusion draft manifest has changed')
+        return {**snapshot, 'body': body, 'manifest_digest': digest}
+
+    def open_draft(self, store, draft_id):
+        snapshot = self.draft_snapshot(store, draft_id)
+        snapshot_id = self._remember(store, snapshot)
         return snapshot_id
 
     def _remember(self, store, snapshot):
@@ -323,11 +329,20 @@ class EvidenceCache:
                 raise ValidationError("Evidence cursor does not match snapshot")
             snapshot_id = cursor.get("snapshot_id")
             offset = cursor.get("offset")
+            if cursor.get('draft_id'):
+                if draft_id is not None and draft_id != cursor['draft_id']:
+                    raise ValidationError('Evidence cursor belongs to another conclusion draft')
+                draft_id = cursor['draft_id']
         else:
             offset = 0
         if snapshot_id is None:
             snapshot_id = self.open_draft(store, draft_id) if draft_id else self.open(store, refs or [], include_materials)
-        snapshot = self.get(store, snapshot_id)
+        try:
+            snapshot = self.get(store, snapshot_id)
+        except ConflictError:
+            if not draft_id:
+                raise
+            snapshot = self.draft_snapshot(store, draft_id, snapshot_id)
         if draft_id is not None and snapshot.get('draft_id') != draft_id:
             raise ValidationError('Evidence cursor belongs to another conclusion draft')
         if refs is not None and sorted(set(refs)) != snapshot["view"]["roots"]:
@@ -342,6 +357,8 @@ class EvidenceCache:
                                               "basis_digest", "manifest_digest")} | {
             "offset": offset, "chunk": chunk, "total_chars": len(snapshot["body"]),
             "draft_id": snapshot.get('draft_id'),
-            "cursor": {"snapshot_id": snapshot_id, "offset": end} if end < len(snapshot["body"]) else None,
+            "cursor": {"snapshot_id": snapshot_id, "offset": end,
+                       **({'draft_id': snapshot['draft_id']} if snapshot.get('draft_id') else {})}
+                      if end < len(snapshot["body"]) else None,
             "counts": {key: len(view[key]) for key in ("records", "edges", "materials", "risks", "reviews", "limitations")},
             "graph_complete": view["graph_complete"], "raw_material_read": view["raw_material_read"]}
