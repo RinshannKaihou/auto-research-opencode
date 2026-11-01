@@ -118,6 +118,7 @@ class ControllerStore:
                             **{key: candidate[key] for key in ('epoch', 'binding', 'fence')}}
                 phase, mode, fence = 'reconciling', 'cold', int(previous['fence']) + 1
             details = {**payload, 'process_identity': identity, 'fence': fence, 'recovery_mode': mode if phase == 'reconciling' else None}
+            db.execute("UPDATE workflow_intents SET state='superseded',updated_at=datetime('now') WHERE kind='controller_candidate' AND state='pending'")
             db.execute("INSERT INTO workflow_intents VALUES(?,?,?,?,?,datetime('now')) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
                        (INTENT_ID, 'controller_owner', session, phase, json.dumps(details, sort_keys=True)))
             db.execute('UPDATE workflow_project SET control_revision=control_revision+1 WHERE id=1')
@@ -170,6 +171,7 @@ class ControllerStore:
                 details = {key: value for key, value in candidate.items() if key != 'expected_owner'}
                 db.execute("UPDATE workflow_intents SET details=? WHERE intent_id=?", (json.dumps(details, sort_keys=True), INTENT_ID))
                 db.execute("UPDATE workflow_intents SET state='adopted',updated_at=datetime('now') WHERE intent_id=?", (cid,))
+            db.execute("UPDATE workflow_intents SET state='superseded',updated_at=datetime('now') WHERE kind='controller_candidate' AND state='pending'")
             db.execute("UPDATE workflow_project SET state='paused',updated_at=datetime('now') WHERE state='running'")
             db.execute("UPDATE project SET control='paused' WHERE control='auto'")
             db.execute("UPDATE workflow_sessions SET pause_reason='cold' WHERE session_id=? AND detached=0", (session,))

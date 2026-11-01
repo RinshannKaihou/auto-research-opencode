@@ -262,12 +262,15 @@ export class Engine {
         }
       }
       if (pending.error) {
-        // A follow-up may already have reached the host. Do not repeat it;
-        // retain an actionable paused/unverified state instead of losing it.
+        const unsent = wasNotSent(pending.error, 'synthetic')
+        if (unsent && (pending.error as any).unsent_message_id) await this.call('runtime_turn_not_sent', sessionID,
+          { message_id: (pending.error as any).unsent_message_id })
+        // Uncertain API results require reconciliation; pre-API failures only
+        // pause continuation and preserve the existing task's verified state.
         const state = await this.state(sessionID)
         const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID && ACTIVE_TASK.has(item.state))
         const main = this.mainIn(root)
-        if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
+        if (!unsent && task && main) await this.call('workflow', main, { action: 'task_state', fields: {
           task_id: task.task_id, state: 'unverified', error: 'terminal follow-up failed: execution needs reconciliation' } })
         await this.call('workflow', sessionID, { action: 'session', fields: { pause_reason: 'fault' } })
         process.stderr.write(`Research execution follow-up paused: ${pending.error instanceof Error ? pending.error.message : String(pending.error)}\n`)
@@ -291,7 +294,7 @@ export class Engine {
       const finish = await this.call("node_finish_pending", sessionID)
       if (finish) {
         if (!execution || finish.turn_token !== execution) {
-          const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID)
+          const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID && ACTIVE_TASK.has(item.state))
           const main = this.mainIn(root)
           if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
             task_id: task.task_id, state: 'unverified', error: 'finish execution mismatch: reconciliation required' } })
@@ -483,7 +486,10 @@ export class Engine {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if ((error as any)?.unsent_rolled_back) {
-          await this.say(main, `节点 ${task.node_id} 尚未提交宿主，任务已保留在队列。${message}`).catch(() => {})
+          const paused = (error as any).unsent_paused
+          await this.say(main, paused ? `节点 ${task.node_id} 连续三次未能提交，自动调度已暂停；任务保留在队列。排障后用 /research resume。`
+            : `节点 ${task.node_id} 尚未提交宿主，任务已保留在队列。${message}`).catch(() => {})
+          if (paused) break
           continue
         }
         if (error instanceof Error && 'code' in error && error.code==='runtime_budget_exhausted') {
@@ -534,7 +540,7 @@ export class Engine {
         await this.useModel(root, sessionID)
         await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "created" }, `${launch.intent_id}:created`)
       } else {
-        if (launch.reuse) throw new Error("已绑定的节点会话尚未关联，无法安全恢复")
+        if (launch.reuse) throw Object.assign(new Error("已绑定的节点会话尚未关联，无法安全恢复"), { code: 'research_execution_unverified' })
         await this.call("node_launch_phase", main, { intent_id: launch.intent_id, phase: "creating" }, `${launch.intent_id}:creating`)
         createAttempted = true
         const created = await this.host.create(`${task.node_id} · ${oneLine(context.question, 50)}`, root, this.models.get(root), undefined, sessionID)
@@ -578,13 +584,14 @@ export class Engine {
       this.research.notifyChanged(root)
       return true
     } catch (error) {
-      const stage = !createConfirmed && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
+      const stage = (error as any)?.code === 'research_execution_unverified' ? undefined
+        : !createConfirmed && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
         : createConfirmed && (!kickoffAttempted || wasNotSent(error, 'synthetic')) ? 'synthetic' : undefined
       if (stage && this.current()) {
         const undone = await this.call('runtime_outbound_not_sent', main, {
           intent_id: launch.intent_id, stage, reason: String(error),
         }).catch(() => null)
-        if (undone?.rolled_back) Object.assign(error instanceof Error ? error : {}, { unsent_rolled_back: true })
+        if (undone?.rolled_back) Object.assign(error instanceof Error ? error : {}, { unsent_rolled_back: true, unsent_paused: undone.paused })
       }
       throw error
     }
@@ -607,7 +614,7 @@ export class Engine {
         recovery: { action: 'inspect_execution', task_ids: [task.task_id] } }
       if (accepted.state === 'queued') {
         const fresh = await this.state(sessionID)
-        const running = fresh.workflow?.run?.state === 'running'
+        const running = fresh.workflow?.run?.state === 'running' && [null, undefined, 'wait'].includes(fresh.workflow?.session?.pause_reason)
         return { ...accepted, accepted: true, reason: running ? 'capacity' : 'control_paused',
           recovery: running ? { action: 'wait', task_ids: [task.task_id] } : { action: 'explicit_resume' } }
       }
@@ -619,7 +626,17 @@ export class Engine {
     const root = this.research.requireAssociated(sessionID)
     return this.serial(root, async () => {
       const state = await this.state(sessionID)
-      if (state.workflow?.run?.state !== "running") throw new Error("自主研究没有在运行，不能等待")
+      const run = state.workflow?.run
+      const pause = state.workflow?.session?.pause_reason
+      if (run?.state !== 'running' || pause && pause !== 'wait') {
+        const resumable = ['running', 'paused', 'cold'].includes(run?.state)
+        throw Object.assign(new Error('研究当前不能等待；请先按控制状态显式恢复。'), {
+          code: resumable ? 'research_control_paused' : 'research_control_stopped',
+          details: { run_state: run?.state, pause_reason: pause, control_revision: run?.control_revision,
+            controller_phase: state.workflow?.controller?.phase, retryable: false,
+            recovery: resumable ? 'explicit_resume' : 'explicit_auto', allow_fallback: false },
+        })
+      }
       const mine = new Set((await this.allTasks(sessionID, state.workflow))
         .filter((task: any) => task.parent_session_id === sessionID).map((task: any) => task.task_id))
       // Finished tasks leave the control view; look them up so waiting on a task

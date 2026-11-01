@@ -1214,6 +1214,8 @@ class NativeService:
                 value = store.runtime_execution_view(host_id, session_id, request.get('execution_token'))
             elif method == 'runtime_outbound_not_sent':
                 value = store.runtime_outbound_not_sent(host_id, session_id, request['intent_id'], request['stage'], request['reason'], self._operation(request))
+            elif method == 'runtime_turn_not_sent':
+                value = store.runtime_turn_not_sent(host_id, session_id, request['message_id'], self._operation(request))
             elif method == 'runtime_budget_stop':
                 value = store.runtime_budget_stop(host_id,session_id,self._operation(request))
             elif method == 'runtime_turn_finished':

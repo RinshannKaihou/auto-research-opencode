@@ -71,7 +71,8 @@ export default Plugin.define({
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
       'session.inbox.delivered', 'session.execution.interrupted'])
-    const markGap = () => { eventGap = true; gapVersion++ }
+    let notifyEventState = () => {}
+    const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
     const queueEvent = (event: any) => {
       if (!relevantEvents.has(event?.type)) { telemetryHandler?.(event); return }
@@ -95,7 +96,11 @@ export default Plugin.define({
           try { await eventHandler!(event); return }
           catch {
             if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)))
-            else if (research.isAssociated(sessionID)) failedEvents.set(sessionID, [event])
+            else {
+              if (failedEvents.size < 128) failedEvents.set(sessionID, [event])
+              else markGap()
+              notifyEventState()
+            }
           }
         }
       }).finally(() => {
@@ -135,6 +140,20 @@ export default Plugin.define({
         for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
       },
     )
+    const eventHealth = (root?: string) => {
+      if (!root || !research.inScope(root)) return undefined
+      let held = 0, unresolved = 0
+      for (const [sid, events] of failedEvents) {
+        if (research.rootOf(sid) === root) held += events.length
+        else if (!research.isAssociated(sid)) unresolved++
+      }
+      const state = eventGap ? 'gap' : held ? 'held' : unresolved ? 'unresolved' : 'ready'
+      const message = state === 'ready' ? undefined : state === 'unresolved'
+        ? `有 ${unresolved} 个事件会话归属待核对；已知会话继续按原授权控制。用 /research resume 重试核对。`
+        : `研究事件需核对（${eventGap ? '事件流中断或溢出；' : ''}暂存 ${held} 条）；暂停和停止仍可用，用 /research resume 重新订阅并核对。`
+      return { state, held, unresolved, message }
+    }
+    notifyEventState = () => { for (const root of research.roots()) if (research.inScope(root)) emitChanged(root) }
     research.setExecutionResolver(sessionID => lifecycle.state.turns.get(sessionID))
     let ensureController: (root: string, main: string) => Promise<void> = async () => { throw new Error('Controller not initialized') }
     let bootstrap: () => Promise<void> = async () => { throw new Error('Controller not initialized') }
@@ -205,6 +224,12 @@ export default Plugin.define({
           }
           requireCurrent()
           await verifyController(sessionID, !resume)
+        }).catch(async error => {
+          if (resume && outboundID && !wakeIntentID && !launchIntentID && !specialistLaunchID) {
+            Object.assign(error, { unsent_message_id: outboundID })
+            await research.call('runtime_turn_not_sent', sessionID, { message_id: outboundID }).catch(() => {})
+          }
+          throw error
         })
         const sent = await ctx.session.synthetic({ sessionID, text, description: label, resume, ...(outboundID ? { id: outboundID } : {}) })
         if (outboundID && sent.id !== outboundID) throw new Error("Host did not confirm the requested research message ID")
@@ -370,7 +395,19 @@ export default Plugin.define({
           }
         }
         if (eventGap) subscribe()
+        let unknownChecks = 0
         for (const [session, events] of failedEvents) {
+          if (!research.isAssociated(session)) {
+            if (unknownChecks++ >= 8) continue
+            try {
+              const ready = await within(research.confirmMembership(session).then(() => true), 200)
+              if (!ready) throw new Error('Membership is still pending')
+            } catch {
+              failedEvents.delete(session); failedEvents.set(session, events)
+              continue
+            }
+            if (!research.isAssociated(session)) { failedEvents.delete(session); continue }
+          }
           for (const event of events) await eventHandler!(event)
           failedEvents.delete(session)
         }
@@ -380,6 +417,7 @@ export default Plugin.define({
         }
         if (gapVersion !== version) throw new Error('事件流仍不可用；暂停或停止后检查宿主连接。')
         eventGap = false
+        notifyEventState()
       })().finally(() => { repairing = null })
       return repairing
     }
@@ -481,9 +519,25 @@ export default Plugin.define({
     })
 
     const injectContext = async (request: any) => {
+      const protectBlind = () => {
+        const granted = specialists.toolsOf(request.sessionID)
+        if ((research.roleOf(request.sessionID) === 'specialist' || granted.length > 0) && specialists.isBlind(request.sessionID)) {
+          request.system.splice(0, request.system.length, { type: 'text', text: BLIND_SYSTEM })
+          for (const name of Object.keys(request.tools)) if (!granted.includes(name)) delete request.tools[name]
+          return true
+        }
+        return false
+      }
+      const protectUnknown = () => {
+        if (!protectBlind() && !research.roleOf(request.sessionID)) {
+          request.system.splice(0, request.system.length, { type: 'text', text: 'Research identity is unavailable. Read existing information only until membership is verified.' })
+        }
+      }
+      protectBlind()
       if (!lifecycle.current()) {
         if (lifecycle.successorReady()) return lifecycle.forwardContext(request)
         if (findProjectRoot(research.scope) === research.scope) {
+          protectUnknown()
           for (const name of Object.keys(request.tools)) if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
           request.system.push({ type: 'text', text: 'Research controller handoff is not ready; read existing information only.' })
         }
@@ -503,9 +557,7 @@ export default Plugin.define({
           if (!keepsTool(name, associated, role, granted)) delete request.tools[name]
         }
         if (!associated) return
-        if (role === 'specialist' && specialists.isBlind(request.sessionID)) {
-          request.system.splice(0, request.system.length, { type: 'text', text: BLIND_SYSTEM })
-        }
+        protectBlind()
         await within(bootstrap().then(() => true), STARTUP_WAIT_MS).then(ready => {
           if (!ready) throw new Error('Research controller is not ready')
         })
@@ -540,6 +592,7 @@ export default Plugin.define({
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
         if (research.isAssociated(request.sessionID) || findProjectRoot(research.scope) === research.scope) {
+          protectUnknown()
           for (const name of Object.keys(request.tools)) {
             if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
           }
@@ -731,6 +784,11 @@ export default Plugin.define({
           if (sessionID && action !== 'takeover') await research.confirmMembership(sessionID)
           const directory = sessionID ? await sessionDirectory(sessionID) : String(input.directory ?? ctx.location.directory)
           const result = await runCommand(action, sessionID, directory, (input.args ?? {}) as Record<string, any>)
+          if (action === 'status') {
+            const health = eventHealth(sessionID ? research.rootOf(sessionID) : findProjectRoot(directory) ?? undefined)
+            if (health?.message) result.message += '\n' + health.message
+            if (health && result.state && typeof result.state === 'object') result.state = { ...result.state, event_recovery: health }
+          }
           const target = result.sessionID ?? sessionID
           if (result.note && target) {
             // resume:false records the line without starting a model turn.
@@ -743,7 +801,7 @@ export default Plugin.define({
           await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS)
           const state = await research.sessionState(sessionID)
           const root = research.rootOf(sessionID)
-          return { ...state, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
+          return { ...state, eventRecovery: eventHealth(root), observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
         })
     const boardHandler = (input: any) => reported(async () => {
           const directory =

@@ -421,6 +421,161 @@ test('workspace aliases of the same project share a single live controller', asy
   expect((await second.summary()).run.state).toBe('paused')
 })
 
+for (const check of [1, 2]) test(`continuation preflight check ${check} failure preserves the task and refunds only the unsent turn`, async () => {
+  const first = await load()
+  await first.command('auto', 'ses_main', { goal: 'unsent continuation' })
+  await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = first.created[0]!
+  await first.call('research_note', child, { body: 'work started' })
+  const original = StorageClient.prototype.request
+  let checks = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'controller_check' && fields?.session_id === child && ++checks === check) return Promise.reject(new Error('transient preflight storage failure'))
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    first.reply(child, 'current turn ended')
+    first.turn.end(child)
+    await until(async () => (await first.rpc().session({ sessionID: child })).pauseReason === 'fault', 'safe continuation pause')
+    expect((await first.page('tasks')).items[0].state).toBe('running')
+    expect(first.said(child).filter(item => item.resume)).toHaveLength(1)
+    expect((await first.command('budget', child)).message).toContain('"turns": 1')
+  } finally { spy.mockRestore() }
+  cleanups.pop()!()
+  const second = await load()
+  await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm controller ready')
+  expect((await second.page('tasks')).items[0].state).toBe('running')
+  expect((await second.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(second.said(child).filter(item => item.resume)).toHaveLength(1)
+})
+
+test('an accepted continuation with a lost host response remains unverified and charged', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'uncertain continuation' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_note', child, { body: 'work started' })
+  const original = host.ctx.session.synthetic
+  host.ctx.session.synthetic = async (input: any) => {
+    const result = await original(input)
+    if (input.sessionID === child && input.resume) throw new Error('host response lost after acceptance')
+    return result
+  }
+  host.reply(child, 'first turn ended')
+  host.turn.end(child)
+  await until(async () => (await host.page('tasks')).items[0].state === 'unverified', 'uncertain continuation retained')
+  expect((await host.command('budget', child)).message).toContain('"turns": 2')
+})
+
+test('a terminal with unresolved membership is retained and visible until replay', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'retain an unclassified terminal' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_finish', child, { state: 'finished', summary: 'saved result' })
+  const associated = Research.prototype.isAssociated
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const membership = spyOn(Research.prototype, 'isAssociated').mockImplementation(function(sid) { return sid === child ? false : associated.call(this, sid) })
+  const storage = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === child) { failures++; return Promise.reject(new Error('membership unavailable')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.reply(child, 'finished')
+    host.turn.end(child)
+    await until(() => failures >= 3, 'membership retries exhausted')
+    await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.held === 1, 'held event visible in sidebar state')
+    expect((await host.command('status', 'ses_main')).message).toContain('/research resume')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  } finally { storage.mockRestore(); membership.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'retained terminal settled')
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.state).toBe('ready')
+})
+
+test('unresolved ordinary membership is bounded and cannot freeze known research continuation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'unknown ordinary event' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === 'ordinary') { failures++; return Promise.reject(new Error('unresolved membership')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ordinary')
+    await until(() => failures === 3, 'unknown event held')
+    await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.unresolved === 1, 'unknown classification visible')
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'known research not blocked')
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.state).toBe('ready')
+})
+
+test('three consecutive unsent launches pause scheduling instead of creating an endless retry stream', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'bounded preflight failure' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const original = StorageClient.prototype.request
+  let attempts = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'task_context') { attempts++; return Promise.reject(new Error('persistent invalid context')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.command('resume', 'ses_main')
+    await host.command('resume', 'ses_main')
+    expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('fault')
+    expect((await host.page('tasks')).items[0].state).toBe('queued')
+    host.turn.end('ses_main')
+    await host.call('research_query', 'ses_main', { collection: 'nodes' })
+    expect(attempts).toBe(3)
+    expect(host.created).toHaveLength(0)
+    await expect(host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })).rejects.toMatchObject({ code: 'research_control_paused', details: { allow_fallback: false } })
+  } finally { spy.mockRestore() }
+})
+
+test('finish mismatch selects the active task when session history contains an older finished task', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'active finish mismatch' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await host.call('research_finish', child, { state: 'finished', summary: 'saved' })
+  const original = StorageClient.prototype.request
+  const mutations: any[] = []
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    if (method === 'workflow' && fields?.action === 'task_state') mutations.push(fields.fields)
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'node_finish_pending' && result) return { ...result, turn_token: 'mismatched-token' }
+    if (method === 'status' && result.workflow?.tasks?.length) return { ...result, workflow: { ...result.workflow,
+      tasks: [{ ...result.workflow.tasks[0], task_id: 'T_history', session_id: child, state: 'finished' }, ...result.workflow.tasks] } }
+    return result
+  })
+  try {
+    host.turn.end(child)
+    await until(() => mutations.length > 0, 'finish mismatch recorded')
+    expect(mutations[0]).toMatchObject({ task_id: task.task_id, state: 'unverified', error: 'finish execution mismatch: reconciliation required' })
+    expect(mutations.some(item => item.task_id === 'T_history')).toBe(false)
+  } finally { spy.mockRestore() }
+})
+
+test('wait while paused returns the structured control error with no fallback permission', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'structured wait refusal' })
+  await host.command('pause', 'ses_main')
+  await expect(host.call('research_wait', 'ses_main', { task_ids: ['T_unknown'] })).rejects.toMatchObject({
+    code: 'research_control_paused', details: { run_state: 'paused', retryable: false, recovery: 'explicit_resume', allow_fallback: false },
+  })
+})
+
 test("R2 dispatch observes local and backend rejection without recording input text", async () => {
   const host = await load()
   await host.command("auto", "ses_main", { goal: "fixture" })
@@ -1439,6 +1594,38 @@ describe("node specialists", () => {
     await until(() => host.created.length > index && host.said(host.created[index]!).length > 0, `specialist ${index}`)
     return host.created[index]!
   }
+
+  for (const mode of ['membership-error', 'membership-timeout', 'handoff']) test(`blind system stays private during ${mode}`, async () => {
+    const first = await load()
+    const workspace = await nodeAtWork(first)
+    mkdirSync(join(workspace, 'output'), { recursive: true })
+    writeFileSync(join(workspace, 'output', 'blind.md'), 'assigned evidence')
+    const publication = await first.call('research_publish', first.created[0]!, { status: 'complete', summary: 'report',
+      items: [{ item_id: 'report', kind: 'report', source_path: 'output/blind.md' }] })
+    const pending = first.call('research_delegate', first.created[0]!, { ...TASK, context_mode: 'blind', inputs: [`pub/${publication.publication_id}#report`] })
+    const child = await specialist(first, 1)
+    const original = StorageClient.prototype.request
+    let release: (() => void) | undefined
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (mode === 'handoff' && method === 'controller_attach' || mode !== 'handoff' && method === 'session_membership' && fields?.session_id === child) {
+        if (mode === 'membership-error') return Promise.reject(new Error('membership unavailable'))
+        return new Promise((_resolve, reject) => { release = () => reject(new Error('injected unavailable control')) })
+      }
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      if (mode === 'handoff') await load()
+      const request = modelRequest(child)
+      request.system.push({ type: 'text', text: 'PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS' })
+      await first.hooks.get('context')!(request)
+      expect(JSON.stringify(request.system)).not.toContain('PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS')
+      expect(Object.keys(request.tools)).not.toContain('shell')
+    } finally {
+      release?.(); spy.mockRestore()
+      first.reply(child, 'partial report')
+      await pending
+    }
+  })
 
   test("a node delegates a read-only specialist and gets its report back", async () => {
     const host = await load()
