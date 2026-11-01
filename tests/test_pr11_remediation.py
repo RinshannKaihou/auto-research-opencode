@@ -371,3 +371,38 @@ def test_new_main_cannot_inherit_previous_main_material_snapshot(tmp_path):
     fresh = host.call('query', session='ses_new', collection='evidence', refs=[claim])
     assert 'Core evidence' in host.error('conclusion_prepare', session='ses_new', model_call=True,
         fields={**declaration, 'snapshot_id':fresh['snapshot_id']})
+
+
+def test_decision_package_keeps_full_basis_in_draft_without_replaying_every_record(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus', node_id=None, role='planner', mode='manual')
+    source = host.call('publish', status='complete', summary='data', gaps=[], knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','content':{'text':'measured value'}}])
+    ref = f"pub/{source['publication_id']}#data"
+    dependencies = [host.call('memory_write',action='record',fields={'kind':'hypothesis',
+        'statement':f'Background {index}: ' + 'context ' * 150,'visibility':'project'})['ref']
+        for index in range(22)]
+    claim = host.call('memory_write',action='record',fields={'kind':'claim','statement':'Measured result',
+        'visibility':'project','evidence_refs':[ref],'dependencies':dependencies})['ref']
+    host.call('conclusion_contract',contract='evidence-v1')
+    view = host.call('query',collection='evidence',refs=[claim],limit=16384)
+    assert view['total_chars'] > 32000
+    draft = host.call('conclusion_prepare',model_call=True,
+        fields={**fields([claim]),'snapshot_id':view['snapshot_id']})
+    page = host.call('query',collection='evidence',draft_id=draft['draft_id'],limit=16384)
+    assert page['total_bytes'] < 32000
+    package = json.loads(page['chunk'])
+    assert [record['ref'] for record in package['records']] == [claim]
+    assert len(package['edges']) == len(dependencies) + 1
+    assert package['materials'][0]['inline_content'] == {'text':'measured value'}
+    with sqlite3.connect(host.root/'.research/state.sqlite3') as db:
+        saved = json.loads(db.execute('SELECT data FROM conclusion_drafts WHERE draft_id=?',(draft['draft_id'],)).fetchone()[0])
+    assert len(saved['view']['records']) == len(dependencies) + 1
+    final = host.call('publish',status='complete',summary='final',gaps=[],knowledge_refs=[claim],
+        items=[{'item_id':'report','kind':'text','content':{'text':'Independent summary'}}],
+        draft_id=draft['draft_id'],report_item_id='report')
+    conclusion = host.call('conclude',fields={'draft_id':draft['draft_id'],
+        'final_ref':f"pub/{final['publication_id']}#report",'summary':'Measured result'},
+        delivery_receipts=deliver_draft(host,draft['draft_id']),plugin_instance_id='plugin-1')
+    assert conclusion['outcome'] == 'answered'

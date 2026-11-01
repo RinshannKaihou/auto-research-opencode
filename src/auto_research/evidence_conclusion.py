@@ -17,6 +17,45 @@ REVIEW_TYPES = {'citation_scope', 'semantic_inference', 'recompute', 'reimplemen
 STOP_REASONS = {'goal_met', 'sufficient_for_current_choice', 'low_expected_value', 'resource_limited', 'user_requested'}
 
 
+def decision_package(view, result):
+    """Select the facts needed for the current decision; retain the full view separately."""
+    core = set(result['core_claim_refs'])
+    reachable = set(core)
+    while True:
+        following = reachable | {edge['used_ref'] for edge in view['edges'] if edge['user_ref'] in reachable}
+        if following == reachable:
+            break
+        reachable = following
+    records = []
+    for record in view['records']:
+        if record['ref'] not in core:
+            continue
+        pinned, current = record['pinned'], record['current']
+        records.append({'ref':record['ref'], 'statement':pinned['statement'], 'status':pinned['status'],
+                        'scope':pinned['scope'], 'conditions':pinned['conditions'],
+                        'evidence_refs':pinned['evidence_refs'], 'dependencies':pinned['dependencies'],
+                        'current_ref':current['ref']})
+    materials = []
+    for item in view['materials']:
+        selected = {key:item[key] for key in ('ref','outcome','reason','object','subpath','inline_digest',
+                    'material_identity','material_read','read_error') if key in item}
+        content = (item.get('item') or {}).get('content')
+        if content and not item.get('object'):
+            selected['inline_content'] = content
+        materials.append(selected)
+    routes = [{key:route.get(key) for key in ('ref','title','disposition','disposition_reason',
+               'reactivation_condition','evidence_refs')} for route in view['routes']]
+    pending = [{key:item.get(key) for key in ('result_id','kind','source_ref','handled_by_decision')}
+               for item in view['pending_results']]
+    return {'roots':view['roots'], 'scope':view['scope'], 'conclusion_scope':view['conclusion_scope'],
+            'records':records, 'edges':[edge for edge in view['edges'] if edge['user_ref'] in reachable],
+            'materials':materials, 'risks':view['risks'], 'limitations':view['limitations'],
+            'reviews':result['review_coverage']['coverage'], 'routes':routes, 'pending_results':pending,
+            'graph_complete':view['graph_complete'], 'raw_material_read':view['raw_material_read'],
+            'conclusion_decision':result,
+            'history':{'collection':'review_history', 'note':'Full structural view and historical review events remain in the draft.'}}
+
+
 def render_appendix(draft_id, basis_digest, data):
     """Human-readable appendix from the same immutable draft as the report."""
     view, result = data['view'], data['evaluation']
@@ -390,13 +429,14 @@ class EvidenceConclusionStore:
                 snapshot = {**snapshot, 'view': view, 'basis_digest': refreshed['basis_digest'],
                             'source_sequence': refreshed['source_sequence']}
                 result = evaluate(self, db, view, fields)
-            snapshot['view']['conclusion_decision'] = result
-            body = json.dumps(snapshot['view'], ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+            package = decision_package(snapshot['view'], result)
+            body = json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
             if len(body) > 32000:
                 raise ValidationError(f'decision_package_too_large: {len(body)} bytes; narrow the declared scope explicitly')
             snapshot['manifest_digest'] = hashlib.sha256(body).hexdigest()
             draft_id = self._next(db, 'conclusion_draft', 'CD')
-            data = {'format_version': 2, 'view': snapshot['view'], 'evaluation': result, 'fields': fields, 'snapshot_id': snapshot['snapshot_id'],
+            data = {'format_version': 2, 'view': snapshot['view'], 'decision_package':package,
+                    'evaluation': result, 'fields': fields, 'snapshot_id': snapshot['snapshot_id'],
                     'versions': contract_versions(self, db, host, session),
                     'material_content_in_snapshot': snapshot['view'].get('material_content_in_snapshot', [])}
             db.execute('INSERT INTO conclusion_drafts VALUES(?,?,?,?,?,?,?,?,?)',
@@ -417,7 +457,7 @@ class EvidenceConclusionStore:
         if not draft:
             raise ValidationError('A conclusion draft for the current generation is required')
         data = json.loads(draft['data'])
-        if data.get('format_version') != 2:
+        if data.get('format_version') != 2 or 'decision_package' not in data:
             raise ConflictError('conclusion_draft_format_changed: prepare the conclusion again')
         current = build_evidence_view(self, db, data['view']['roots'])
         if current['basis_digest'] != draft['basis_digest']:
@@ -447,7 +487,7 @@ class EvidenceConclusionStore:
                                  (receipt_id, draft_id, run['generation'], host, session, instance_id, draft['manifest_digest'])).fetchone()
             if receipt:
                 ranges.append((receipt['start_offset'], receipt['end_offset']))
-        body = json.dumps(data['view'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        body = json.dumps(data['decision_package'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         end = 0
         for start, stop in sorted(ranges):
             if start > end:

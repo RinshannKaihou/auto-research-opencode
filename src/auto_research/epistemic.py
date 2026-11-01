@@ -424,7 +424,7 @@ def needs_action(db: sqlite3.Connection, version: str, bound: int | None = None)
     return False
 
 
-def residual_use_risk(db: sqlite3.Connection, version: str, bound: int | None = None) -> list[dict]:
+def residual_use_risk(db: sqlite3.Connection, version: str, bound: int | None = None, *, support=None) -> list[dict]:
     """R20. Every reason that holds, listed rather than collapsed.
 
     ``RR2`` is evaluated per ``(change_id, affected_version)`` key. That is what
@@ -433,7 +433,8 @@ def residual_use_risk(db: sqlite3.Connection, version: str, bound: int | None = 
     different cause (R23).
     """
     reasons: list[dict] = []
-    for used_ref, _dependencies, _evidence in _support_used(db, version):
+    used = _support_used(db, version) if support is None else support
+    for used_ref, _dependencies, _evidence in used:
         row = _revision_row(db, used_ref)
         if row is not None and row["status"] == "retracted":
             reasons.append({"reason": "retracted_ref", "source": used_ref})
@@ -441,7 +442,7 @@ def residual_use_risk(db: sqlite3.Connection, version: str, bound: int | None = 
         disposition = current_disposition(db, impact["change_id"], version, bound)
         if (disposition["kind"] if disposition else None) in OPEN_DISPOSITIONS:
             reasons.append({"reason": "in_change_scope", "change_id": impact["change_id"]})
-    for used_ref, _dependencies, _evidence in _support_used(db, version):
+    for used_ref, _dependencies, _evidence in used:
         for impact in valid_impacts(db, bound, version=used_ref):
             disposition = current_disposition(db, impact["change_id"], used_ref, bound)
             if disposition is not None and disposition["kind"] in ("revised", "retracted"):
@@ -457,7 +458,7 @@ def residual_use_risk(db: sqlite3.Connection, version: str, bound: int | None = 
 
 
 def version_notices(
-    db: sqlite3.Connection, version: str, bound: int | None = None
+    db: sqlite3.Connection, version: str, bound: int | None = None, *, support=None
 ) -> list[dict]:
     """R19. Shown beside the risks and never counted as one.
 
@@ -467,7 +468,7 @@ def version_notices(
     """
     limit = read_bound(db) if bound is None else bound
     notices: list[dict] = []
-    for used_ref, _dependencies, _evidence in _support_used(db, version):
+    for used_ref, _dependencies, _evidence in (_support_used(db, version) if support is None else support):
         row = _revision_row(db, used_ref)
         if row is None:
             continue
@@ -845,7 +846,7 @@ def impact_query(
 
 
 def publication_reference_risk(
-    db: sqlite3.Connection, version: str, bound: int | None = None
+    db: sqlite3.Connection, version: str, bound: int | None = None, *, support=None
 ) -> list[dict]:
     """R20 as corrected on 2026-09-21: a publication is a *referring* party.
 
@@ -870,7 +871,7 @@ def publication_reference_risk(
                     "disposition": disposition["kind"],
                 }
             )
-    for item in residual_use_risk(db, version, bound):
+    for item in residual_use_risk(db, version, bound, support=support):
         # The pinned version's own reasons carry over, retagged so the report
         # says which declared reference produced them.
         reasons.append({**item, "source": version, "origin": item.get("source")})

@@ -76,6 +76,7 @@ def build_evidence_view(store, db, refs):
             "SELECT * FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL ORDER BY result_id", (scope["scope_id"],))]
 
     records, edges, materials, limitations, publication_checks = {}, [], {}, [], {}
+    pending_publication_checks = []
     queue, visited, queued = [], set(), set()
     limited = set()
 
@@ -174,6 +175,8 @@ def build_evidence_view(store, db, refs):
                                            "knowledge_refs": json.loads(item["knowledge_refs"])}
                 for used in json.loads(item['knowledge_refs']):
                     enqueue(used)
+                    if 'references' in limited:
+                        break
             elif pid:
                 from .publication_display import DISPLAY_KIND
                 remaining = MAX_EVIDENCE_EDGES - len(edges)
@@ -186,27 +189,40 @@ def build_evidence_view(store, db, refs):
                     enqueue(f"knowledge/{row[0]}@{row[1]}")
             if pid:
                 declared = json.loads(item['knowledge_refs']) if parsed.get('item_id') else None
-                check = epistemic.publication_check(db, pid, bound, declared_refs=declared)
-                publication_checks[ref] = {key: value for key, value in check.items() if key != 'sequence_bound'}
-                # Raw source material may legitimately have no knowledge claims.
-                # A selected report, however, cannot have unknown declared
-                # coverage silently presented as a complete check.
                 is_report = not parsed.get('item_id') or item['kind'] == 'report'
-                if ref in refs and is_report and not check['targets_complete']:
-                    limitations.append({'ref': ref, 'reason': 'publication_coverage_incomplete',
-                                        'status': check['result']['status']})
+                pending_publication_checks.append((ref, pid, declared, is_report))
         else:
             limitations.append({"ref": ref, "reason": "unsupported_reference"})
 
+    # An R2 publication check expands its own impact graph. Do not bypass the
+    # evidence budget by invoking that expansion after this closure truncated.
+    for ref, pid, declared, is_report in pending_publication_checks:
+        if 'references' in limited or 'edges' in limited:
+            check = {'publication_id':pid, 'check_scope':{'declared_refs':declared, 'coverage':'unknown'},
+                     'result':{'status':'coverage unknown', 'versions':{}}, 'targets_complete':False,
+                     'targets_truncated':True, 'paths_truncated':True}
+        else:
+            check = epistemic.publication_check(db, pid, bound, declared_refs=declared)
+        publication_checks[ref] = {key: value for key, value in check.items() if key != 'sequence_bound'}
+        if ref in refs and is_report and not check['targets_complete']:
+            limitations.append({'ref': ref, 'reason': 'publication_coverage_incomplete',
+                                'status': check['result']['status']})
+
+    support_by_user = {}
+    for edge in edges:
+        if is_knowledge_ref(edge['used_ref']):
+            support_by_user.setdefault(edge['user_ref'], []).append(
+                (edge['used_ref'], edge['from_dependencies'], edge['from_evidence']))
     risks = []
     for ref, entry in sorted(records.items()):
-        for reason in epistemic.publication_reference_risk(db, ref, bound):
+        support = support_by_user.get(ref, [])
+        for reason in epistemic.publication_reference_risk(db, ref, bound, support=support):
             risks.append({"kind": "reference", "target": ref, "detail": reason, "relevance": "related"})
         for impact in epistemic.valid_impacts(db, bound, version=ref):
             disposition = epistemic.current_disposition(db, impact["change_id"], ref, bound)
             risks.append({"kind": "impact", "target": ref, "change_id": impact["change_id"],
                           "disposition": dict(disposition) if disposition else None, "relevance": "related"})
-        for notice in epistemic.version_notices(db, ref, bound):
+        for notice in epistemic.version_notices(db, ref, bound, support=support):
             risks.append({"kind": "version_notice", "target": ref, "detail": notice, "relevance": "related"})
         for check in entry["pinned"].get("field_checks", []):
             if check["result"] != "consistent":
@@ -345,7 +361,7 @@ class EvidenceCache:
             if not row:
                 raise ValidationError('Unknown conclusion draft')
             data = json.loads(row['data'])
-            view = data['view']
+            view = data.get('decision_package', data['view'])
             snapshot = {'project_id': store._project(db)['project_id'], 'generation': row['generation'],
                         'source_sequence': row['source_sequence'], 'basis_digest': row['basis_digest'],
                         'host_id': row['host_id'], 'session_id': row['session_id'],
