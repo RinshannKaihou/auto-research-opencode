@@ -236,13 +236,17 @@ export class Engine {
     this.pendingInbox.delete(sessionID)
   }
 
+  executionToken(sessionID: string): string | undefined { return this.turns.get(sessionID) }
+
   async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number): Promise<void> {
     if (!this.current() || !this.drives(sessionID) || !messageID) return
     const shell = this.shellInboxes.get(messageID)
     if (shell?.sessionID === sessionID) {
       this.shellInboxes.delete(messageID)
-      this.shellWake.set(sessionID, { matched: shell.matched })
-      if (shell.inline) return
+      // The active execution, rather than enqueue-time busy state, defines inline delivery.
+      if (shell.execution && this.busy.has(sessionID) && shell.execution === this.turns.get(sessionID)) return
+      if (shell.matched && !shell.authorized) shell.authorized = await this.reserveShellWake(sessionID, messageID)
+      this.shellWake.set(sessionID, { matched: !!shell.authorized })
     }
     const pending = this.pendingStarts.get(sessionID)
     if (pending) await this.started(sessionID, pending.eventID, pending.eventSeq)
@@ -258,37 +262,86 @@ export class Engine {
     catch { return false }
   }
 
-  isShellWake(sessionID: string): boolean {
-    return this.shellWake.has(sessionID)
-  }
+  isShellWake(sessionID: string): boolean { return this.shellWake.has(sessionID) }
 
-  /** A host-generated shell completion wakes the model itself; never send a second wake. */
-  async shellNotice(sessionID: string, messageID: string, metadata: any): Promise<void> {
-    if (!this.current() || !this.drives(sessionID) || this.research.roleOf(sessionID) !== 'node_core') return
-    if (typeof metadata?.shellID !== 'string' || typeof messageID !== 'string') return
-    const inline = this.busy.has(sessionID)
-    const result = await this.call('runtime_shell_notice', sessionID, {
-      shell_id: metadata.shellID, message_id: messageID, outcome: metadata.state,
-      exit_code: metadata.exit ?? null,
-    }, `shell-notice:${sessionID}:${messageID}`)
-    this.shellInboxes.set(messageID, { sessionID, inline, matched: !!result.matched })
-    if (!result.matched || inline) return
-    let authorized = false
+  private async reserveShellWake(sessionID: string, messageID: string): Promise<boolean> {
     try {
       const source_snapshot = await this.host.source?.(sessionID)
       const reservation = await this.call('runtime_reserve', sessionID, { message_id: messageID, source_snapshot },
         `shell-wake:${sessionID}:${messageID}`)
-      if (reservation.allowed) {
-        await this.call('runtime_submitted', sessionID,
-          { reservation_id: reservation.reservation_id }, `shell-wake-submitted:${sessionID}:${messageID}`)
-        authorized = true
+      if (!reservation.allowed) {
+        await this.pauseSession(sessionID, 'budget', '后台完成通知已记录，但续轮预算已到限。')
+        return false
       }
-    } catch {
-      // A pause, changed controller or missing budget must never authorize a wake.
+      await this.call('runtime_submitted', sessionID, { reservation_id: reservation.reservation_id },
+        `shell-wake-submitted:${sessionID}:${messageID}`)
+      return true
+    } catch (error) {
+      const state = await this.state(sessionID)
+      if (state.workflow?.run?.state === 'running' && !state.workflow?.session?.pause_reason)
+        await this.pauseSession(sessionID, 'fault', '完成通知已记录，续轮授权失败；请检查后恢复。')
+      process.stderr.write(`Research shell wake withheld: ${String(error)}\n`)
+      return false
     }
-    this.shellInboxes.set(messageID, { sessionID, inline, matched: authorized })
+  }
+
+  /** A host-generated completion wakes the model itself; never send a second wake. */
+  async shellNotice(sessionID: string, messageID: string, metadata: any): Promise<void> {
+    if (!this.current() || !this.drives(sessionID) || this.research.roleOf(sessionID) !== 'node_core') return
+    if (metadata?.source !== 'shell' || typeof metadata?.shellID !== 'string' || !metadata.shellID.startsWith('sh_') ||
+        !messageID.startsWith('msg_') || messageID.length > 256 || metadata.shellID.length > 256) return
+    const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
+    const result = await this.call('runtime_shell_notice', sessionID, {
+      shell_id: metadata.shellID, message_id: messageID,
+      outcome: typeof metadata.state === 'string' ? metadata.state.slice(0,80) : 'unknown',
+      exit_code: Number.isSafeInteger(metadata.exit) ? metadata.exit : null,
+    }, `shell-notice:${sessionID}:${messageID}`)
+    const authorized = result.matched && !execution ? await this.reserveShellWake(sessionID, messageID) : false
+    this.shellInboxes.set(messageID, { sessionID, execution, matched: !!result.matched, authorized })
+    if (result.first && result.call_id && this.research.conclusionContractOf(sessionID) === 'evidence-v1')
+      await this.call('runtime_tool_observed', sessionID, {tool:'shell',call_id:result.call_id},
+        `tool-observed:${sessionID}:${result.call_id}`).catch(error => {
+        process.stderr.write(`Research terminal execution observation deferred: ${String(error)}\n`)
+      })
     const root = this.research.rootOf(sessionID)
     if (root) this.research.notifyChanged(root)
+  }
+
+  /** Reconcile lost terminal notifications without inventing authorization for their native wake. */
+  async pollShells(): Promise<void> {
+    for (const root of this.research.roots().filter(item => this.research.inScope(item))) {
+      await this.serial(root, async () => {
+        for (const sid of this.research.sessionsIn(root).filter(sid => this.drives(sid) &&
+          this.research.roleOf(sid) === 'node_core' && !this.busy.has(sid))) {
+          try {
+            const shells = await this.call('runtime_shell_status', sid)
+            if (!shells.running) continue
+            const messages = await this.host.recoveryMessages?.(sid) ?? []
+            for (const job of shells.jobs.filter((job:any) => job.state === 'running')) {
+              const notice = messages.find((item:any) => item?.type === 'synthetic' &&
+                item.metadata?.source === 'shell' && item.metadata?.shellID === job.shell_id && item.id?.startsWith('msg_'))
+              if (!notice) continue
+              await this.call('runtime_shell_unverified', sid, {call_id:job.call_id})
+              await this.call('runtime_shell_notice', sid, {shell_id:job.shell_id,message_id:notice.id,
+                outcome:typeof notice.metadata.state === 'string' ? notice.metadata.state.slice(0,80) : 'unknown',
+                exit_code:Number.isSafeInteger(notice.metadata.exit) ? notice.metadata.exit : null})
+              await this.pauseSession(sid, 'fault', '已补登遗漏的后台完成通知；原生唤醒轮无法核对，请使用 /research recover task。')
+            }
+          } catch (error) { process.stderr.write(`Research shell scan deferred: ${String(error)}\n`) }
+        }
+      })
+    }
+  }
+
+  private async reconcileShells(sessionID: string): Promise<boolean> {
+    const shells = await this.call('runtime_shell_status', sessionID)
+    for (const job of shells.jobs.filter((item: any) => item.state !== 'running')) {
+      await this.call('runtime_shell_unverified', sessionID, {call_id:job.call_id})
+      const key = `${sessionID}:${job.call_id}`
+      this.runtime.shellCalls?.get(key)?.resolve()
+      this.runtime.shellCalls?.delete(key)
+    }
+    return !!(shells.starting || shells.unverified)
   }
 
   wroteLedger(sessionID: string): void {
@@ -354,6 +407,10 @@ export class Engine {
   }
 
   private async afterTurn(sessionID: string, root: string, outcome: Outcome, turn:string, execution?:string): Promise<void> {
+    if (this.research.roleOf(sessionID) === 'node_core' && await this.reconcileShells(sessionID)) {
+      await this.pauseSession(sessionID, 'fault', '执行退出待核实；请检查外部进程并使用 /research recover task。')
+      return
+    }
     if (outcome === "interrupted") {
       if (this.ours.delete(sessionID)) return
       await this.pauseSession(sessionID, "native_stop", "你中断了这一轮，本会话的自动推进已暂停；用 /research resume 继续。")
@@ -361,16 +418,7 @@ export class Engine {
     }
     const state = await this.state(sessionID)
     const row = state.workflow?.session
-    if (row?.role === 'node_core' && this.shellWake.get(sessionID)?.matched === false) {
-      if (state.workflow?.run?.state === 'running' && !row.pause_reason) {
-        const task = (await this.allTasks(sessionID, state.workflow)).find((item: any) => item.session_id === sessionID && ACTIVE_TASK.has(item.state))
-        const main = this.mainIn(root)
-        if (task && main) await this.call('workflow', main, { action: 'task_state', fields: {
-          task_id: task.task_id, state: 'unverified', error: 'background wake could not be authorized' } })
-        await this.pauseSession(sessionID, 'fault', '后台任务完成通知无法与当前执行核对；请检查任务状态后恢复。')
-      }
-      return
-    }
+    if (row?.role === 'node_core' && this.shellWake.get(sessionID)?.matched === false) return
     if (row?.role === 'node_core' && (await this.allTasks(sessionID, state.workflow))
       .some((task: any) => task.session_id === sessionID && task.state === 'unverified')) return
     if (outcome === "succeeded" && row?.role === "node_core") {
@@ -416,10 +464,6 @@ export class Engine {
       await this.pauseSession(sessionID, 'fault', '后台执行状态未核实；请先核对任务及外部进程。')
       return
     }
-    if (progress.waiting_external) {
-      this.research.notifyChanged(root)
-      return
-    }
     // A coordinator with nothing to do while its nodes run waits for them rather
     // than being nudged, or paused as idle, turn after turn.
     const running = row.role === "main" ? this.runningTasks({ workflow: { tasks: await this.allTasks(sessionID, state.workflow) } }, sessionID) : []
@@ -436,6 +480,10 @@ export class Engine {
         "no_progress",
         `连续 ${IDLE_LIMIT} 轮没有研究推进，本会话的自动推进已暂停；用 /research resume 继续。`,
       )
+      return
+    }
+    if (progress.waiting_external || [...this.shellInboxes.values()].some(item => item.sessionID === sessionID && item.matched)) {
+      this.research.notifyChanged(root)
       return
     }
     await this.continueSession(sessionID, state)
@@ -464,14 +512,14 @@ export class Engine {
 
   private async pauseSession(sessionID: string, reason: string, note: string): Promise<void> {
     await this.call("workflow", sessionID, { action: "session", fields: { pause_reason: reason } })
-    await this.say(sessionID, note)
+    await this.say(sessionID, note).catch(() => {})
     const root = this.research.rootOf(sessionID)
     if (root) {
       if (this.research.roleOf(sessionID) === 'node_core') {
         await this.call('workflow', sessionID, { action: 'notify', fields: {
-          kind: 'paused', key: `paused:${reason}:${this.turns.get(sessionID) ?? 'unknown'}`, summary: note,
-        } })
-        await this.deliver(root)
+          kind: 'paused', key: `paused:${reason}:${this.turns.get(sessionID) ?? randomUUID()}`, summary: note,
+        } }).catch(() => {})
+        await this.deliver(root).catch(() => {})
       }
       this.research.notifyChanged(root)
     }
@@ -928,6 +976,7 @@ export class Engine {
           const messages = await (this.host.recoveryMessages?.(task.session_id) ?? Promise.resolve([])).catch(() => [])
           let uncertain = false
           for (const job of shells.jobs) {
+            try {
             const notice = messages.find((item: any) => item?.type === 'synthetic' &&
               item.metadata?.source === 'shell' && item.metadata?.shellID === job.shell_id)
             if (notice?.id) {
@@ -940,16 +989,19 @@ export class Engine {
                   `shell-unknown:${task.session_id}:${job.call_id}`)
                 uncertain = true
               }
-              await this.call('runtime_shell_notice', task.session_id, { shell_id: job.shell_id,
-                message_id: notice.id, outcome: notice.metadata.state, exit_code: notice.metadata.exit ?? null },
-                `shell-notice:${task.session_id}:${notice.id}`)
+              await this.shellNotice(task.session_id, notice.id, notice.metadata)
             } else {
-              await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id },
-                `shell-unknown:${task.session_id}:${job.call_id}`)
+              if (job.state !== 'running' && !(job.state === 'starting' && this.runtime.shellCalls?.has(`${task.session_id}:${job.call_id}`))) {
+                await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id })
+                uncertain = true
+              }
+            }
+            } catch (error) {
+              process.stderr.write(`Research shell recovery deferred: ${String(error)}\n`)
               uncertain = true
             }
           }
-          if (uncertain) continue
+          if (uncertain || shells.running && current?.state === 'ended') continue
         }
         const execution = current?.execution_token
         // A disallowed wake can still reach a native terminal while the
@@ -1166,6 +1218,7 @@ export class Engine {
       if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
       const tasks = await this.allTasks(main, state.workflow)
       const resumed: string[] = []
+      const skipped: string[] = []
       for (const member of this.research.sessionsIn(root).filter((sessionID) => this.drives(sessionID))) {
         const current = await this.state(member)
         const row = current.workflow?.session
@@ -1174,21 +1227,24 @@ export class Engine {
         const task = tasks.find((item: any) => item.session_id === member && (
           ACTIVE_TASK.has(item.state) || item.state==='waiting' && item.error?.startsWith('wall_clock_budget:')))
         if (row.role === "node_core" && !task) continue
-        if (task?.state==='unverified') continue
         if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
-        let waitingExternal = false
-        if (row.pause_reason) {
+        let result: any
+        for (let attempt=0; attempt<2; attempt++) {
           const fresh = await this.state(member)
-          const result = await this.call('runtime_resume_session', main, {
-            target_session: member, expected_revision: fresh.workflow.run.control_revision,
-          })
-          if (!result.resumed) continue
-          waitingExternal = !!result.waiting_external
-        } else if (row.role === 'node_core') {
-          const shells = await this.call('runtime_shell_status', member)
-          if (shells.unverified) continue
-          waitingExternal = !!shells.running
+          try {
+            result = await this.call('runtime_resume_session', main, {
+              target_session: member, expected_revision: fresh.workflow.run.control_revision,
+            })
+            break
+          } catch (error) {
+            if (attempt === 1 || !(error instanceof Error) || !error.message.includes('revision')) throw error
+          }
         }
+        if (!result?.resumed) {
+          skipped.push(`${row.node_id ?? member}：${result?.reason ?? '状态已变化'}${result?.task_id ? `；/research recover task ${result.task_id} <核实说明>` : ''}`)
+          continue
+        }
+        const waitingExternal = !!result.waiting_external
         await this.useModel(root, member)
         this.retried.delete(member)
         this.idle.delete(member)
@@ -1198,7 +1254,7 @@ export class Engine {
       await this.deliver(root)
       await this.schedule(root)
       this.research.notifyChanged(root)
-      return { message: `已恢复自主研究（${resumed.length} 个会话继续）。` }
+      return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}` }
     })
   }
 

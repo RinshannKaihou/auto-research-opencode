@@ -264,7 +264,11 @@ export function sessionActivity(session: any): string {
   if (session.task_id) return `${session.label} · ${SPECIALIST_STATES[session.specialist_state] ?? session.specialist_state}`
   if (session.pause_reason && session.pause_reason !== 'wait') return pauseReason(session.pause_reason)
   if (session.external_unverified) return '后台执行待核实'
-  if (session.external_running) return `等待后台执行（${session.external_running}）`
+  if (session.external_running) {
+    const since = Date.parse(session.external_started_at ?? '')
+    return `等待后台执行（${session.external_running}）${Number.isFinite(since) ? `，已等待 ${Math.max(0, Math.floor((Date.now()-since)/1000))} 秒` : ''}`
+  }
+  if (session.external_starting) return `工具执行中（${session.external_starting}）`
   return pauseReason(session.pause_reason) || "活动"
 }
 

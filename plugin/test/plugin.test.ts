@@ -1243,7 +1243,7 @@ describe("autonomous research", () => {
     await host.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_inline', input:{background:true}})
     await host.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_inline', status:'completed',
       result:{metadata:{status:'running',shellID:'sh_inline'}}})
-    const before = (await host.command('status', child)).state.runtime_budget.turns
+    const before = shellTurns(child)
     host.events.push({id:'inline-job',type:'session.inbox.enqueued',durable:{seq:30},data:{sessionID:child,
       inboxID:'msg_inline_done',item:{payload:{metadata:{source:'shell',shellID:'sh_inline',state:'completed',exit:0}}}}})
     host.events.push({id:'inline-delivery',type:'session.inbox.delivered',durable:{seq:31},data:{sessionID:child,inboxID:'msg_inline_done'}})
@@ -1251,7 +1251,7 @@ describe("autonomous research", () => {
     const request = modelRequest(child)
     await host.hooks.get('context')!(request)
     expect(Object.keys(request.tools)).toContain('shell')
-    expect((await host.command('status', child)).state.runtime_budget.turns).toBe(before)
+    expect(shellTurns(child)).toBe(before)
   })
 
   test('a fast shell completion waits for its shell ID to be persisted', async () => {
@@ -1289,7 +1289,7 @@ describe("autonomous research", () => {
     } finally { release?.(); spy.mockRestore() }
   })
 
-  test('warm reload keeps a background shell without a terminal witness unverified', async () => {
+  test('same-process warm reload preserves a running background shell', async () => {
     const first = await load()
     await first.command('auto', 'ses_main', { goal:'background recovery' })
     await first.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
@@ -1308,11 +1308,146 @@ describe("autonomous research", () => {
     cleanups.pop()!()
     const second = await load()
     await until(async () => (await second.command('status','ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm controller ready')
-    await until(async () => (await second.page('tasks')).items[0].state === 'unverified', 'shell exit requires verification')
-    expect((await second.rpc().session({sessionID:child})).externalUnverified).toBe(1)
+    expect((await second.page('tasks')).items[0].state).toBe('running')
+    expect((await second.rpc().session({sessionID:child})).externalUnverified).toBe(0)
     await second.command('resume','ses_main')
     expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
     expect(second.created).toHaveLength(0)
+  })
+
+  async function shellNode(goal: string) {
+    const host = await load()
+    await host.command('auto', 'ses_main', {goal})
+    await host.call('research_propose','ses_main',{question:'Q?',why_now:'now',plan:'measure',root_reason:'first'})
+    await host.call('research_dispatch','ses_main',{node_id:'X-001'})
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume),'node launched')
+    return {host,child}
+  }
+  function shellTurns(child: string): number {
+    const result=spawnSync('python3',['-c',"import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute(\"SELECT COUNT(*) FROM runtime_budget_reservations WHERE session_id=? AND kind='turn' AND state!='not_sent'\",(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+    if (result.status !== 0) throw new Error(result.stderr)
+    return Number(result.stdout.trim())
+  }
+  function shellEvent(child:string, id:string, shellID:string, messageID:string, state:any='completed') {
+    return {id,type:'session.inbox.enqueued',data:{sessionID:child,inboxID:messageID,
+      item:{payload:{metadata:{source:'shell',shellID,state,exit:0}}}}}
+  }
+
+  test('a draining paused turn may start a shell with its execution token', async () => {
+    const {host,child}=await shellNode('drain shell')
+    await host.command('pause','ses_main')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'drain',input:{}})
+    expect((await host.rpc().session({sessionID:child})).externalStarting).toBe(1)
+    expect((await host.command('resume','ses_main')).message).not.toContain('execution_unverified')
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'drain',status:'completed',result:{metadata:{}}})
+    host.turn.end(child)
+    await Bun.sleep(80)
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('foreground tool errors leave no background recovery obligation', async () => {
+    const {host,child}=await shellNode('foreground failure')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'fg_error',input:{background:false}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'fg_error',status:'error'})
+    expect((await host.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','native pause')
+    const result=await host.command('resume','ses_main')
+    expect(result.message).not.toContain('execution_unverified')
+  })
+
+  test('pause notice delivery failures do not change the task execution state', async () => {
+    const {host,child}=await shellNode('pause notice failure')
+    const original=host.ctx.session.synthetic
+    host.ctx.session.synthetic=async(input:any)=>{
+      if (!input.resume && input.sessionID===child) throw new Error('notice unavailable')
+      return original(input)
+    }
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','pause saved')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('native foreground tool failure settles even when execute.after is absent', async () => {
+    const {host,child}=await shellNode('native foreground abort')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'native_abort',input:{}})
+    host.events.push({id:'native_tool_failed',type:'session.tool.failed',data:{sessionID:child,id:'native_abort',error:{type:'aborted'}}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','foreground abort settled')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect((await host.rpc().session({sessionID:child})).externalStarting).toBe(0)
+  })
+
+  test('a lost completion event is detected by the periodic transcript scan', async () => {
+    const {host,child}=await shellNode('lost terminal event')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'lost_event',input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'lost_event',status:'completed',result:{metadata:{status:'running',shellID:'sh_lost_event'}}})
+    host.turn.end(child)
+    await Bun.sleep(80)
+    const original=host.ctx.session.context
+    host.ctx.session.context=async(args:any)=>args.sessionID===child ? [
+      {type:'synthetic',id:'msg_lost_event',metadata:{source:'shell',shellID:'sh_lost_event',state:'completed',exit:0}}
+    ] : original(args)
+    await until(async()=>(await host.page('tasks')).items[0].state==='unverified','lost terminal reconciled',18_000)
+    expect((await host.rpc().session({sessionID:child})).externalRunning).toBe(0)
+    expect((await host.command('resume','ses_main')).message).toContain('/research recover task')
+  },20_000)
+
+  test('an interrupted call without an after hook has an immediate operator recovery path', async () => {
+    const {host,child}=await shellNode('orphaned shell')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'missing_after',input:{}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.page('tasks')).items[0].state==='unverified','task follows shell uncertainty')
+    const result=await host.command('resume','ses_main')
+    expect(result.message).toContain('/research recover task')
+    const task=(await host.page('tasks')).items[0]
+    await host.command('recover','ses_main',{kind:'task',task_id:task.task_id,reason:'verified process exit'})
+    expect((await host.page('tasks')).items[0].state).toBe('failed')
+    expect((await host.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+  })
+
+  test('a notice arriving before execute.after waits for its matching shell result', async () => {
+    const {host,child}=await shellNode('early terminal notice')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'before_after',input:{background:true}})
+    host.events.push(shellEvent(child,'early','sh_early','msg_early'))
+    await Bun.sleep(60)
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'before_after',status:'completed',result:{metadata:{status:'running',shellID:'sh_early'}}})
+    host.events.push({id:'early_delivered',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_early'}})
+    await until(async()=>(await host.rpc().session({sessionID:child})).externalRunning===0,'terminal matched')
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('enqueue in one turn and delivery in the next reserves the native wake exactly once', async () => {
+    const {host,child}=await shellNode('delivery boundary')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'boundary',input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'boundary',status:'completed',result:{metadata:{status:'running',shellID:'sh_boundary'}}})
+    const before=shellTurns(child)
+    host.events.push(shellEvent(child,'boundary_notice','sh_boundary','msg_boundary'))
+    await until(async()=>(await host.rpc().session({sessionID:child})).externalRunning===0,'notice enqueued')
+    const sent=host.said(child).filter(item=>item.resume).length
+    host.turn.end(child)
+    await Bun.sleep(100)
+    expect(host.said(child).filter(item=>item.resume)).toHaveLength(sent)
+    host.turn.start(child)
+    host.events.push({id:'boundary_delivery',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_boundary'}})
+    await until(()=>shellTurns(child)===before+1,'new wake reserved')
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+  })
+
+  test('unknown and stale shell notices do not poison subsequent session events', async () => {
+    const {host,child}=await shellNode('stale notice')
+    host.events.push(shellEvent(child,'no_id','sh_missing',''))
+    host.events.push(shellEvent(child,'stale','sh_missing','msg_stale'))
+    host.events.push({id:'stale_delivered',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_stale'}})
+    await Bun.sleep(100)
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell') // Already-active legitimate turn remains authorized.
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
   })
 
   test('a recovered paused shell notification cannot start a read loop, while later user questions can read', async () => {
@@ -1416,6 +1551,7 @@ describe("autonomous research", () => {
     host.turn.start(child)
     await host.command('pause', 'ses_main')
     await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'old-turn', input: {} })
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'old-turn',status:'completed',result:{metadata:{}}})
     host.turn.end(child)
     host.turn.start(child)
     await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'new-turn', input: {} }))

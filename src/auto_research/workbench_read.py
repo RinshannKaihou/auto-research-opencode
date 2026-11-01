@@ -165,15 +165,17 @@ def page(store, collection: str, *, after: int | None = None, upper_id: int | No
             )
             tasks = {row["child_session_id"]: dict(row) for row in task_rows}
             shell_rows = db.execute(
-                "SELECT session_id,state,COUNT(*) AS total FROM workflow_intents "
+                "SELECT session_id,state,COUNT(*) AS total,MIN(json_extract(details,'$.started_at')) AS started_at FROM workflow_intents "
                 f"WHERE kind='native_shell' AND session_id IN ({','.join('?' for _ in ids)}) "
                 "AND state IN ('starting','running','unverified') "
                 "AND json_extract(details,'$.generation')=(SELECT generation FROM workflow_project WHERE id=1) "
                 "GROUP BY session_id,state", ids)
             shell_counts = {}
             for row in shell_rows:
-                counts = shell_counts.setdefault(row['session_id'], {'external_running': 0, 'external_unverified': 0})
-                counts['external_running' if row['state'] == 'running' else 'external_unverified'] += row['total']
+                counts = shell_counts.setdefault(row['session_id'], {'external_running': 0, 'external_starting': 0, 'external_unverified': 0})
+                counts['external_' + row['state']] += row['total']
+                if row['state'] == 'running':
+                    counts['external_started_at'] = row['started_at']
             for item in visible:
                 item.update(shell_counts.get(item['session_id'], {}))
                 task = tasks.get(item["session_id"])

@@ -1,4 +1,5 @@
 """Probe background shell hooks using a temporary OpenCode host and fake model."""
+import argparse
 import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -16,6 +17,7 @@ from uuid import uuid4
 
 class Model(BaseHTTPRequestHandler):
     calls = 0
+    shell_args = {}
 
     def log_message(self, *_):
         pass
@@ -26,7 +28,7 @@ class Model(BaseHTTPRequestHandler):
         if type(self).calls == 1:
             delta = {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'call_bg_probe',
                 'type': 'function', 'function': {'name': 'shell', 'arguments': json.dumps(
-                    {'command': 'sleep 2', 'background': True, 'timeout': 20000})}}]}
+                    type(self).shell_args)}}]}
             finish = 'tool_calls'
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'call_bg_probe', 'type': 'function', 'function': delta['tool_calls'][0]['function']}]}
@@ -68,10 +70,18 @@ def request(base, path, password, payload=None):
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--scenario',choices=['background','foreground-error','foreground-interrupt','foreground-denied'],default='background')
+    args=parser.parse_args()
+    Model.calls=0
     with tempfile.TemporaryDirectory(prefix='ari-bg-probe-') as temporary:
         root = Path(temporary)
         workspace = root / 'project'
         workspace.mkdir()
+        pid_file=workspace/'probe.pid'
+        Model.shell_args={'command':'sleep 2','background':True,'timeout':20000} if args.scenario=='background' else {
+            'command':'exit 7' if args.scenario=='foreground-error' else f'echo $$ > {pid_file}; sleep 20', 'timeout':30000}
+
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL') if key in os.environ}
         for name in ('DATA', 'CONFIG', 'STATE', 'CACHE'):
             directory = root / name.lower()
@@ -83,12 +93,14 @@ def main():
         threading.Thread(target=fake.serve_forever, daemon=True).start()
         trace = root / 'events.jsonl'
         env['ARI_PROBE_TRACE'] = str(trace)
+        env['ARI_PROBE_SCENARIO'] = args.scenario
         plugin_dir = root / 'probe-plugin'
         plugin_dir.mkdir()
         (plugin_dir / 'package.json').write_text(json.dumps({'name': 'ari-bg-probe', 'type': 'module', 'exports': {'.': './index.js'}}))
         (plugin_dir / 'index.js').write_text('''import {appendFileSync} from "node:fs";
 const log=x=>appendFileSync(process.env.ARI_PROBE_TRACE,JSON.stringify(x)+"\\n");
 export default {id:"ari-bg-probe",async setup(ctx){let open=true;const stream=ctx.event.subscribe();
+ await ctx.tool.hook('execute.before',r=>{if(r.tool==='shell'){log({type:'probe.tool.before',id:r.id,background:r.input?.background??false});if(process.env.ARI_PROBE_SCENARIO==='foreground-interrupt')setTimeout(()=>ctx.session.interrupt({sessionID:r.sessionID}),500)}});
  await ctx.tool.hook('execute.after',r=>{if(r.tool==='shell')log({type:'probe.tool.after',id:r.id,session:r.sessionID,status:r.status,metadata:r.result?.metadata})});
  await ctx.session.hook('prompt',r=>log({type:'probe.prompt',session:r.sessionID,metadata:r.metadata,delivery:r.delivery}));
  log({type:'probe.ready'});void (async()=>{try{for await(const e of stream){if(!open)break;
@@ -124,7 +136,8 @@ export default {id:"ari-bg-probe",async setup(ctx){let open=true;const stream=ct
                 sid, mid = 'ses_probe_' + suffix, 'msg_probe_' + suffix
                 created, _ = request(base, '/api/session', password,
                     {'id': sid, 'title': 'background probe', 'location': {'directory': str(workspace)},
-                     'model': {'providerID': 'ari-probe', 'id': 'probe'}})
+                     'model': {'providerID': 'ari-probe', 'id': 'probe'},
+                     **({'permissions':[{'action':'shell','resource':'*','effect':'deny'}]} if args.scenario=='foreground-denied' else {})})
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline and (not trace.exists() or 'probe.ready' not in trace.read_text()):
                     time.sleep(0.05)
@@ -136,7 +149,9 @@ export default {id:"ari-bg-probe",async setup(ctx){let open=true;const stream=ct
                 while time.monotonic() < deadline:
                     if trace.exists():
                         events = [json.loads(line) for line in trace.read_text().splitlines() if line]
-                    if any(x['type'] == 'shell.exited' for x in events) and Model.calls >= 3:
+                    if (args.scenario=='background' and any(x['type'] == 'shell.exited' for x in events) and Model.calls>=3
+                        or args.scenario!='background' and any(x['type'] in {'probe.tool.after','session.tool.failed'} for x in events) and
+                        any(x['type'] in {'session.execution.succeeded','session.execution.interrupted'} for x in events)):
                         break
                     time.sleep(0.1)
                 _, context = request(base, f'/api/session/{sid}/context', password)
@@ -144,19 +159,34 @@ export default {id:"ari-bg-probe",async setup(ctx){let open=true;const stream=ct
                 for item in context.get('data', []):
                     if item.get('type') == 'synthetic':
                         summary.append({'type': 'synthetic', 'id': item.get('id'), 'metadata': item.get('metadata')})
-                print(json.dumps({'created': created, 'submitted': submitted, 'model_calls': Model.calls,
-                    'events': events, 'synthetic_messages': summary}, ensure_ascii=False))
+                alive=None
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text().strip()),0)
+                        alive=True
+                    except ProcessLookupError:
+                        alive=False
+                print(json.dumps({'scenario':args.scenario,'foreground_pid_alive':alive,'created': created, 'submitted': submitted, 'model_calls': Model.calls,
+                    'events': events, 'synthetic_messages': summary}, ensure_ascii=False).replace(str(root),'<tmp>').replace(str(root.resolve()),'<tmp>'))
                 after = next((x for x in events if x['type'] == 'probe.tool.after'), None)
                 shell_id = (after or {}).get('metadata', {}).get('shellID')
                 enqueued = next((x for x in events if x['type'] == 'session.inbox.enqueued' and
                                  x.get('data', {}).get('item', {}).get('payload', {}).get('metadata', {}).get('shellID') == shell_id), None)
                 delivered = enqueued and any(x['type'] == 'session.inbox.delivered' and
                     x.get('data', {}).get('inboxID') == enqueued['data']['inboxID'] for x in events)
-                if (created != 200 or submitted != 200 or Model.calls < 3 or not shell_id
-                        or after['metadata'].get('status') != 'running' or not delivered):
+                failed = next((x for x in events if x['type']=='session.tool.failed' and x.get('data',{}).get('id')=='call_bg_probe'), None)
+                if args.scenario=='background':
+                    valid=Model.calls>=3 and shell_id and after['metadata'].get('status')=='running' and delivered
+                elif args.scenario=='foreground-interrupt':
+                    valid=failed and failed['data']['error']['type']=='aborted' and alive is False
+                elif args.scenario=='foreground-denied':
+                    valid=failed and failed['data']['error']['type']=='tool.execution' and alive is None
+                else:
+                    valid=after and after['status']=='completed' and (after.get('metadata') or {}).get('status')!='running' and alive is not True
+                if (created != 200 or submitted != 200 or not valid):
                     log.flush()
                     print((root / 'server.log').read_text()[-4000:])
-                    raise SystemExit('Background shell start or completion was not correlated')
+                    raise SystemExit(f'{args.scenario}: host lifecycle was not correlated')
             finally:
                 process.terminate()
                 try:
