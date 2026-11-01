@@ -428,3 +428,56 @@ def test_large_inline_copy_cannot_support_its_own_final_report(tmp_path):
         'final_ref':f"pub/{final['publication_id']}#report",'summary':'Copied'},
         delivery_receipts=deliver_draft(host,draft['draft_id']),plugin_instance_id='plugin-1')
     assert 'own core claims' in message
+
+
+def test_new_draft_freezes_new_material_coverage_and_needs_its_own_receipts(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus',node_id=None,role='planner',mode='manual')
+    (host.root/'data.txt').write_text('The measured source material')
+    source = host.call('publish',status='complete',summary='data',gaps=[],knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','source_path':'data.txt'}])
+    ref = f"pub/{source['publication_id']}#data"
+    claim = host.call('memory_write',action='record',fields={'kind':'claim','statement':'Measured result',
+        'visibility':'project','evidence_refs':[ref]})['ref']
+    host.call('conclusion_contract',contract='evidence-v1')
+    before = host.call('query',collection='evidence',refs=[claim])
+    old = host.call('conclusion_prepare',model_call=True,
+        fields={**fields([claim],'partial'),'snapshot_id':before['snapshot_id']})
+    deliver_material(host,ref)
+    after = host.call('query',collection='evidence',refs=[claim])
+    new = host.call('conclusion_prepare',model_call=True,
+        fields={**fields([claim]),'snapshot_id':after['snapshot_id']})
+    old_page = host.call('query',collection='evidence',draft_id=old['draft_id'],limit=16384)
+    new_page = host.call('query',collection='evidence',draft_id=new['draft_id'],limit=16384)
+    assert not json.loads(old_page['chunk'])['materials'][0]['material_read']['complete']
+    assert json.loads(new_page['chunk'])['materials'][0]['material_read']['complete']
+    final = host.call('publish',status='complete',summary='final',gaps=[],knowledge_refs=[claim],
+        items=[{'item_id':'report','kind':'text','content':{'text':'Independent final summary'}}],
+        draft_id=new['draft_id'],report_item_id='report')
+    old_receipts, new_receipts = deliver_draft(host,old['draft_id']), deliver_draft(host,new['draft_id'])
+    args = {'draft_id':new['draft_id'],'final_ref':f"pub/{final['publication_id']}#report",'summary':'Measured'}
+    assert 'Complete evidence' in host.error('conclude',fields=args,delivery_receipts=old_receipts,plugin_instance_id='plugin-1')
+    assert host.call('conclude',fields=args,delivery_receipts=old_receipts+new_receipts,
+                     plugin_instance_id='plugin-1')['outcome'] == 'answered'
+
+
+def test_material_coverage_unions_duplicate_and_overlapping_ranges(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus',node_id=None,role='planner',mode='manual')
+    (host.root/'data.txt').write_text('0123456789')
+    source = host.call('publish',status='complete',summary='data',gaps=[],knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','source_path':'data.txt'}])
+    ref = f"pub/{source['publication_id']}#data"
+    first = host.call('query',collection='evidence',material_ref=ref,limit=6)
+    overlap = host.call('query',collection='evidence',cursor={**first['cursor'],'offset':3},limit=5)
+    def observed(page):
+        return {**evidence_page(page),'part':'material','material_ref':ref,'model_message_id':'step'}
+    host.call('evidence_observed',pages=[observed(first),observed(first),observed(overlap)],plugin_instance_id='plugin-1')
+    partial = json.loads(host.call('query',collection='evidence',refs=[ref],limit=16384)['chunk'])['materials'][0]
+    assert partial['material_read'] == {'complete':False,'covered_bytes':8}
+    last = host.call('query',collection='evidence',cursor=overlap['cursor'],limit=4)
+    host.call('evidence_observed',pages=[observed(last)],plugin_instance_id='plugin-1')
+    complete = json.loads(host.call('query',collection='evidence',refs=[ref],limit=16384)['chunk'])['materials'][0]
+    assert complete['material_read'] == {'complete':True,'covered_bytes':10}
