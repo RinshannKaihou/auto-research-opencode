@@ -359,6 +359,11 @@ class WorkflowStore:
                 }:
                     raise ValidationError("Invalid run state")
                 generation = view["run"]["generation"] + (1 if fields.get("new_generation") else 0)
+                if fields.get('new_generation') and db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                    from .conclusion_policy import set_contract
+                    config = self._project(db)['config']
+                    contract = 'evidence-v1' if config.get('exploration_policy') == 'exploration-v1' else 'legacy-v1'
+                    set_contract(db, generation, contract, 'new_generation')
                 if state == 'running':
                     from .runtime_budget import start
                     start(self, db, generation, at)

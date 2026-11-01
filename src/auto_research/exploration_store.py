@@ -137,7 +137,7 @@ class ExplorationStore:
         def work(db):
             require_controller(db)
             run = _main(db, host, session)
-            if run["state"] == "complete":
+            if run["state"] == "complete" and mode != 'off':
                 raise ConflictError("Start a new generation before changing exploration")
             config = self._project(db)["config"]
             before = {"exploration_policy": config.get("exploration_policy", "off"),
@@ -148,13 +148,17 @@ class ExplorationStore:
                 config["context_policy"] = "memory-r1-v1"
                 if db.execute('PRAGMA user_version').fetchone()[0] >= 14:
                     config["conclusion_contract"] = "evidence-v1"
-            db.execute("UPDATE project SET config=?", (encoded(config),))
+                    if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                        from .conclusion_policy import set_contract
+                        set_contract(db, run['generation'], 'evidence-v1', 'exploration')
+            self._set_project_config(db, config)
             after = {"exploration_policy": config["exploration_policy"],
                      "context_policy": config.get("context_policy", "memory-v2"),
                      "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
             if before != after:
                 self._event(db, "exploration.policy_changed", {"generation": run["generation"], "before": before, "after": after})
-            return {"generation": run["generation"], **after}
+            return {"generation": run["generation"], **after,
+                    **({'effective_for': 'next_generation'} if run['state'] == 'complete' else {})}
         return self._mutate("exploration.policy", payload, operation, work)
 
     def exploration_scope(self, host, session, fields, operation):

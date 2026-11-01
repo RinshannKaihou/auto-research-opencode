@@ -30,6 +30,8 @@ from .schema11 import ensure_schema11, migrate_schema11
 from .schema12 import ensure_schema12, migrate_schema12
 from .schema13 import ensure_schema13, migrate_schema13
 from .schema14 import ensure_schema14, migrate_schema14
+from .schema15 import ensure_schema15, migrate_schema15
+from .conclusion_policy import current_contract
 from .controller import ControllerStore, require_controller, CURRENT_MODEL_CALL
 from .conclusion_store import ConclusionStore
 from .review_lifecycle import ReviewStore
@@ -40,7 +42,7 @@ from .evidence_conclusion import EvidenceConclusionStore
 from . import epistemic, frozen_refs
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 ATTEMPT_STATES = frozenset({"open", "finished", "stopped", "unknown"})
 NODE_STATES = frozenset({"proposed", "open", "closed"})
 
@@ -89,8 +91,8 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
         self.db_path = self.meta / "state.sqlite3"
         if readonly:
             with self._connection() as db:
-                if db.execute("PRAGMA user_version").fetchone()[0] not in {9, 10, 11, 12, 13, SCHEMA_VERSION}:
-                    raise ValidationError(f"Read-only view requires schema 9, 10, 11, 12, 13 or {SCHEMA_VERSION}")
+                if db.execute("PRAGMA user_version").fetchone()[0] not in range(9, SCHEMA_VERSION + 1):
+                    raise ValidationError(f"Read-only view requires schema 9 through {SCHEMA_VERSION}")
             return
         self.meta.mkdir(parents=True, exist_ok=True)
         if self.db_path.exists():
@@ -132,6 +134,9 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             if version == 13 and SCHEMA_VERSION >= 14:
                 migrate_schema14(self.db_path)
                 version = 14
+            if version == 14 and SCHEMA_VERSION >= 15:
+                migrate_schema15(self.db_path)
+                version = 15
             if version not in {0, SCHEMA_VERSION}:
                 raise ValidationError(
                     f"Schema {version} must be migrated before native plugin writes"
@@ -304,6 +309,8 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             ensure_schema13(db)
         if SCHEMA_VERSION >= 14:
             ensure_schema14(db)
+        if SCHEMA_VERSION >= 15:
+            ensure_schema15(db)
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @contextmanager
@@ -410,10 +417,23 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             raise NotFoundError("Project is not initialized")
         value = dict(row)
         value["config"] = json.loads(value["config"])
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+            value['config']['conclusion_contract'] = current_contract(db, value['config'])
         # Kept physically for schema-2 database compatibility. Quotas are no
         # longer part of the native plugin API or any runtime decision.
         value.pop("budget_limit", None)
         return value
+
+    @staticmethod
+    def _set_project_config(db: sqlite3.Connection, config: dict) -> None:
+        config = dict(config)
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+            raw = json.loads(db.execute('SELECT config FROM project LIMIT 1').fetchone()[0])
+            if 'conclusion_contract' in raw:
+                config['conclusion_contract'] = raw['conclusion_contract']
+            else:
+                config.pop('conclusion_contract', None)
+        db.execute('UPDATE project SET config=?', (_json(config),))
 
     @staticmethod
     def _association(db: sqlite3.Connection, host_id: str, session_id: str) -> sqlite3.Row:
@@ -447,7 +467,7 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             if config.get("context_policy", "memory-v2") == policy:
                 return value
             config["context_policy"] = policy
-            db.execute("UPDATE project SET config=?", (_json(config),))
+            self._set_project_config(db, config)
             self._event(db, "context.policy_changed", value)
             return value
 

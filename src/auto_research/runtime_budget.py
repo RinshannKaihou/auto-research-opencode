@@ -830,7 +830,7 @@ class RuntimeStore:
             before = config.get('runtime_budget', {})
             updated = {**before, **limits}
             config['runtime_budget'] = updated
-            db.execute('UPDATE project SET config=?', (json.dumps(config),))
+            self._set_project_config(db, config)
             run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
             if run:
                 stored = db.execute('SELECT started_at FROM runtime_budgets WHERE generation=?', (run[0],)).fetchone()

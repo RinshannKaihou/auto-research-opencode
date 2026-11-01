@@ -183,7 +183,7 @@ def set_scope(store, db, refs, reason, operation, actor):
     before = config.get('r2_review_scope')
     scope = {'generation': generation(db), 'refs': sorted(set(refs))}
     config['r2_review_scope'] = scope
-    db.execute('UPDATE project SET config=?', (encoded(config),))
+    store._set_project_config(db, config)
     event(db, None, 'scope_set', reason, refs, {'before': before, 'after': scope}, operation, actor)
     old_refs = before['refs'] if before and before['generation']==scope['generation'] else []
     added = sorted(set(refs)-set(old_refs))

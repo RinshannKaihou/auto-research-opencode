@@ -282,7 +282,9 @@ class EvidenceConclusionStore:
                 identity = [generation, host, session, instance_id, page['snapshot_id'], page['draft_id'],
                             page['offset'], page['end'], page['digest']]
                 receipt = 'evr-' + hashlib.sha256(encoded(identity).encode()).hexdigest()
-                db.execute('INSERT OR IGNORE INTO evidence_read_receipts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                db.execute('INSERT OR IGNORE INTO evidence_read_receipts '
+                           '(receipt_id,generation,host_id,session_id,plugin_instance_id,snapshot_id,draft_id,part,start_offset,end_offset,digest,created_at) '
+                           'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                            (receipt, generation, host, session, instance_id, page['snapshot_id'], page['draft_id'],
                             'manifest', page['offset'], page['end'], page['digest'], now()))
                 receipts.append(receipt)
@@ -294,8 +296,8 @@ class EvidenceConclusionStore:
             with self._read() as db:
                 run = _main(db, host, session)
                 return {'generation': run['generation'], 'conclusion_contract': self._project(db)['config'].get('conclusion_contract', 'legacy-v1')}
-        if contract != 'evidence-v1':
-            raise ValidationError('Only explicit adoption of evidence-v1 is supported')
+        if contract not in {'legacy-v1', 'evidence-v1'}:
+            raise ValidationError('Unknown conclusion contract')
         payload = {'host': host, 'session': session, 'contract': contract}
 
         def work(db):
@@ -304,9 +306,15 @@ class EvidenceConclusionStore:
             if run['state'] == 'complete':
                 raise ConflictError('Start a new generation before changing the conclusion contract')
             config = self._project(db)['config']
+            if contract == 'legacy-v1' and config.get('conclusion_contract', 'legacy-v1') == 'evidence-v1':
+                raise ConflictError('The conclusion contract cannot be downgraded in the current generation')
             if config.get('conclusion_contract', 'legacy-v1') != contract:
-                config['conclusion_contract'] = contract
-                db.execute('UPDATE project SET config=?', (encoded(config),))
+                if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                    from .conclusion_policy import set_contract
+                    set_contract(db, run['generation'], contract, 'explicit')
+                else:
+                    config['conclusion_contract'] = contract
+                    self._set_project_config(db, config)
                 self._event(db, 'conclusion.contract_adopted', {'generation': run['generation'], 'contract': contract})
             return {'generation': run['generation'], 'conclusion_contract': contract}
         return self._mutate('conclusion.contract', payload, operation, work)
@@ -340,7 +348,7 @@ class EvidenceConclusionStore:
                     _text(scope_change.get('reason'), 'scope_change.reason')
                     _text(scope_change.get('excluded_impact'), 'scope_change.excluded_impact')
                 config['conclusion_review_scope'] = after
-                db.execute('UPDATE project SET config=?', (encoded(config),))
+                self._set_project_config(db, config)
                 self._event(db, 'conclusion.scope_changed', {'before': before, 'after': after,
                     'removed': removed, 'reason': scope_change.get('reason'),
                     'excluded_impact': scope_change.get('excluded_impact'), 'actor': {'host_id': host, 'session_id': session}})
