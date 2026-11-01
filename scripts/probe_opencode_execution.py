@@ -151,11 +151,53 @@ export default {id:"ari-event-probe",async setup(ctx){let open=true;const stream
                     if sum(item['type'] in {'session.execution.succeeded', 'session.execution.failed'} and item.get('session') == sid for item in events) >= 2:
                         break
                     time.sleep(0.1)
+                calls_before_replay = FakeModel.calls
+                replay_status, _ = request(base, f'/api/session/{sid}/synthetic', password,
+                    {'id': second_id, 'text': 'second isolated test', 'resume': True})
+                time.sleep(0.5)
+                replay_extra_calls = FakeModel.calls - calls_before_replay
+                process.terminate()
+                process.wait(timeout=5)
+                before_restart = [json.loads(line) for line in trace.read_text().splitlines() if line]
+                prior_sequence = max(item.get('seq') or 0 for item in before_restart if item.get('session') == sid)
+                process = subprocess.Popen(['opencode', 'serve', '--hostname', '127.0.0.1', '--port', str(port)],
+                                           cwd=workspace, env=env, stdout=log, stderr=log)
+                deadline = time.monotonic() + 20
+                while True:
+                    try:
+                        status, _ = request(base, '/api/session/active', password)
+                        if status == 200:
+                            break
+                    except (OSError, urllib.error.URLError):
+                        pass
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError('Isolated host did not restart')
+                    time.sleep(0.1)
+                request(base, '/api/session', password,
+                    {'id': sid + '_activation', 'title': 'activate event probe after restart',
+                     'location': {'directory': str(workspace)}})
+                time.sleep(0.5)
+                third_status, _ = request(base, f'/api/session/{sid}/synthetic', password,
+                    {'id': mid + '_third', 'text': 'after host restart', 'resume': True})
+                deadline = time.monotonic() + 15
+                after_restart = []
+                while time.monotonic() < deadline:
+                    events = [json.loads(line) for line in trace.read_text().splitlines() if line]
+                    after_restart = [item for item in events[len(before_restart):] if item.get('session') == sid]
+                    if any(item['type'] == 'session.execution.succeeded' for item in after_restart):
+                        break
+                    time.sleep(0.1)
+                restart_sequences = [item['seq'] for item in after_restart if item.get('seq') is not None]
+                sequence_persisted = bool(restart_sequences) and min(restart_sequences) > prior_sequence
                 context_status, context = request(base, f'/api/session/{sid}/context', password)
                 own = [item for item in events if item.get('session') == sid]
                 messages = context.get('data', [])
                 result = {'create_status': created, 'submit_status': submitted,
                           'second_submit_status': second_status,
+                          'resume_true_replay_status': replay_status, 'resume_true_replay_extra_model_calls': replay_extra_calls,
+                          'restart_submit_status': third_status, 'durable_sequence_persisted_across_restart': sequence_persisted,
+                          'sequence_before_restart': prior_sequence, 'first_sequence_after_restart': min(restart_sequences) if restart_sequences else None,
+                          'host_version': subprocess.check_output(['opencode', '--version'], env=env, text=True).strip(),
                           'same_inbox_id': reply.get('data', {}).get('id') == mid,
                           'fake_model_calls': FakeModel.calls, 'events': own,
                           'context_status': context_status, 'context_types': [item.get('type') for item in messages],
@@ -164,6 +206,8 @@ export default {id:"ari-event-probe",async setup(ctx){let open=true;const stream
                 print(json.dumps(result, sort_keys=True))
                 if created != 200 or submitted != 200 or second_status != 200 or FakeModel.calls < 2 or sum(item['type'] == 'session.execution.succeeded' for item in own) < 2:
                     raise SystemExit(1)
+                if third_status != 200 or not sequence_persisted or not any(item['type'] == 'session.execution.succeeded' for item in after_restart):
+                    raise SystemExit('Durable sequence did not survive an isolated host restart')
             finally:
                 process.terminate()
                 try:

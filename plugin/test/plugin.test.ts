@@ -20,6 +20,13 @@ class EventStream implements AsyncIterable<any> {
   private queue: any[] = []
   private waiter: ((value: IteratorResult<any>) => void) | null = null
   private sequence = new Map<string, number>()
+  end() {
+    if (this.waiter) {
+      const waiter = this.waiter
+      this.waiter = null
+      waiter({ value: undefined, done: true })
+    } else this.queue.push(null)
+  }
   push(event: any) {
     const session = event.data?.sessionID ?? ''
     const seq = (this.sequence.get(session) ?? 0) + 1
@@ -35,13 +42,24 @@ class EventStream implements AsyncIterable<any> {
     return {
       next: () =>
         this.queue.length
-          ? Promise.resolve({ value: this.queue.shift(), done: false })
+          ? (() => { const value = this.queue.shift(); return Promise.resolve({ value, done: value === null }) })()
           : new Promise((resolve) => (this.waiter = resolve)),
     }
+  }
+  subscribe(signal?: AbortSignal): AsyncIterable<any> {
+    const iterator = this[Symbol.asyncIterator]()
+    let resolveNext: ((value: IteratorResult<any>) => void) | undefined
+    signal?.addEventListener('abort', () => resolveNext?.({ value: undefined, done: true }), { once: true })
+    return { [Symbol.asyncIterator]: () => ({ next: () => signal?.aborted
+      ? Promise.resolve({ value: undefined, done: true })
+      : new Promise(resolve => { resolveNext = resolve; void iterator.next().then(resolve) }) }) }
   }
 }
 
 /** The slice of OpenCode's plugin context the server half uses. */
+const nativeSessions = new Map<string, {
+  transcripts: Map<string, any[]>; busy: Set<string>; waiters: Map<string, (() => void)[]>
+}>()
 function fakeHost(registryPath: string, directory: string, python?: string) {
   const tools = new Map<string, any>()
   const hooks = new Map<string, Hook>()
@@ -51,10 +69,12 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
   const models: any[] = []
   const permissions = new Map<string, any[]>()
   const events = new EventStream()
+  let subscriptions = 0
   // A session is busy from a resuming message until its turn ends; wait() resolves then.
-  const transcripts = new Map<string, any[]>()
-  const busy = new Set<string>()
-  const waiters = new Map<string, (() => void)[]>()
+  // Reloading the plugin does not reset the native host's sessions or history.
+  let native = nativeSessions.get(registryPath)
+  if (!native) nativeSessions.set(registryPath, native = { transcripts: new Map(), busy: new Set(), waiters: new Map() })
+  const { transcripts, busy, waiters } = native
   const endTurn = (sessionID: string, text: string, outcome: string) => {
     const content = text ? [{ type: "assistant", content: [{ type: "text", text }] }] : []
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), ...content, { type: "idle", outcome }])
@@ -107,7 +127,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
           : Promise.resolve(),
       context: async ({ sessionID }: { sessionID: string }) => transcripts.get(sessionID) ?? [],
     },
-    event: { subscribe: () => events },
+    event: { subscribe: (options?: { signal?: AbortSignal }) => { subscriptions++; return events.subscribe(options?.signal) } },
     rpc: {
       register: async (_definition: unknown, registered: any) => {
         handlers = registered
@@ -117,7 +137,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
   }
   /** The model of `sessionID` ends its turn with a final text reply. */
   const reply = (sessionID: string, text: string, outcome = "succeeded") => endTurn(sessionID, text, outcome)
-  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, rpc: () => handlers }
+  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, subscriptions: () => subscriptions, rpc: () => handlers }
 }
 
 function modelRequest(sessionID: string) {
@@ -159,6 +179,7 @@ function simulateDeadHost(): void {
 }
 
 beforeEach(() => {
+  nativeSessions.clear()
   dir = mkdtempSync(join(tmpdir(), "ari-opencode-"))
   project = join(dir, "project")
   mkdirSync(project)
@@ -212,6 +233,192 @@ test('an attachment that saw no registry discovers a later research association'
     firstStorage.close()
     secondStorage.close()
   }
+})
+
+test('negative membership cache skips repeated misses and invalidates on registry writes', async () => {
+  const first = new StorageClient({ registryPath: registry })
+  const second = new StorageClient({ registryPath: registry })
+  try {
+    const creator = new Research(second, project, () => existsSync(registry))
+    await creator.init('ses_main', project, 'cache fixture')
+    const observer = new Research(first, project, () => existsSync(registry))
+    await observer.ready()
+    const original = first.request.bind(first)
+    let lookups = 0
+    first.request = ((method, fields, operation) => {
+      if (method === 'session_membership') lookups++
+      return original(method, fields, operation)
+    }) as typeof first.request
+    await observer.confirmMembership('ses_later')
+    await observer.confirmMembership('ses_later')
+    expect(lookups).toBe(1)
+    await second.request('open', { host_id: 'opencode', session_id: 'ses_later', root: project, cwd: project, session_role: 'node_core' })
+    await observer.confirmMembership('ses_later')
+    expect(observer.roleOf('ses_later')).toBe('node_core')
+    expect(lookups).toBe(2)
+  } finally { first.close(); second.close() }
+})
+
+test('a lost execution-start response retries the same token and retains inbox authorization', async () => {
+  const original = StorageClient.prototype.request
+  const tokens: string[] = []
+  let lost = false
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'runtime_execution_start') {
+      tokens.push(String(fields?.execution_token))
+      if (!lost) { lost = true; throw new Error('lost start response') }
+    }
+    return result
+  })
+  try {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'event retry' })
+    await until(() => tokens.length >= 2, 'same event retried')
+    expect(new Set(tokens).size).toBe(1)
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'authorized continuation')
+  } finally { spy.mockRestore() }
+})
+
+test('a lost execution-end response retries persistence without losing or duplicating continuation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'terminal retry' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let lost = false
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+    const result = await original.call(this, method, fields, operation)
+    if (method === 'runtime_execution_end' && !lost) { lost = true; throw new Error('lost terminal response') }
+    return result
+  })
+  try {
+    host.events.push({ id: 'end-with-lost-response', type: 'session.execution.succeeded', data: { sessionID: 'ses_main' } })
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'one continuation')
+    host.events.push({ id: 'end-with-lost-response', type: 'session.execution.succeeded', data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+    expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+    await host.call('research_note', 'ses_main', { body: 'second turn is still writable' })
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 3, 'duplicate did not poison the next turn')
+  } finally { spy.mockRestore() }
+})
+
+test('unrelated native telemetry cannot poison research event control', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'unrelated telemetry' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let unrelatedLookups = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'session_membership' && fields?.session_id === 'ordinary') { unrelatedLookups++; return Promise.reject(new Error('unrelated lookup')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    for (let i = 0; i < 1000; i++) host.events.push({ type: 'session.step.started', data: { sessionID: 'ordinary' } })
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'research remains active')
+    expect(unrelatedLookups).toBe(0)
+  } finally { spy.mockRestore() }
+})
+
+test('failed event persistence still permits pause and stop', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'event failure control' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'runtime_execution_end') { failures++; return Promise.reject(new Error('event store down')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ses_main')
+    await until(() => failures === 3, 'bounded retries exhausted')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+    expect((await host.summary()).run.state).toBe('paused')
+    // The same reducing path must also reach the host when an event is held.
+    host.turn.start('ses_main')
+    expect((await host.command('stop', 'ses_main')).error).toBeUndefined()
+    expect(host.interrupted).toContain('ses_main')
+    expect((await host.summary()).run.state).toBe('stopped')
+  } finally { spy.mockRestore() }
+})
+
+test('explicit resume replays a held terminal after storage recovers and continues once', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'retry a held event' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  const original = StorageClient.prototype.request
+  let failures = 0
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'runtime_execution_end') { failures++; return Promise.reject(new Error('temporary event store failure')) }
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    host.turn.end('ses_main')
+    await until(() => failures === 3, 'terminal held after three attempts')
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await host.call('research_note', 'ses_main', { body: 'control recovered' })
+  expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+})
+
+test('a disconnected event subscription can be re-established by explicit resume', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'event stream reconnect' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  host.events.end()
+  await Bun.sleep(30)
+  expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(host.subscriptions()).toBe(2)
+  host.turn.end('ses_main')
+  await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'new subscription processes terminal')
+})
+
+test('resume reconciles a coordinator terminal missed during an event-stream disconnect', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'missed coordinator terminal' })
+  await host.call('research_query', 'ses_main', { collection: 'nodes' })
+  host.events.end()
+  await Bun.sleep(30)
+  host.reply('ses_main', 'coordinator turn ended while disconnected')
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  await until(() => host.said('ses_main').filter(item => item.resume).length === 2, 'recovered coordinator continues once')
+  await Bun.sleep(50)
+  expect(host.said('ses_main').filter(item => item.resume)).toHaveLength(2)
+})
+
+test('a failure before session creation leaves one queued task that can be resumed', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'pre-host failure' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  const original = StorageClient.prototype.request
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+    if (method === 'task_context') return Promise.reject(new Error('context temporarily unavailable'))
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    expect(host.created).toHaveLength(0)
+    expect((await host.page('tasks')).items[0].state).toBe('queued')
+  } finally { spy.mockRestore() }
+  expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+  expect(host.created).toHaveLength(1)
+  expect((await host.page('tasks')).items).toHaveLength(1)
+  expect((await host.page('tasks')).items[0].state).toBe('running')
+})
+
+test('workspace aliases of the same project share a single live controller', async () => {
+  const first = await load({ hostSetup: host => { host.ctx.location.workspaceID = 'workspace-a' } })
+  await first.command('auto', 'ses_main', { goal: 'workspace aliases' })
+  const second = await load({ hostSetup: host => { host.ctx.location.workspaceID = 'workspace-b' } })
+  await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'one owner for both workspaces')
+  expect((await second.summary()).run.state).toBe('running')
+  expect((await first.command('pause', 'ses_main')).error).toBeUndefined()
+  expect((await second.summary()).run.state).toBe('paused')
 })
 
 test("R2 dispatch observes local and backend rejection without recording input text", async () => {
@@ -865,6 +1072,97 @@ describe("autonomous research", () => {
     expect((await second.summary()).run.state).toBe("running")
   })
 
+  for (const outcome of ['failed', 'interrupted']) test(`a ${outcome} finish turn can finish in the next authorized turn`, async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'retry a finish turn' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    await host.call('research_finish', child, { state: 'finished', summary: 'first result' })
+    const turns = host.said(child).filter(item => item.resume).length
+    host.turn.end(child, outcome)
+    if (outcome === 'interrupted') {
+      await until(async () => (await host.rpc().session({ sessionID: child })).pauseReason === 'native_stop', 'interrupted finish pause')
+      await host.command('resume', 'ses_main')
+    }
+    await until(() => host.said(child).filter(item => item.resume).length > turns, 'next node turn')
+    await host.call('research_finish', child, { state: 'finished', summary: 'rechecked result' })
+    host.turn.end(child)
+    await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'finish after retry')
+    expect(host.created).toHaveLength(1)
+  })
+
+  test('warm reload correlates the second node turn instead of the original kickoff', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'multiple turns across reload' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    const kickoff = first.said(child).find(item => item.resume).id
+    first.turn.end(child)
+    await until(() => first.said(child).filter(item => item.resume).length === 2, 'second turn nudge')
+    const currentMessage = first.said(child).filter(item => item.resume).at(-1).id
+    await first.call('research_finish', child, { state: 'finished', summary: 'second turn result' })
+    cleanups.pop()!()
+    const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
+      host.ctx.session.wait = async (input: any) => input.sessionID === child ? undefined : nativeWait(input)
+      host.ctx.session.context = async ({ sessionID }: any) => sessionID === child
+        ? [{ type: 'synthetic', id: kickoff }, { type: 'idle', outcome: 'succeeded' },
+           { type: 'synthetic', id: currentMessage }, { type: 'assistant', content: [{ type: 'text', text: 'done' }] },
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
+    } })
+    await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'second turn recovered')
+    expect((await second.summary()).run.state).toBe('running')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+  })
+
+  test('warm reload preserves a node paused after a verified terminal event', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'idle paused node reload' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    first.turn.end(child, 'interrupted')
+    await until(async () => (await first.rpc().session({ sessionID: child })).pauseReason === 'native_stop', 'node pause')
+    cleanups.pop()!()
+    const second = await load()
+    await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm ready')
+    expect((await second.page('tasks')).items[0].state).toBe('running')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+    await second.command('resume', 'ses_main')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(1)
+  })
+
+  test('warm reload settles a saved finish when its terminal was persisted before handoff', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal: 'handoff after terminal persistence' })
+    await first.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await first.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = first.created[0]!
+    await first.call('research_finish', child, { state: 'finished', summary: 'saved before handoff' })
+    const original = StorageClient.prototype.request
+    let release: (() => void) | undefined
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (method === 'node_finish_commit' && !release) return new Promise((_resolve, reject) => {
+        release = () => reject(new Error('old attachment closed'))
+      })
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      first.turn.end(child)
+      await until(() => !!release, 'terminal saved before finish settlement')
+      cleanups.pop()!()
+      const second = await load()
+      release!()
+      await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'durable finish settled by successor')
+      expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+      expect((await second.page('tasks')).items).toHaveLength(1)
+      expect(second.created).toHaveLength(0)
+    } finally { release?.(); spy.mockRestore() }
+  })
+
   test("same-process plugin reload preserves running research and a pending node finish", async () => {
     const first = await load()
     await first.command("auto", "ses_main", { goal: "reload fixture" })
@@ -876,8 +1174,10 @@ describe("autonomous research", () => {
     let releaseWait!: () => void
     const waitForTerminal = new Promise<void>(resolve => { releaseWait = resolve })
     const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
       host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => {
         if (sessionID === first.created[0]) await waitForTerminal
+        else await nativeWait({ sessionID })
       }
     } })
     expect((await second.summary()).run.state).toBe("running")
@@ -896,7 +1196,8 @@ describe("autonomous research", () => {
     let release!: () => void
     const idle = new Promise<void>(resolve => { release = resolve })
     const second = await load({ hostSetup: host => {
-      host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => { if (sessionID === child) await idle }
+      const nativeWait = host.ctx.session.wait
+      host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => { if (sessionID === child) await idle; else await nativeWait({ sessionID }) }
     } })
     await until(async () => (await second.command('status', 'ses_main')).state?.workflow?.controller?.phase === 'ready', 'new controller')
     const request = modelRequest(child)
@@ -921,10 +1222,12 @@ describe("autonomous research", () => {
     await first.call("research_finish", child, { state: "finished", summary: "finished in the gap" })
     cleanups.pop()!()
     const second = await load({ hostSetup: host => {
-      host.ctx.session.wait = async () => {}
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
+      host.ctx.session.wait = async (input: any) => input.sessionID === child ? undefined : nativeWait(input)
       host.ctx.session.context = async ({ sessionID }: { sessionID: string }) => sessionID === child
         ? [{ type: 'synthetic', id: kickoff }, { type: 'assistant', content: [{ type: 'text', text: 'done' }] },
-           { type: 'idle', outcome: 'succeeded' }] : []
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
     } })
     await until(async () => (await second.page('tasks')).items[0].state === 'finished', 'recovered node terminal')
     const sentBefore = second.said(child).filter(item => item.resume).length
@@ -1203,6 +1506,35 @@ describe("node specialists", () => {
     expect((await again).state).toBe("completed")
   })
 
+  test('an unexpected host error after specialist submission still interrupts the live child', async () => {
+    const host = await load()
+    await nodeAtWork(host)
+    const original = host.ctx.session.synthetic
+    host.ctx.session.synthetic = async (input: any) => {
+      const result = await original(input)
+      if (input.sessionID !== host.created[0] && input.resume) throw new Error('lost specialist submission response')
+      return result
+    }
+    const result = await host.call('research_delegate', host.created[0]!, TASK)
+    expect(host.interrupted).toContain(host.created[1]!)
+    expect(result).toMatchObject({ state: 'incomplete', exit_verified: true })
+  })
+
+  test('specialist pre-create failure is incomplete with no unknown executor or occupied slot', async () => {
+    const host = await load()
+    await nodeAtWork(host)
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
+      if (method === 'status' && fields?.session_id === host.created[0]) return Promise.reject(new Error('parent context unavailable'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const result = await host.call('research_delegate', host.created[0]!, TASK)
+      expect(result).toMatchObject({ state: 'incomplete', exit_verified: true })
+      expect(host.created).toHaveLength(1)
+    } finally { spy.mockRestore() }
+  })
+
   test("stopping research also requests interruption of a running specialist", async () => {
     const host = await load()
     await nodeAtWork(host)
@@ -1307,12 +1639,15 @@ describe("node specialists", () => {
     const waiting = new Promise<void>(resolve => { complete = resolve })
     cleanups.pop()!()
     const second = await load({ hostSetup: host => {
+      const nativeWait = host.ctx.session.wait
+      const nativeContext = host.ctx.session.context
       host.ctx.session.wait = async ({ sessionID }: { sessionID: string }) => {
         if (sessionID === child) { watched = true; await waiting }
+        else await nativeWait({ sessionID })
       }
       host.ctx.session.context = async ({ sessionID }: { sessionID: string }) => sessionID === child
         ? [{ type: 'synthetic', id: kickoffID }, { type: 'assistant', content: [{ type: 'text', text: '恢复后的专家报告' }] },
-           { type: 'idle', outcome: 'succeeded' }] : []
+           { type: 'idle', outcome: 'succeeded' }] : nativeContext({ sessionID })
     } })
     await until(() => watched, 'reattached specialist watcher')
     expect(launchState().deadline_at).toBe(originalLaunch.deadline_at)

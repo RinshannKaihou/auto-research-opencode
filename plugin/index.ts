@@ -22,8 +22,10 @@ import { parameters, validateArgs } from "./src/schema"
 import { USAGE } from "./src/format"
 import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
 import { attachController } from './src/controller-lifecycle'
+import { preflight } from './src/host-submission'
 
 const STARTUP_WAIT_MS = 1500
+const RESEARCH_READS = new Set(['research_query', 'research_read_input'])
 
 async function within<T>(promise: Promise<T>, ms: number): Promise<T | void> {
   let timer:ReturnType<typeof setTimeout> | undefined
@@ -60,34 +62,64 @@ export default Plugin.define({
     // while membership and controller ownership are being loaded.
     let listening = true
     let eventGap = false
+    let gapVersion = 0
     let eventHandler: ((event: any) => Promise<void>) | undefined
+    let telemetryHandler: ((event: any) => void) | undefined
     const earlyEvents: any[] = []
-    let eventChain: Promise<void> = Promise.resolve()
+    const eventChains = new Map<string, Promise<void>>()
+    const failedEvents = new Map<string, any[]>()
     let queuedEvents = 0
-    const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed', 'session.inbox.delivered',
-      'session.execution.interrupted', 'session.step.started', 'session.step.ended', 'session.step.failed',
-      'session.usage.recorded', 'session.usage.updated'])
+    const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
+      'session.inbox.delivered', 'session.execution.interrupted'])
+    const markGap = () => { eventGap = true; gapVersion++ }
+    const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
     const queueEvent = (event: any) => {
-      if (!relevantEvents.has(event?.type)) return
+      if (!relevantEvents.has(event?.type)) { telemetryHandler?.(event); return }
+      const sessionID = event.data?.sessionID
+      if (!sessionID) return
       if (!eventHandler) {
-        if (earlyEvents.length >= 256) eventGap = true
+        if (earlyEvents.length >= 256) markGap()
         else earlyEvents.push(event)
         return
       }
-      if (queuedEvents >= 256) { eventGap = true; return }
+      if (queuedEvents >= 256) { markGap(); return }
       queuedEvents++
-      eventChain = eventChain.then(() => eventHandler!(event)).catch(() => { if (listening && lifecycle.current()) eventGap = true })
-        .finally(() => { queuedEvents-- })
-    }
-    void (async () => {
-      try {
-        for await (const event of ctx.event.subscribe()) {
-          if (!listening) break
-          queueEvent(event)
+      const chain = (eventChains.get(sessionID) ?? Promise.resolve()).then(async () => {
+        if (failedEvents.has(sessionID)) {
+          const pending = failedEvents.get(sessionID)!
+          if (pending.length < 256) pending.push(event)
+          else markGap()
+          return
         }
-        if (listening) eventGap = true
-      } catch { if (listening) eventGap = true }
-    })()
+        for (let attempt = 0; attempt < 3 && listening && lifecycle.current(); attempt++) {
+          try { await eventHandler!(event); return }
+          catch {
+            if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)))
+            else if (research.isAssociated(sessionID)) failedEvents.set(sessionID, [event])
+          }
+        }
+      }).finally(() => {
+        queuedEvents--
+        if (eventChains.get(sessionID) === chain) eventChains.delete(sessionID)
+      })
+      eventChains.set(sessionID, chain)
+    }
+    let subscription: AbortController | undefined
+    const subscribe = () => {
+      subscription?.abort()
+      const current = new AbortController()
+      subscription = current
+      void (async () => {
+        try {
+          for await (const event of ctx.event.subscribe({ signal: current.signal })) {
+            if (!listening || current.signal.aborted) break
+            queueEvent(event)
+          }
+          if (listening && !current.signal.aborted) markGap()
+        } catch { if (listening && !current.signal.aborted) markGap() }
+      })()
+    }
+    subscribe()
     const requireCurrent = () => {
       if (!lifecycle.current()) throw new Error("Research controller attachment has been replaced")
     }
@@ -106,11 +138,10 @@ export default Plugin.define({
     research.setExecutionResolver(sessionID => lifecycle.state.turns.get(sessionID))
     let ensureController: (root: string, main: string) => Promise<void> = async () => { throw new Error('Controller not initialized') }
     let bootstrap: () => Promise<void> = async () => { throw new Error('Controller not initialized') }
-    const verifyController = async (sessionID: string) => {
+    const verifyController = async (sessionID: string, reducingOrReading = false) => {
       requireCurrent()
-      if (eventGap) throw new Error('研究事件流不完整，需先核对执行状态')
-      const root = research.rootOf(sessionID)
-      if (!root) return
+      if (!reducingOrReading && (eventGap || failedEvents.has(sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume')
+      const root = research.rootOf(sessionID) ?? research.scope
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
       if (!main || !research.inScope(root)) throw new Error('Research controller scope is unavailable')
       await ensureController(root, main)
@@ -136,10 +167,12 @@ export default Plugin.define({
         }
       },
       create: async (title, directory, model, permissions, sessionID) => {
-        requireCurrent()
-        const main = research.sessionsIn(directory).find(sid => research.roleOf(sid) === 'main')
-        if (!main) throw new Error('Research controller owner is unavailable')
-        await verifyController(main)
+        await preflight('create', async () => {
+          requireCurrent()
+          const main = research.sessionsIn(directory).find(sid => research.roleOf(sid) === 'main')
+          if (!main) throw new Error('Research controller owner is unavailable')
+          await verifyController(main)
+        })
         return (await ctx.session.create({
             title,
             ...(sessionID ? { id: sessionID } : {}),
@@ -154,23 +187,25 @@ export default Plugin.define({
         await ctx.session.switchModel({ sessionID, model })
       },
       synthetic: async (sessionID, text, label, resume, messageID, wakeIntentID, launchIntentID, specialistLaunchID) => {
-        requireCurrent()
-        await verifyController(sessionID)
         const outboundID = messageID ?? (resume ? `msg_research_${randomUUID().replaceAll('-', '')}` : undefined)
         let reservation:any
-        if (resume && research.isAssociated(sessionID)) {
-          const source_snapshot=await host.source?.(sessionID)
-          reservation = await research.call('runtime_reserve', sessionID,{source_snapshot, message_id: outboundID, ...(wakeIntentID ? { wake_intent_id: wakeIntentID } : {}),
-            ...(launchIntentID ? { launch_intent_id: launchIntentID } : {}),
-            ...(specialistLaunchID ? { specialist_launch_id: specialistLaunchID } : {})})
-          if (!reservation.allowed) {
-            if (reservation.reason==='wall_clock') await enforceDeadline(sessionID)
-            research.notifyChanged(research.rootOf(sessionID)!)
-            throw Object.assign(new Error(`自主调度预算已到限：${reservation.reason}；先用 /research budget 显式调整额度，再恢复。`), { code: 'runtime_budget_exhausted' })
+        await preflight('synthetic', async () => {
+          requireCurrent()
+          await verifyController(sessionID, !resume)
+          if (resume && research.isAssociated(sessionID)) {
+            const source_snapshot=await host.source?.(sessionID)
+            reservation = await research.call('runtime_reserve', sessionID,{source_snapshot, message_id: outboundID, ...(wakeIntentID ? { wake_intent_id: wakeIntentID } : {}),
+              ...(launchIntentID ? { launch_intent_id: launchIntentID } : {}),
+              ...(specialistLaunchID ? { specialist_launch_id: specialistLaunchID } : {})})
+            if (!reservation.allowed) {
+              if (reservation.reason==='wall_clock') await enforceDeadline(sessionID)
+              research.notifyChanged(research.rootOf(sessionID)!)
+              throw Object.assign(new Error(`自主调度预算已到限：${reservation.reason}；先用 /research budget 显式调整额度，再恢复。`), { code: 'runtime_budget_exhausted' })
+            }
           }
-        }
-        requireCurrent()
-        await verifyController(sessionID)
+          requireCurrent()
+          await verifyController(sessionID, !resume)
+        })
         const sent = await ctx.session.synthetic({ sessionID, text, description: label, resume, ...(outboundID ? { id: outboundID } : {}) })
         if (outboundID && sent.id !== outboundID) throw new Error("Host did not confirm the requested research message ID")
         requireCurrent()
@@ -182,17 +217,17 @@ export default Plugin.define({
       },
       interrupt: async (sessionID) => {
         requireCurrent()
-        await verifyController(sessionID)
+        await verifyController(sessionID, true)
         await ctx.session.interrupt({ sessionID })
       },
       wait: async (sessionID) => {
         requireCurrent()
-        await verifyController(sessionID)
+        await verifyController(sessionID, true)
         await ctx.session.wait({ sessionID })
       },
       messages: async (sessionID) => {
         requireCurrent()
-        await verifyController(sessionID)
+        await verifyController(sessionID, true)
         return (await ctx.session.context({ sessionID })) as any[]
       },
     }
@@ -206,9 +241,9 @@ export default Plugin.define({
     const externalStarts = new Map<string,number>()
     let specialists!: Specialists
     const beforeTool = async (request: any) => {
-      if (!lifecycle.current()) {
+      if (!lifecycle.current() && !RESEARCH_READS.has(request.tool)) {
         if (lifecycle.successorReady()) return lifecycle.forwardBefore(request)
-        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query') {
+        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool) && !RESEARCH_READS.has(request.tool)) {
           throw new ToolError({ message: '研究控制器正在交接；请先等待身份核对。',
             metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
         }
@@ -219,13 +254,13 @@ export default Plugin.define({
         if (!ready) throw new Error("Research membership is not ready")
       } catch {
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardBefore(request)
-        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool)) {
+        if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool) && !RESEARCH_READS.has(request.tool)) {
           throw new ToolError({ message: "研究会话身份尚未核实；请先核对状态，不能执行此工具。",
             metadata: { code: "research_control_unavailable", retryable: false, allow_fallback: false } })
         }
         return
       }
-      if (!lifecycle.current()) {
+      if (!lifecycle.current() && !RESEARCH_READS.has(request.tool)) {
         if (lifecycle.successorReady()) return lifecycle.forwardBefore(request)
         throw new ToolError({ message: '研究控制器正在交接；请先等待身份核对。',
           metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
@@ -238,7 +273,7 @@ export default Plugin.define({
         if (!main) throw new Error('Research controller owner is unavailable')
         await ensureController(root, main)
       } catch {
-        if (!COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query') {
+        if (!COORDINATOR_NATIVE_READS.has(request.tool) && !RESEARCH_READS.has(request.tool)) {
           throw new ToolError({ message: '研究控制器尚未完成核对；只能读取现有材料。',
             metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
         }
@@ -248,9 +283,9 @@ export default Plugin.define({
         throw new ToolError({ message: "当前研究角色不能执行此工具；节点工作必须交给节点执行会话。",
           metadata: { code: "research_role_violation", retryable: false, allow_fallback: false } })
       }
-      if (role === 'node_core') await eventChain
+      if (role === 'node_core') await waitEvents(request.sessionID)
       if (role === 'node_core' && !COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query' &&
-          !await engine.nodeTurnAllowed(request.sessionID)) {
+          (eventGap || failedEvents.has(request.sessionID) || !await engine.nodeTurnAllowed(request.sessionID))) {
         throw new ToolError({ message: '当前节点执行轮没有暂停期间的收尾授权；请先核对状态。',
           metadata: { code: 'research_control_paused', retryable: false, allow_fallback: false } })
       }
@@ -310,7 +345,6 @@ export default Plugin.define({
     }
     let boot: Promise<void> | null = null
     bootstrap = () => {
-      if (eventGap) return Promise.reject(new Error('研究事件流不完整，需先核对执行状态'))
       boot ??= (async () => {
         await research.ready()
         requireCurrent()
@@ -321,12 +355,40 @@ export default Plugin.define({
       })().catch(error => { boot = null; throw error })
       return boot
     }
+    let repairing: Promise<void> | null = null
+    const repairEvents = () => {
+      repairing ??= (async () => {
+        await bootstrap()
+        await Promise.all([...eventChains.values()])
+        const version = gapVersion
+        // Replay terminal facts while scheduling is paused. Only the explicit
+        // resume below may start new work after the event gap is reconciled.
+        for (const root of research.roots().filter(root => research.inScope(root))) {
+          const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
+          if (main && (await research.call('status', main)).workflow?.run?.state === 'running') {
+            await research.call('workflow', main, { action: 'run', fields: { state: 'paused' } })
+          }
+        }
+        if (eventGap) subscribe()
+        for (const [session, events] of failedEvents) {
+          for (const event of events) await eventHandler!(event)
+          failedEvents.delete(session)
+        }
+        if (eventGap) {
+          await engine.recoverWarm()
+          await specialists.recoverWarm()
+        }
+        if (gapVersion !== version) throw new Error('事件流仍不可用；暂停或停止后检查宿主连接。')
+        eventGap = false
+      })().finally(() => { repairing = null })
+      return repairing
+    }
     void bootstrap().catch(error => {
       if (listening && lifecycle.current()) process.stderr.write(`Research controller initialization: ${error instanceof Error ? error.message : String(error)}\n`)
     })
 
     async function runTool(tool: ToolDefinition, call: any, args: Record<string, any>): Promise<unknown> {
-      if (!lifecycle.current()) {
+      if (!lifecycle.current() && !RESEARCH_READS.has(tool.name)) {
         if (lifecycle.successorReady()) return lifecycle.forwardTool(tool, call, args)
         throw new Error('研究控制器正在交接；请先等待身份核对。')
       }
@@ -334,12 +396,12 @@ export default Plugin.define({
       if (!currentTool) throw new Error('当前控制器不认识这个研究工具。')
       tool = currentTool
       args = validateArgs(args, currentTool.parameters)
-      await bootstrap()
+      if (tool.writes) await bootstrap()
       // A started event may already be buffered while setup is completing.
       // Consume it before a node asks to finish that execution.
-      await eventChain
-      if (eventGap) throw new Error('研究事件流不完整，需先核对执行状态')
-      requireCurrent()
+      await waitEvents(call.sessionID)
+      if (tool.writes && (eventGap || failedEvents.has(call.sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume')
+      if (tool.writes) requireCurrent()
       const sessionID = call.sessionID as string
       await research.confirmMembership(sessionID)
       if (!research.isAssociated(sessionID)) {
@@ -348,7 +410,7 @@ export default Plugin.define({
       const root = research.rootOf(sessionID)!
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
       if (!main) throw new Error('Research controller owner is unavailable')
-      await ensureController(root, main)
+      if (tool.writes) await ensureController(root, main)
       const role = research.roleOf(sessionID)
       if (!tool.roles.includes(role as any)) throw new Error(`${tool.name} 不属于本会话的角色（${role ?? "未登记"}）`)
       if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
@@ -422,7 +484,7 @@ export default Plugin.define({
       if (!lifecycle.current()) {
         if (lifecycle.successorReady()) return lifecycle.forwardContext(request)
         if (findProjectRoot(research.scope) === research.scope) {
-          for (const name of Object.keys(request.tools)) if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+          for (const name of Object.keys(request.tools)) if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
           request.system.push({ type: 'text', text: 'Research controller handoff is not ready; read existing information only.' })
         }
         return
@@ -441,6 +503,9 @@ export default Plugin.define({
           if (!keepsTool(name, associated, role, granted)) delete request.tools[name]
         }
         if (!associated) return
+        if (role === 'specialist' && specialists.isBlind(request.sessionID)) {
+          request.system.splice(0, request.system.length, { type: 'text', text: BLIND_SYSTEM })
+        }
         await within(bootstrap().then(() => true), STARTUP_WAIT_MS).then(ready => {
           if (!ready) throw new Error('Research controller is not ready')
         })
@@ -457,17 +522,13 @@ export default Plugin.define({
           }
         }
         if (role === 'node_core') {
-          await eventChain
+          await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
             for (const name of Object.keys(request.tools)) {
               if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
             }
             request.system.push({ type: 'text', text: 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
           }
-        }
-        if (role === "specialist" && specialists.isBlind(request.sessionID)) {
-          // OpenCode's prompt names the working directory and carries AGENTS.md; a blind reviewer gets neither.
-          request.system.splice(0, request.system.length, { type: "text", text: BLIND_SYSTEM })
         }
         const deadline=performance.now()+2000
         const text = await research.memory(request.sessionID)
@@ -480,7 +541,7 @@ export default Plugin.define({
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
         if (research.isAssociated(request.sessionID) || findProjectRoot(research.scope) === research.scope) {
           for (const name of Object.keys(request.tools)) {
-            if (!COORDINATOR_NATIVE_READS.has(name) && name !== "research_query") delete request.tools[name]
+            if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
           }
           request.system.push({ type: "text", text: "Research control is unavailable. Read existing information only; do not start research or assume it is running." })
         }
@@ -557,14 +618,12 @@ export default Plugin.define({
       else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
-        void engine.ended(sessionID, outcome, event.id, sequence).catch(error => {
-          if (listening && lifecycle.current()) {
-            eventGap = true
-            process.stderr.write(`Research terminal event failed: ${error instanceof Error ? error.message : String(error)}\n`)
-          }
-        })
+        await engine.ended(sessionID, outcome, event.id, sequence)
       }
       nativeObservations.event(event)
+    }
+    telemetryHandler = event => {
+      if (listening && lifecycle.current() && research.isAssociated(event.data?.sessionID)) nativeObservations.event(event)
     }
     for (const event of earlyEvents.splice(0)) queueEvent(event)
 
@@ -618,12 +677,13 @@ export default Plugin.define({
             if (research.roleOf(sid) !== 'main') throw new Error('只能由项目主会话执行恢复操作。')
             if (args.kind === 'controller') {
               try { await ensureController(root, sid) } catch { /* adoption validates the persisted binding */ }
-              await research.call('controller_adopt', sid, { reason: String(args.reason ?? '') })
+              const owner = await research.call<any>('controller_adopt', sid, { reason: String(args.reason ?? '') })
+              research.setController(root, { epoch: owner.epoch, binding: owner.binding, fence: owner.fence })
               controllers.set(root, Promise.resolve())
               boot = null
               research.notifyChanged(root)
               return { message: '控制器已接管；项目保持暂停，未知执行仍需逐项核对。' +
-                (eventGap ? ' 当前事件流仍不完整，请先重新启动宿主。' : '核对后可显式 /research resume。') }
+                (eventGap ? ' 当前事件流需核对，可用 /research resume 重新订阅并核对。' : '核对后可显式 /research resume。') }
             }
             await bootstrap()
             if (args.kind === 'task') return engine.recoverTask(sid, String(args.task_id ?? ''), String(args.reason ?? ''))
@@ -663,6 +723,7 @@ export default Plugin.define({
     const commandHandler = (input: any) => reported(async () => {
           const action = String(input.action ?? "help")
           if (action === "help") return { message: USAGE }
+          if (action === 'resume' && (eventGap || failedEvents.size)) await repairEvents()
           if (!['status', 'recover'].includes(action)) await bootstrap()
           if (['auto','resume','init','takeover','budget','recover','retry'].includes(action)) await research.ensureContract()
           await within(research.ready(), STARTUP_WAIT_MS)
@@ -712,6 +773,7 @@ export default Plugin.define({
     return () => {
       lifecycle.detach()
       listening = false
+      subscription?.abort()
       for(const timer of budgetTimers.values())clearTimeout(timer)
       storage.close()
       workspaceProbe.close()

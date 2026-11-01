@@ -203,6 +203,10 @@ class WorkflowStore:
             (session_id,),
         ).fetchone()
         controller = db.execute("SELECT state,details FROM workflow_intents WHERE intent_id='controller-owner:v1' AND kind='controller_owner'").fetchone()
+        from .controller import CURRENT_CONTROLLER, candidate_id
+        token = CURRENT_CONTROLLER.get()
+        candidate = db.execute("SELECT 1 FROM workflow_intents WHERE intent_id=? AND kind='controller_candidate' AND state='pending'",
+                               (candidate_id(session_id, token.get('epoch'), token.get('binding')),)).fetchone() if isinstance(token, dict) else None
         deliveries = []
         for delivery in db.execute("SELECT kind,state,details FROM workflow_intents WHERE session_id=? AND kind IN ('notification_delivery','notification_wake') AND state='submitting' ORDER BY updated_at LIMIT 50", (session_id,)):
             details = json.loads(delivery['details'])
@@ -218,7 +222,8 @@ class WorkflowStore:
             run=dict(row) if row else None,
             conclusion=self.conclusion_view(db),
             session=dict(current) if current else None,
-            controller={"phase": controller["state"], "fence": json.loads(controller["details"]).get("fence")} if controller else {"phase": "unrecorded"},
+            controller=({"phase": 'recovery_required', 'reason': 'other_controller_alive_or_unknown', 'fence': token['fence']} if candidate else
+                        {"phase": controller["state"], "fence": json.loads(controller["details"]).get("fence")} if controller else {"phase": "unrecorded"}),
             deliveries=deliveries,
             unverified=unverified,
             cursors=next_cursors,
@@ -622,7 +627,7 @@ class WorkflowStore:
                     (fields["state"], fields["notification_id"]),
                 )
             elif action == "intent":
-                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "execution_terminal", "execution_start", "turn_authorization"}:
+                if fields["kind"] in {"node_finish", "notification_delivery", "notification_wake", "node_launch", "specialist_launch", "controller_owner", "controller_candidate", "execution_terminal", "execution_start", "turn_authorization"}:
                     raise ValidationError("Typed runtime intents require their dedicated operation")
                 db.execute(
                     "INSERT INTO workflow_intents VALUES(?,?,?,?,?,?) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",

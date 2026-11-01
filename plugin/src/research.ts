@@ -4,7 +4,7 @@
  * memory and ledger tool calls. The autonomous loop lives in engine.ts.
  */
 import { randomUUID, createHash } from "node:crypto"
-import { existsSync, realpathSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import type { StorageClient } from "./storage"
 import { CheckpointDelivery } from './checkpoint-delivery'
@@ -72,6 +72,7 @@ interface Membership {
 export class Research {
   readonly checkpoints = new CheckpointDelivery()
   private members = new Map<string, Membership>()
+  private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
   private executionFor: (sessionID: string) => string | undefined = () => undefined
   private readonly memoryObservations = { since: new Date().toISOString(), requested: 0, generated: 0, recorded: 0, recordFailed: 0, cached: 0 }
@@ -129,11 +130,19 @@ export class Research {
       }
       return
     }
+    const stamp = [this.storage.registryPath, this.storage.registryPath + '-wal'].map(path => {
+      try { const info = statSync(path); return `${info.mtimeMs}:${info.ctimeMs}:${info.size}` } catch { return '-' }
+    }).join('|')
+    const negative = this.nonmembers.get(sessionID)
+    if (!this.members.has(sessionID) && negative?.stamp === stamp && Date.now() - negative.at < 1000) return
     const value = await this.storage.request<any>('session_membership', { host_id: HOST_ID, session_id: sessionID })
     if (!value.associated || !this.inScope(value.root)) {
       if (this.members.has(sessionID)) this.forget(sessionID)
+      if (this.nonmembers.size >= 2048) this.nonmembers.delete(this.nonmembers.keys().next().value!)
+      this.nonmembers.set(sessionID, { stamp, at: Date.now() })
       return
     }
+    this.nonmembers.delete(sessionID)
     const row = value.session
     this.members.set(sessionID, { root: value.root, role: row?.detached ? undefined : row?.role, node: row?.node_id ?? undefined })
     const main = value.main
@@ -206,10 +215,12 @@ export class Research {
   }
 
   register(sessionID: string, root: string, role: string, node?: string): void {
+    this.nonmembers.delete(sessionID)
     this.members.set(sessionID, { root, role, node })
   }
 
   forget(sessionID: string): void {
+    this.nonmembers.delete(sessionID)
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)
     this.checkpoints.forget(sessionID)

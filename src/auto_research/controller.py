@@ -2,6 +2,11 @@
 import errno
 import json
 import os
+import hashlib
+import platform
+import subprocess
+import sys
+from pathlib import Path
 from contextvars import ContextVar
 
 from .errors import ConflictError, ValidationError
@@ -23,11 +28,36 @@ class ControllerUnavailable(ConflictError):
 
 
 def _alive(pid):
+    if os.name == 'nt':
+        return None  # kill(pid, 0) is not a read-only liveness probe on Windows.
     try:
         os.kill(pid, 0)
         return True
     except OSError as exc:
         return False if exc.errno == errno.ESRCH else None
+
+
+def process_identity(pid):
+    """An optional local process incarnation, never an epoch/realm guess."""
+    machine = hashlib.sha256((sys.platform + ':' + platform.node()).encode()).hexdigest()
+    try:
+        if sys.platform.startswith('linux'):
+            stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+            boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+            start = boot + ':' + stat[19]
+        elif sys.platform == 'darwin':
+            result = subprocess.run(['ps', '-p', str(pid), '-o', 'lstart='], capture_output=True,
+                                    text=True, timeout=1, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'})
+            start = result.stdout.strip() if result.returncode == 0 else ''
+        else:
+            return None
+        return {'machine': machine, 'start': start} if start else None
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def candidate_id(session, epoch, binding):
+    return 'controller-candidate:' + hashlib.sha256(json.dumps([session, epoch, binding]).encode()).hexdigest()
 
 
 def controller_row(db):
@@ -60,6 +90,7 @@ class ControllerStore:
                 raise ValidationError('Only the current main may attach a controller')
             run = db.execute('SELECT state,control_revision FROM workflow_project WHERE id=1').fetchone()
             old, previous = controller_row(db)
+            identity = process_identity(pid)
             if not old:
                 # An upgraded running project has no recorded host identity.
                 phase = 'recovery_required' if run['state'] == 'running' else 'ready'
@@ -71,10 +102,22 @@ class ControllerStore:
                 fence = int(previous['fence']) + 1
             else:
                 alive = _alive(previous['pid'])
-                if alive is not False:
-                    raise ControllerUnavailable('other_controller_alive_or_unknown', run)
+                observed = process_identity(previous['pid'])
+                recorded = previous.get('process_identity')
+                replaced = (recorded and observed and recorded['machine'] == observed['machine']
+                            and recorded['start'] != observed['start'])
+                if alive is not False and not replaced:
+                    # A contender must not revoke a possibly live owner before
+                    # the user confirms takeover. Keep an auditable candidate.
+                    candidate = {**payload, 'process_identity': identity, 'fence': int(previous['fence']) + 1,
+                                 'expected_owner': {key: previous[key] for key in ('epoch', 'binding', 'fence')}}
+                    db.execute("INSERT INTO workflow_intents VALUES(?,?,?,?,?,datetime('now')) "
+                               "ON CONFLICT(intent_id) DO UPDATE SET details=excluded.details,state=excluded.state,updated_at=excluded.updated_at",
+                               (candidate_id(session, epoch, binding), 'controller_candidate', session, 'pending', json.dumps(candidate, sort_keys=True)))
+                    return {'phase': 'recovery_required', 'mode': 'contended', 'reason': 'other_controller_alive_or_unknown',
+                            **{key: candidate[key] for key in ('epoch', 'binding', 'fence')}}
                 phase, mode, fence = 'reconciling', 'cold', int(previous['fence']) + 1
-            details = {**payload, 'fence': fence, 'recovery_mode': mode if phase == 'reconciling' else None}
+            details = {**payload, 'process_identity': identity, 'fence': fence, 'recovery_mode': mode if phase == 'reconciling' else None}
             db.execute("INSERT INTO workflow_intents VALUES(?,?,?,?,?,datetime('now')) ON CONFLICT(intent_id) DO UPDATE SET state=excluded.state,details=excluded.details,updated_at=excluded.updated_at",
                        (INTENT_ID, 'controller_owner', session, phase, json.dumps(details, sort_keys=True)))
             db.execute('UPDATE workflow_project SET control_revision=control_revision+1 WHERE id=1')
@@ -112,17 +155,31 @@ class ControllerStore:
             self._association(db, host, session)
             row, details = controller_row(db)
             token = CURRENT_CONTROLLER.get()
-            if (not row or row['state'] != 'recovery_required' or row['session_id'] != session
-                    or not isinstance(token, dict) or any(token.get(k) != details.get(k) for k in ('epoch', 'binding', 'fence'))):
+            if not row or row['session_id'] != session or not isinstance(token, dict):
                 raise ControllerUnavailable('controller_adoption_not_authorized')
+            same = all(token.get(k) == details.get(k) for k in ('epoch', 'binding', 'fence'))
+            if row['state'] != 'recovery_required' or not same:
+                cid = candidate_id(session, token.get('epoch'), token.get('binding'))
+                pending = db.execute("SELECT details FROM workflow_intents WHERE intent_id=? AND kind='controller_candidate' AND state='pending'", (cid,)).fetchone()
+                candidate = json.loads(pending['details']) if pending else {}
+                expected = {key: details[key] for key in ('epoch', 'binding', 'fence')}
+                if (not candidate or candidate.get('host') != host or candidate.get('session') != session
+                        or candidate.get('expected_owner') != expected
+                        or any(token.get(k) != candidate.get(k) for k in ('epoch', 'binding', 'fence'))):
+                    raise ControllerUnavailable('controller_adoption_not_authorized')
+                details = {key: value for key, value in candidate.items() if key != 'expected_owner'}
+                db.execute("UPDATE workflow_intents SET details=? WHERE intent_id=?", (json.dumps(details, sort_keys=True), INTENT_ID))
+                db.execute("UPDATE workflow_intents SET state='adopted',updated_at=datetime('now') WHERE intent_id=?", (cid,))
             db.execute("UPDATE workflow_project SET state='paused',updated_at=datetime('now') WHERE state='running'")
             db.execute("UPDATE project SET control='paused' WHERE control='auto'")
             db.execute("UPDATE workflow_sessions SET pause_reason='cold' WHERE session_id=? AND detached=0", (session,))
             db.execute("UPDATE exploration_tasks SET state='unverified',error='manual recovery: exit not verified',updated_at=datetime('now') WHERE state IN ('starting','running','waiting','stopping')")
             db.execute("UPDATE specialist_tasks SET state='unverified',exit_verified=0,error='manual recovery: exit not verified',updated_at=datetime('now') WHERE state IN ('starting','running')")
             db.execute("UPDATE workflow_intents SET state='ready',updated_at=datetime('now') WHERE intent_id=?", (INTENT_ID,))
+            db.execute("UPDATE workflow_intents SET state='revoked',updated_at=datetime('now') WHERE kind IN ('execution_start','turn_authorization') AND state IN ('open','issued')")
             db.execute('UPDATE workflow_project SET control_revision=control_revision+1 WHERE id=1')
             self._event(db, 'runtime.controller_adopted', {'reason': reason.strip(), 'fence': details['fence'],
                                                            'unverified_executions_preserved': True})
-            return {'phase': 'ready', 'run_state': 'paused', 'unverified_executions_preserved': True}
+            return {'phase': 'ready', 'run_state': 'paused', 'unverified_executions_preserved': True,
+                    **{key: details[key] for key in ('epoch', 'binding', 'fence')}}
         return self._mutate('runtime.controller_adopt', payload, operation, work)

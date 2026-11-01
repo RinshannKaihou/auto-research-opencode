@@ -10,6 +10,7 @@
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { join } from "node:path"
+import { wasNotSent } from './host-submission'
 import { oneLine, type ModelRef, type PermissionRule, type SessionHost } from "./engine"
 import type { Research } from "./research"
 
@@ -256,10 +257,13 @@ export class Specialists {
     signal?.addEventListener("abort", cancel, { once: true })
     if (signal?.aborted) controller.abort()
     let child: string | undefined
+    let createAttempted = false
+    let kickoffAttempted = false
     try {
       const parentState = await this.research.call("status", parent)
       const workspace: string = parentState.workflow?.session?.cwd ?? root
       const kind = reserved.context_mode === "blind" ? "盲评" : "专家"
+      createAttempted = true
       const created = await this.host.create(
         `${reserved.node_id ?? "项目"} · ${kind} · ${oneLine(reserved.label, 40)}`,
         root,
@@ -281,6 +285,7 @@ export class Specialists {
       if (reserved.context_mode !== "blind") this.researchMode.add(child)
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'bound' }, `${operationID}:bound`)
       this.research.notifyChanged(root)
+      kickoffAttempted = true
       await this.host.synthetic(child, kickoff(reserved, workspace, tools), `专家任务 ${reserved.task_id}`, true,
         launch.message_id, undefined, undefined, launch.intent_id)
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'submitted' }, `${operationID}:submitted`)
@@ -314,8 +319,17 @@ export class Specialists {
       )
     } catch (error) {
       if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
-      const shouldStop = !!child && (timedOut || !!signal?.aborted)
-      const exited = shouldStop ? await this.stop(child!).catch(() => false) : false
+      const stage = !child && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
+        : child && (!kickoffAttempted || wasNotSent(error, 'synthetic')) ? 'synthetic' : undefined
+      if (stage) {
+        const undone = await this.research.call('runtime_outbound_not_sent', parent, {
+          intent_id: launch.intent_id, stage, reason: message(error),
+        }).catch(() => null)
+        if (undone?.rolled_back) return withoutPrompt(await this.research.call('specialist_get', parent, { task_id: reserved.task_id }))
+      }
+      // An RPC/archive/bind failure can leave a live child too. The current
+      // owner must request its exit even when no timeout or abort occurred.
+      const exited = child ? await this.stop(child).catch(() => false) : false
       return this.settle(
         parent,
         reserved.task_id,
@@ -348,11 +362,12 @@ export class Specialists {
   }
 
   private async stop(child: string, idle: Promise<void> = this.host.wait(child)): Promise<boolean> {
+    const exited = idle.then(() => true, () => false)
     await this.host.interrupt(child).catch(() => {})
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), STOP_GRACE_MS)))
     try {
-      return await Promise.race([idle.then(() => true, () => false), late])
+      return await Promise.race([exited, late])
     } finally {
       clearTimeout(timer)
     }

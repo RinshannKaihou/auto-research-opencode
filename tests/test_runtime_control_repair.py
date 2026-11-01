@@ -290,7 +290,9 @@ def test_controller_reattach_fences_old_binding_without_pausing(tmp_path):
     assert host.call('controller_check', control_owner=current)['phase'] == 'ready'
     assert host.call('status')['workflow']['run']['state'] == 'running'
     # Another realm cannot quietly steal a still-live process's controller.
-    assert 'other_controller_alive_or_unknown' in host.error('controller_attach', epoch='other', binding='other', pid=os.getpid())
+    candidate = host.call('controller_attach', epoch='other', binding='other', pid=os.getpid())
+    assert candidate['phase'] == 'recovery_required' and candidate['mode'] == 'contended'
+    assert host.call('controller_check', control_owner=current)['phase'] == 'ready'
 
 
 def test_legacy_running_owner_is_unknown_not_a_fabricated_cold_restart(tmp_path):
