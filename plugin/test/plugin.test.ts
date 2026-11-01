@@ -259,6 +259,16 @@ test('negative membership cache skips repeated misses and invalidates on registr
   } finally { first.close(); second.close() }
 })
 
+test('ready event health is valid JSON in status and session RPC responses', async () => {
+  const host = await load()
+  await host.command('init','ses_main',{goal:'status fixture'})
+  const status = await host.command('status','ses_main')
+  expect(status.state.event_recovery.state).toBe('ready')
+  expect(Object.hasOwn(status.state.event_recovery,'message')).toBe(false)
+  const session = await host.rpc().session({sessionID:'ordinary'})
+  expect(session.eventRecovery).toBeNull()
+})
+
 test('a lost execution-start response retries the same token and retains inbox authorization', async () => {
   const original = StorageClient.prototype.request
   const tokens: string[] = []

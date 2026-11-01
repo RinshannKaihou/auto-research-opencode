@@ -151,7 +151,7 @@ export default Plugin.define({
       const message = state === 'ready' ? undefined : state === 'unresolved'
         ? `有 ${unresolved} 个事件会话归属待核对；已知会话继续按原授权控制。用 /research resume 重试核对。`
         : `研究事件需核对（${eventGap ? '事件流中断或溢出；' : ''}暂存 ${held} 条）；暂停和停止仍可用，用 /research resume 重新订阅并核对。`
-      return { state, held, unresolved, message }
+      return { state, held, unresolved, ...(message ? {message} : {}) }
     }
     notifyEventState = () => { for (const root of research.roots()) if (research.inScope(root)) emitChanged(root) }
     research.setExecutionResolver(sessionID => lifecycle.state.turns.get(sessionID))
@@ -850,7 +850,7 @@ export default Plugin.define({
           await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS)
           const state = await research.sessionState(sessionID)
           const root = research.rootOf(sessionID)
-          return { ...state, eventRecovery: eventHealth(root), observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
+          return { ...state, eventRecovery: eventHealth(root) ?? null, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
         })
     const boardHandler = (input: any) => reported(async () => {
           const directory =
