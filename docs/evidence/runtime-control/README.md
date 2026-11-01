@@ -2,15 +2,20 @@
 
 基线为合入 PR #8 的 `1930a0505f036ea106d23dd22de688d85a9fb6ce`。本记录对应隔离修复分支，尚不表示已发布或部署到现有研究。
 
+2026-11-01 审阅后的修复以[逐条处理记录](review-response.md)和[本轮验证](review-verification.json)为准；以下独立探针 JSON 保留上一轮证据，未将旧运行结果伪装成本轮执行。
+
 ## 自动回归
 
-- Python 全量：600 passed；Bun 全量：111 pass、0 fail；TypeScript `tsc --noEmit` 和 `git diff --check` 通过。
+- 本轮 Python 全量：610 passed（#10 的 Python 源码与测试同 #9 修复提交完全一致）；完整堆叠版本 Bun 全量：135 pass、0 fail；TypeScript `tsc --noEmit` 和 `git diff --check` 通过。均为本地验证，非 CI 结果。
 - 回归覆盖暂停时拒绝新派发、恢复后派发、并发槽位认领、启动响应丢失、重绑定与真正冷启动、终态去重、暂停期间的精确收尾授权、通知和人工核对、专家期限和工具范围、停止及预算截止。
 - 旧会话请求、未知 `research_` 工具和普通未关联会话分别检查角色边界；完整宿主证据仍以以下探针为准。
+- 新增回归覆盖失败／中断 finish、第二轮和已暂停节点重绑定、finish 提交窗口、PID 复用与接管 CAS、事件丢响应／中断／恢复、确定未提交宿主的退回、意外错误后的专家中断，以及 manual／paused／stopped／complete 的主协调限制、detach、未知角色和恢复期间盲评输入读取。
 
 ## 隔离宿主与打包
 
 所有宿主探针在临时项目、独立注册表、独立配置及本机回环服务中执行；脚本化模型只在本机运行，不访问外部模型服务。
+
+本轮重跑了强行插回 shell 的旧请求、软暂停与显式恢复、同进程专家接续、真实节点进程重启。另扩展执行探针核对 `resume:true` 同 ID 重发和重启后 seq 持续递增；输出摘要存于 review-verification.json。完整宿主配置热更新卸载顺序及所有多进程交错仍未覆盖。
 
 - [宿主身份与消息 ID](host-probe.json)：OpenCode 2.2.5、插件 SDK 2.0.18；同 ID 重复提交获得同一 inbox 条目，同进程的两次插件 setup 保持相同进程身份。`resume:false` 的排队消息没有出现在 context，因此不能以 context 缺消息证明未发送。
 - [执行事件](execution-probe.json)：验证首轮及后续轮的 inbox ID、事件顺序和终态关联；真实宿主首轮的 started 事件未被该订阅看到，因而实现允许从已交付的授权消息建立首轮关联。

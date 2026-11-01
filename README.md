@@ -133,6 +133,8 @@ opencode --auto
 
 暂停期间输入普通消息不会恢复自动推进。控制器身份、节点或专家退出、报告投递无法确认时，先查看状态和看板，独立核对原宿主及外部进程，再使用 `/research recover` 的对应命令登记核对结果；重新运行节点还需显式 `/research retry`。命令和确认条件见 [插件恢复说明](plugin/README.md#运行控制与恢复)。
 
+主协调的原生工具限于 `read`、`glob`、`grep`，该角色限制在 manual、暂停、停止和结项状态下持续有效；websearch／webfetch、todo 和未分类 MCP 工具也由节点或普通会话使用。需要普通工具时，在停止后 `/research detach`，或新建未关联研究的会话。
+
 其余命令（`init`、`guidance`、`takeover`、`detach`）见 [plugin/README.md](plugin/README.md#命令)。
 
 ### 节点内专家

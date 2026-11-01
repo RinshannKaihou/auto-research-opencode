@@ -429,6 +429,6 @@ export function keepsTool(
   if (NATIVE_BLOCKED.has(name)) return false
   const own = TOOLS.find((tool) => tool.name === name)
   if (own) return own.roles.includes(role as Role)
-  if (role === "main" || !role) return coordinatorMayUseNative(name)
-  return true
+  if (role === 'node_core') return true
+  return coordinatorMayUseNative(name)
 }

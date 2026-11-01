@@ -280,8 +280,12 @@ export default Plugin.define({
       }
       const role = research.roleOf(request.sessionID)
       if (!keepsTool(request.tool, true, role, specialists?.toolsOf(request.sessionID) ?? [])) {
-        throw new ToolError({ message: "当前研究角色不能执行此工具；节点工作必须交给节点执行会话。",
-          metadata: { code: "research_role_violation", retryable: false, allow_fallback: false } })
+        const message = role === 'main' ? '主协调不能执行此工具；节点工作必须交给节点执行会话。'
+          : role === 'specialist' ? '专家只能使用本任务明确授予的只读工具。'
+          : role === 'node_core' ? '节点执行会话不能使用此工具。'
+          : '研究角色尚未登记或无法识别；只能读取已有材料，请先核对会话身份。'
+        throw new ToolError({ message,
+          metadata: { code: 'research_role_violation', role: role ?? 'unknown', retryable: false, allow_fallback: false } })
       }
       if (role === 'node_core') await waitEvents(request.sessionID)
       if (role === 'node_core' && !COORDINATOR_NATIVE_READS.has(request.tool) && request.tool !== 'research_query' &&
