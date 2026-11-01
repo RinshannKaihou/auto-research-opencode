@@ -55,11 +55,11 @@ E2 另提供 `/research conclusion-contract evidence-v1`，让单路径项目显
 
 已完成的旧项目只读浏览保持原语义；重新研究须先按现有方式创建新 generation。对未结项旧项目的采用操作记录采用时点与当前范围，不把此前节点反推成“已探索”。E1 项目升级到 E2 插件时保留其原契约，重新显式采用后才启用新门禁。
 
-新项目默认保持旧模式；新 generation 继承项目已采用的策略/契约并生成本代记录，不因 `/research auto`、恢复、升级或接管静默重置。新代是否继承候选材料另行显式声明，不继承旧代的回答或已读事实。
+新项目默认保持旧模式。新 generation 在探索关闭时默认使用 Legacy 结项契约，在探索仍开启时使用 `evidence-v1`；本代可显式升级，不能降级。已结项项目可先关闭下一代的探索偏好，再创建新代。新代不继承旧代的回答或材料已读事实。
 
 启用探索与所需读取能力在一次配置事务中生效；能力不满足就返回明确错误，不留下半启用状态。探索开启期间请求降回 Legacy context 被拒绝，并提示先关闭探索。已启用 `evidence-v1` 的当前代不支持切回宽松契约；关闭探索也不能通过旧 API 绕过。用户停止与预算暂停独立于以上配置。
 
-命令名为拟定接口，尚未实现；开发前若调整拼写，统一修改本文、工具说明与测试，不保留同义入口。
+以上命令已实现；用户入口保持统一，不增加同义入口。
 
 ## 4. E1.1：领域对象、存储和权限
 
@@ -134,9 +134,9 @@ basis_digest, manifest_digest, schema_versions,
 counts, graph_complete, limitations, required_parts, cursor
 ```
 
-在一次 SQLite 读事务内生成规范化结构快照；后续分页读该不可变快照，不能重新计算 current 后拼接旧页。采用服务进程内有容量上限的快照缓存，不为普通读取新增数据库事件或迁移。进程重启/缓存淘汰返回 `evidence_snapshot_expired`，要求重新读取；不偷偷用新状态续旧游标。
+在一次 SQLite 读事务内生成规范化结构快照；后续分页读该不可变快照，不能重新计算 current 后拼接旧页。普通快照使用有容量上限的进程缓存，重启或淘汰后明确要求重读；持久 draft 的决策包由保存的正文重建，不重新计算科学状态。结构闭包最多读取 2,048 个引用、8,192 条边、4,096 条相关审阅事件；超限保留不完整原因，不能据此 answered 或安排要求完整比较的新探针。
 
-快照分 records、edges、risks、reviews、materials 和 limitations；长字段分块带内容哈希。沿用有界 IPC，页与块均包含 part/range、总量、next cursor、digest。摘要不计作完整 part，遇限制时 `graph_complete=false`；游标走完只表示已交付该快照的全部内容，不能把不完整图升级为完整。
+普通结构快照采用字符游标；固定材料和持久决策包采用 UTF-8 字节范围及正文摘要，页面不切断字符。两种范围不能混合。摘要不计作完整正文，遇限制时 `graph_complete=false`；游标走完只表示已交付该快照的全部内容，不能把不完整图升级为完整。
 
 结构快照与冻结文件正文分别标明完整性。固定对象的元数据不是其正文已读凭据；非文本材料、指定摘录和未交付原始文件都保留阅读范围。后端对冻结对象的定位/读取复用 `frozen_refs` 与 workbench 分块，不回退到可变 workspace。文件完整性核验在 SQLite 写事务外执行；再核对账本指纹，避免长文件哈希阻塞写入。
 
@@ -146,10 +146,10 @@ counts, graph_complete, limitations, required_parts, cursor
 
 复用 checkpoint-delivery 的宿主观测方式，增加独立的 evidence delivery 描述与 `evidence_read_receipts` 表；不能把 checkpoint base 当作依据已读凭据。E1 决策按所需材料读取，不要求每个轻量探针支付最终审计的全量交付成本；E2 完整读取门禁针对明确的结项 draft。
 
-- 宿主只为实际进入下一次模型输入的完整页/块登记交付；工具结果被截断、丢失或请求未发送不登记完整。
-- 收集范围绑定 project、generation、当前 owner/session、插件实例、snapshot/draft、part/range 和 digest。模型不能自填 `read_complete=true`。
+- 宿主验证进入模型输入的完整工具正文。决策包凭据绑定当前请求；材料页在该请求实际产生模型响应或工具调用后确认，失败或未发送的请求不会形成有效材料历史。
+- 范围绑定 project、generation、当前 owner/session、snapshot/draft、part/range 和 digest；决策包还绑定当前插件实例和模型消息。模型不能自填 `read_complete=true`。
 - E1 可据此报告交付完整性；普通 board 浏览与 query 不写科学状态。持久登记由宿主的明确 acknowledge 操作完成，仅记交付事实，不提升 coverage、不产生选路进展；临时快照过期后不能凭旧回执续读。
-- E2 对持久 draft 的交付登记落库，重启后可重读同一 draft；新 main/新会话重新交付，不继承前会话“已读”。迟到旧回执不能补成当前请求凭据。
+- E2 对持久 draft 的交付登记落库，重启后可重读同一 draft；同代同主会话的已确认材料范围可跨请求累计，新 main 或新代不继承。迟到旧回执不能补成当前请求的决策包凭据。
 - 证明的是特定材料已被交付，不是模型理解、科学验证或所有原始实验文件均已阅读。原始材料未读的限制进入检查结果，不能用结构记录的完整交付掩盖。
 
 ## 6. E1.3/E1.4：探针、结果与选择事务
@@ -203,6 +203,8 @@ counts, graph_complete, limitations, required_parts, cursor
 扩展当前 main context：目标与关键未知、当前路线及证据、最强剩余替代、未处理结果、失效决策、待执行/受阻意图、关键风险。候选全量通过稳定索引/计数/游标访问；小预算先保留这些入口，标明未显示数量，不承诺所有路线详情必塞入上下文。
 
 已有 deliver/wake 继续负责可靠交付，唤醒后提示“处理这些结果并决定下一步”，不自动深化第一条成功路线。同批结果可在一个决策处理；无新事实的唤醒不会额外产生选择。预算/用户暂停时不自动唤醒模型。
+
+失效、关闭或永久业务错误使未启动工作终止时，同一事务保存结果与通知；无节点意图也可唤醒对应的等待。探索关闭后允许处理已有结果和 defer/propose_stop，但不允许创建新工作。当前严格依据检查覆盖完整选择视图，因此新增无关候选也可能使排队探针失效，须重新选择。
 
 路线编辑、反复排名或新增近似名称不重置 idle。可计作选路进展的是第一次处理新的结果/支撑变化并形成有依据的决策，或实际节点工作；反复引用同一结果翻转处置不累计进展。沿用总轮次/墙钟限制，不另加分叉率或决策次数配额。
 
@@ -287,9 +289,9 @@ stop reason 支持 `goal_met | sufficient_for_current_choice | low_expected_valu
 
 新增 main 专用 `research_prepare_conclusion`，沿用 `research_publish` 与 `research_conclude`。新模式工具参数按已采用契约呈现，不把新旧两套必填字段拼成长可选表单。
 
-1. `research_query collection=evidence`：读取声明核心与停止范围的同源快照，处理关键风险、补充审阅或明确限制。
-2. `research_prepare_conclusion`：输入 snapshot、core_claim_refs、预期 outcome/gaps、风险判断、审阅要求和停止理由；核对当前指纹后，将规范化完整依据与四维状态封存为不可变 draft。返回 draft_id、basis_digest、缺失交付项、报告事实模板及生成的 evidence appendix 引用。
-3. 需要时分页读取该 draft 的完整依据与附录；宿主登记实际交付回执。完整交付不隐藏 draft 中的 graph/material limitations。
+1. `research_query collection=evidence`：读取结构快照，按 `material_ref` 分页读取固定材料，再重新查询读取覆盖与关键风险。
+2. `research_prepare_conclusion`：输入 snapshot、core_claim_refs、预期 outcome/gaps、风险判断、审阅要求和停止理由；核对当前指纹后保存完整结构依据及单独的决策包。材料读取状态在此冻结；后续继续读材料须重新查询并 prepare。
+3. 分页读取不可变决策包；结项所在请求必须完整收到对应 draft 的所有页。决策包上限 32,000 UTF-8 字节；结构事实超限时显式缩小范围，不能自动裁掉风险。图和材料限制仍然可见。
 4. 写最终报告并 `research_publish`：带 draft_id 与精确核心引用；发布路径将生成的 evidence appendix 一起冻结，并登记 report/appendix/basis 的关联。不要求模型手抄附录或伪造哈希。
 5. `research_conclude(draft_id, final_ref, summary)`：从 draft 取得 outcome、gaps、risk judgments 与派生 review；原子重算后提交。不能在最后一步另传一份不一致的 coverage/核心集合。
 
@@ -299,7 +301,7 @@ prepare 不是停止执行，也不是结项完成。修改核心、判断或停
 
 E2 新增 `conclusion_drafts`、`conclusion_evidence`，复用 E1 的 `evidence_read_receipts`；conclusion_evidence 以现有 conclusion_id 为键保存四维快照/报告关联。旧 `project_conclusions` 和旧 requests 回执不重写。
 
-- draft 保存规范化依据快照、scope/route/decision revisions、相关结果、风险判断、审阅要求、source sequence、计算器版本与内容摘要；大块存储复用现有内容寻址对象，表中存 manifest/引用。
+- draft 保存完整结构快照、独立决策包、范围/路线、相关结果、风险判断、审阅要求、source sequence 和摘要；大块原始材料留在固定对象中，不塞入决策包。决策包的 manifest 对应其实际交付正文。
 - evidence appendix 从同一 draft 生成，含核心/支撑索引、pinned/current、条件、风险与处置、覆盖、阅读范围/限制、路线停止说明。
 - basis digest 不包含由它生成的最终报告/附录，避免循环哈希。appendix 不包含自己的哈希或未来报告哈希；发布 manifest 关联 basis digest、appendix hash、report hash 和精确 refs。
 - 报告的结构化声明引用同一 draft 和核心集合；结项核对 final_ref 的 owner、版本、字节完整性和 manifest。文件内容改变须重新发布；核心依据变化须重新 prepare/read/publish。
@@ -337,7 +339,7 @@ E2 新增 `conclusion_drafts`、`conclusion_evidence`，复用 E1 的 `evidence_
 
 ### 11.1 schema 与兼容
 
-建议 E1 使用 schema 13、E2 使用 schema 14；合并前若 main 已占号则顺延，接口/契约版本不依赖数字。
+E1/E2 使用 schema 13/14，复审修复新增 schema 15，用于代际契约、无节点探索通知和材料回执来源；接口/契约版本不依赖数据库号。
 
 - E1 migration 增加五类领域表、evidence_read_receipts 及 generation 策略配置；执行意图复用 workflow_intents。回执 schema 预留可空 draft 关联，E2 复用，不再建第二份回执表。
 - E2 增加 typed review、draft、四维结项扩展表；不将旧 review completed 或结项 review.status 回填为新 coverage。

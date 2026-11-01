@@ -1,0 +1,43 @@
+{
+  "actions": [
+    "research_scope",
+    "research_route",
+    "research_route",
+    "research_query",
+    "research_decide",
+    "research_wait",
+    "research_publish",
+    "research_finish",
+    "research_query",
+    "research_decide",
+    "research_publish",
+    "research_wait",
+    "research_record",
+    "research_finish",
+    "research_query",
+    "research_decide",
+    "research_query",
+    "research_query",
+    "research_query",
+    "research_query",
+    "research_prepare_conclusion",
+    "research_publish",
+    "research_query",
+    "research_conclude"
+  ],
+  "closure": "qualified",
+  "decisions": [
+    "probe",
+    "redirect",
+    "propose_stop"
+  ],
+  "material_pages": 3,
+  "material_receipts": 3,
+  "outcome": "answered",
+  "run_state": "complete",
+  "tasks": [
+    "finished",
+    "finished"
+  ],
+  "used_external_model": false
+}

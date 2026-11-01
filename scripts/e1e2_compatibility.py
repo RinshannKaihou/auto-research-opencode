@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 
-from auto_research.native_store import NativeStore
+from auto_research.native_store import NativeStore, SCHEMA_VERSION
 
 
 def digest(path):
@@ -45,7 +45,7 @@ def validate(root, label):
             raise RuntimeError(f'{label}: source changed during copy')
         objects = root / '.research' / 'objects'
         if objects.exists():
-            (metadata / 'objects').symlink_to(objects, target_is_directory=True)
+            shutil.copytree(objects, metadata / 'objects')
         database = metadata / 'state.sqlite3'
         columns, old = inventory(database)
         with sqlite3.connect(database) as db:
@@ -62,7 +62,7 @@ def validate(root, label):
                 'review_assessments','conclusion_drafts','conclusion_evidence')
             count = {name:db.execute(f'SELECT COUNT(*) FROM {name}').fetchone()[0] - old.get(name, {}).get('count', 0)
                      for name in names}
-            backups = [number for number in range(version, 14) if (metadata / f'schema-{number}-backup.sqlite3').exists()]
+            backups = [number for number in range(version, SCHEMA_VERSION) if (metadata / f'schema-{number}-backup.sqlite3').exists()]
             new_version = db.execute('PRAGMA user_version').fetchone()[0]
         assert not any(count.values()), f'{label}: migration created E1/E2 scientific records'
         assert before == {path.name:digest(path) for path in files}, f'{label}: source changed during verification'
@@ -78,7 +78,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     projects = json.loads(args.roots.read_text())['projects']
-    result = {'method':'stable DB/WAL copies; compare every historical column; original sources are not opened for writing',
+    result = {'method':'stable DB/WAL and object copies; compare every historical column; original sources are not opened for writing',
               'projects':[validate(Path(item['root']), f'project-{index:02d}') for index,item in enumerate(projects, 1)]}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(f"validated {len(result['projects'])} projects")

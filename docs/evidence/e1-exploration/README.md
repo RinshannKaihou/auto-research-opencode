@@ -1,13 +1,13 @@
-# E1 工程验证
+# E1/E2 工程验证
 
-基线为 `324f2ed2ad15e88dc6ab39a50f2a3762023f8379`；本记录的验证发生在该基线上的提交前开发工作区，不代表已发布版本。[源码摘要](source-manifest.json)记录本次验证涉及的变更文件哈希。E1／E2 一起完成工程闭环后再进行用户验收。
+本记录区分后端测试、插件 fakeHost、实际 OpenCode 和旧项目副本。复审处理及保留意见见 [PR #11 评审处理](review-response.md)；[源码摘要](source-manifest.json)记录本轮运行对应的源码哈希。以下均为工程验证，不替代用户验收或真实模型效果比较。
 
-- 隔离宿主剧本在普通节点调度链上登记两个候选，处理第一项探针的信息不足，保留暂缓理由和恢复条件，再转向第二项探针；结果按固定引用进入结项草案。
-- 注入在 decision 与 materialize 之间的宿主中断后，重启先暂停；显式恢复产生同一个工作的一条节点和一条任务。预算不足保留未启动意图；启动时再次核对依据。
-- 80／132 列看板在既有“研究”视图内显示可读路线。独立 tarball 从解压后的内置后端恢复 E1 意图并完成 E2 结项；隔离 OpenCode 和本地模拟 provider 也完成了基础节点启动与结束，不调用外部模型。
-- [旧项目副本结果](local-project-compatibility.json)：8 个登记项目中有 5 个在本次运行可访问。对这些 schema 10 数据库及 WAL 的稳定副本逐级升级到 schema 14，逐表比较升级前已有列，原有数据保持一致，新表没有凭空生成科学记录；源数据库及 WAL 的哈希未变。另 3 个不可访问项目未测试。副本验证不代表已接管或重跑原研究。
-- [真实模型评估准备](evaluation/README.md)记录题目、独立评分和隔离夹具。当前没有真实模型质量／成本对照；部分 E1 任务仍需可执行测量服务与配对运行设施，因此不能据此宣称研究质量改善。
+- **后端和插件回归**：Python 全量 691 项、Bun 全量 163 项通过；TypeScript 与 PR 范围 diff 检查通过。实际输出见 [Python](runs/pr11-pytest.txt)、[Bun](runs/pr11-bun-test.txt) 和 [命令记录](runs/pr11-checks.json)。fakeHost 场景包括过期与有效页混合、材料跨请求读取、失效/关闭唤醒及未物化意图恢复。
+- **实际 OpenCode，模拟 provider**：[完整 E1/E2](runs/pr11-host-full.json) 登记两个候选、首次探针不足后转向，读取三页材料并以 qualified 状态结项；[排队探针失效](runs/pr11-host-stale.json) 和 [关闭探索](runs/pr11-host-off.json) 均验证结果、通知、唤醒和后续收尾；[冷重启](runs/pr11-host-restart.json) 保留未知执行及排队探针，显式恢复后没有重复创建节点或意图。这些场景使用隔离 OpenCode 和本地脚本，不调用外部模型。
+- **独立发布包**：[打包 OpenCode 场景](runs/pr11-packed-e1e2.json) 从独立 tarball 解压，删除构建源码目录，确认后端从包内加载后运行完整 E1/E2。此前的 [基础节点宿主结果](runs/packed-host.json) 仅证明 propose/dispatch/finish，不作为本次完整 E1/E2 的证据。
+- **旧项目独立副本**：[迁移输出](local-project-compatibility.json) 对 5 个可访问的 schema 10 项目复制 DB/WAL 和对象，逐级迁移至 schema 15，核对历史列和原始 DB/WAL 哈希。另有 3 个项目不可访问，未测试；没有接管或重新运行原研究。
+- **历史范围的体积边界**：[匿名体积测量](project-evidence-sizing.json) 对相同副本读取现有报告引用或最新 claim，比较结构视图与不含实际风险判断的占位决策包。5 个样本的结构视图为 34,726–160,479 字节，占位包为 15,230–64,856 字节；其中 2 个占位包已超过 32,000 字节。真实判断还会占空间，宽范围可能需要用户/协调者显式缩小；这些值不是 token，也不是已经准备的正式草案。
 
-最终工程回归：`python3 -m pytest -q` 通过 658 项；`bun test` 通过 153 项；`bun run typecheck` 和 `git diff --check` 通过。输出见 [Python](runs/pytest.txt)、[Bun](runs/bun-test.txt) 和 [隔离打包宿主](runs/packed-host.json)；Python 日志中的用户目录已替换。打包宿主探针与全量测试并行时曾超时，测试结束后单独重跑通过。
+可使用 [副本迁移脚本](../../../scripts/e1e2_compatibility.py)、[体积测量脚本](../../../scripts/e1e2_evidence_sizing.py)、[实际宿主脚本](../../../scripts/probe_e1e2_run.py) 和 [独立包脚本](../../../scripts/probe_packed_release.py)复现。副本脚本的输入是本机路径清单，输出只含匿名编号与计数，不写源路径或内容。
 
-使用 [副本兼容脚本](../../../scripts/e1e2_compatibility.py)可重复迁移检查。脚本只向输出报告写匿名编号，不写源路径。
+[真实模型评估准备](evaluation/README.md)中的任务是公开样题；尚未开展真实模型质量或成本对照。阅读范围回执只证明宿主确认交付，不证明模型理解材料或科学结论正确。
