@@ -500,3 +500,18 @@ def test_oversized_decision_package_reports_size_and_scope_counts(tmp_path):
     assert 'narrow the declared scope explicitly' in error
     with sqlite3.connect(host.root/'.research/state.sqlite3') as db:
         assert db.execute('SELECT COUNT(*) FROM conclusion_drafts').fetchone()[0] == 0
+
+
+def test_missing_decision_delivery_identifies_the_draft_and_uncovered_range(completed):
+    from auto_research.errors import EvidenceDeliveryIncomplete
+    host, _, _, _, claim, _ = completed
+    draft, publication = prepare_and_publish(host,claim)
+    request = {'transport_id':'missing-delivery','operation_id':'missing-delivery',
+        'host_id':'opencode','session_id':'ses_main','method':'conclude','plugin_instance_id':'plugin-1',
+        'delivery_receipts':[],'fields':{'draft_id':draft['draft_id'],
+            'final_ref':f"pub/{publication['publication_id']}#report",'summary':'Answer'}}
+    with pytest.raises(EvidenceDeliveryIncomplete) as failure:
+        host.service.handle(request)
+    assert failure.value.details['read'] == {'collection':'evidence','draft_id':draft['draft_id']}
+    assert failure.value.details['covered_prefix_bytes'] == 0
+    assert failure.value.details['total_bytes'] > 0

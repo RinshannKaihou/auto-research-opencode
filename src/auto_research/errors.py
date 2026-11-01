@@ -19,6 +19,17 @@ class ConflictError(ResearchError):
     pass
 
 
+class EvidenceDeliveryIncomplete(ConflictError):
+    code = 'evidence_delivery_incomplete'
+
+    def __init__(self, draft_id, covered_bytes, total_bytes):
+        self.details = {'draft_id':draft_id, 'part':'decision', 'covered_prefix_bytes':covered_bytes,
+                        'total_bytes':total_bytes, 'read':{'collection':'evidence','draft_id':draft_id}}
+        super().__init__('Complete evidence must be delivered to the current model request; '
+                         f'read every decision page of draft {draft_id} again '
+                         f'(confirmed prefix {covered_bytes}/{total_bytes} bytes)')
+
+
 class EvidenceBasisChanged(ConflictError):
     def __init__(self, context, differences):
         self.code = context + '_basis_changed'

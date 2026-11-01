@@ -6,7 +6,7 @@ import copy
 
 from . import frozen_refs
 from .controller import require_controller
-from .errors import ConflictError, EvidenceBasisChanged, ValidationError
+from .errors import ConflictError, EvidenceBasisChanged, EvidenceDeliveryIncomplete, ValidationError
 from .evidence_read import basis_changes, build_evidence_view
 from .exploration_store import _main, contract_versions
 from .runtime_budget import require_new_work
@@ -480,8 +480,10 @@ class EvidenceConclusionStore:
                 raise ConflictError('Final report or evidence appendix changed')
         if publication['basis_digest'] != draft['basis_digest']:
             raise ConflictError('Final report does not match the conclusion evidence')
+        body = json.dumps(data['decision_package'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        total_bytes = len(body.encode('utf-8'))
         if not isinstance(instance_id, str) or not instance_id or not isinstance(receipt_ids, list) or not receipt_ids:
-            raise ConflictError('Complete evidence must be delivered to the current model request')
+            raise EvidenceDeliveryIncomplete(draft_id, 0, total_bytes)
         ranges = []
         for receipt_id in set(receipt_ids):
             receipt = db.execute('SELECT * FROM evidence_read_receipts WHERE receipt_id=? AND draft_id=? '
@@ -489,14 +491,13 @@ class EvidenceConclusionStore:
                                  (receipt_id, draft_id, run['generation'], host, session, instance_id, draft['manifest_digest'])).fetchone()
             if receipt:
                 ranges.append((receipt['start_offset'], receipt['end_offset']))
-        body = json.dumps(data['decision_package'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         end = 0
         for start, stop in sorted(ranges):
             if start > end:
                 break
             end = max(end, stop)
-        if end < len(body.encode('utf-8')):
-            raise ConflictError('Complete evidence must be delivered to the current model request')
+        if end < total_bytes:
+            raise EvidenceDeliveryIncomplete(draft_id, end, total_bytes)
         result = evaluate(self, db, data['view'], data['fields'])
 
         reachable = set(result['core_claim_refs'])
