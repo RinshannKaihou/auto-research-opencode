@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-01",
+  "round": 2,
+  "local_not_ci": true,
+  "runtime_fix_commit": "fad0d4a",
+  "python": {"command": "python3 -m pytest -q", "passed": 612, "failed": 0},
+  "pr9_bun": {"command": "bun test", "working_directory": "plugin", "passed": 138, "failed": 0, "assertions": 628},
+  "stacked_pr10_bun": {"command": "bun test", "working_directory": "plugin", "passed": 146, "failed": 0, "assertions": 746},
+  "stacked_python_source_and_tests_equal_pr9": true,
+  "typescript_exit_code": 0,
+  "diff_check_exit_code": 0,
+  "claude_blocker_reproductions": {"failed_before_fix": 5, "passed_after_fix": 5, "cases": ["continuation preflight before reservation", "continuation preflight after reservation", "blind membership error", "blind membership timeout", "blind successor not ready"]},
+  "raw_host_outputs": {"pause_resume": "pause-resume.json", "warm_specialist": "warm-specialist.json", "forced_stale_shell": "forced-boundary.json"},
+  "shared_service_modified": false,
+  "real_research_migrated": false,
+  "remaining_limits": ["macOS process probes remain inside attach transaction", "hostname changes can require explicit takeover", "full configuration-reload teardown and all multiprocess interleavings not verified", "unknown external execution still requires explicit operator verification"]
+}

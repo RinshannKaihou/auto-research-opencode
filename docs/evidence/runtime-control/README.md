@@ -1,5 +1,7 @@
 # 运行控制与派发修复验证记录
 
+最新第二轮结果：Python 612 passed，堆叠 Bun 146 pass；逐条处理见 [review-round2.md](review-round2.md)，当前汇总与原始探针见 [round2](round2/README.md)。下文保留首轮验证材料。
+
 基线为合入 PR #8 的 `1930a0505f036ea106d23dd22de688d85a9fb6ce`。本记录对应隔离修复分支，尚不表示已发布或部署到现有研究。
 
 2026-11-01 审阅后的修复以[逐条处理记录](review-response.md)和[本轮验证](review-verification.json)为准；以下独立探针 JSON 保留上一轮证据，未将旧运行结果伪装成本轮执行。

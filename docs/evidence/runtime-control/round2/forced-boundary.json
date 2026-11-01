@@ -1,0 +1,1 @@
+{"baseline_advertised_tool": true, "coordinator_advertised_tool": true, "forced_after_filter": true, "ordinary_tool_created_sentinel": true, "registered_role": "main", "rpc_status": 200, "scripted_tool_call_attempted": true, "sentinel_created": false, "submit_status": 200, "terminal_outcomes": ["succeeded"], "tool": "shell"}
