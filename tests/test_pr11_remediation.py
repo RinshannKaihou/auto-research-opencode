@@ -406,3 +406,25 @@ def test_decision_package_keeps_full_basis_in_draft_without_replaying_every_reco
         'final_ref':f"pub/{final['publication_id']}#report",'summary':'Measured result'},
         delivery_receipts=deliver_draft(host,draft['draft_id']),plugin_instance_id='plugin-1')
     assert conclusion['outcome'] == 'answered'
+
+
+def test_large_inline_copy_cannot_support_its_own_final_report(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call('focus',node_id=None,role='planner',mode='manual')
+    content = {'text':'Measurements reported independently. ' * 100}
+    source = host.call('publish',status='complete',summary='data',gaps=[],knowledge_refs=[],
+        items=[{'item_id':'data','kind':'text','content':content}])
+    ref = f"pub/{source['publication_id']}#data"
+    claim = host.call('memory_write',action='record',fields={'kind':'claim','statement':'Measured result',
+        'visibility':'project','evidence_refs':[ref]})['ref']
+    host.call('conclusion_contract',contract='evidence-v1')
+    deliver_material(host,ref)
+    view = host.call('query',collection='evidence',refs=[claim])
+    draft = host.call('conclusion_prepare',model_call=True,fields={**fields([claim]),'snapshot_id':view['snapshot_id']})
+    final = host.call('publish',status='complete',summary='copied final',gaps=[],knowledge_refs=[claim],
+        items=[{'item_id':'report','kind':'text','content':content}],draft_id=draft['draft_id'],report_item_id='report')
+    message = host.error('conclude',fields={'draft_id':draft['draft_id'],
+        'final_ref':f"pub/{final['publication_id']}#report",'summary':'Copied'},
+        delivery_receipts=deliver_draft(host,draft['draft_id']),plugin_instance_id='plugin-1')
+    assert 'own core claims' in message

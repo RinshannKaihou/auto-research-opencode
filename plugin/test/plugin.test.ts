@@ -2391,6 +2391,41 @@ test('material pages are confirmed when the coordinator actually responds', asyn
   expect(view.materials.find((item:any)=>item.ref===ref).material_read.complete).toBe(true)
 })
 
+test('material delivery remains complete after earlier pages leave the model context', async () => {
+  const host = await load()
+  await host.command('init','ses_main',{goal:'Answer from a paged frozen file'})
+  await host.command('conclusion-contract','ses_main',{contract:'evidence-v1'})
+  writeFileSync(join(project,'paged.txt'),'0123456789')
+  const source=await host.call('research_publish','ses_main',{status:'complete',summary:'data',
+    items:[{item_id:'data',kind:'text',source_path:'paged.txt'}],knowledge_refs:[]})
+  const ref=`pub/${source.publication_id}#data`
+  const first=await host.tools.get('research_query').execute({collection:'evidence',material_ref:ref,limit:5},
+    {sessionID:'ses_main',messageID:'read-first',id:'page-one',agent:'build'})
+  const request1=modelRequest('ses_main')
+  request1.messages=[{role:'tool',content:[{type:'tool-result',id:'page-one',name:'research_query',
+    result:{type:'text',value:first.content}}]}] as any
+  host.events.push({id:'page-step-1',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'page-response-1',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:page-response-1'),'first material step')
+  await host.hooks.get('context')!(request1)
+  const second=await host.tools.get('research_query').execute({collection:'evidence',cursor:JSON.parse(first.content).cursor,limit:5},
+    {sessionID:'ses_main',messageID:'page-response-1',id:'page-two',agent:'build'})
+  const request2=modelRequest('ses_main')
+  request2.messages=[{role:'tool',content:[{type:'tool-result',id:'page-two',name:'research_query',
+    result:{type:'text',value:second.content}}]}] as any
+  host.events.push({id:'page-step-2',type:'session.step.started',data:{sessionID:'ses_main',assistantMessageID:'page-response-2',
+    model:{id:'scripted',providerID:'mock'}}})
+  await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
+    .some((item:any)=>item.source_key==='step:ses_main:page-response-2'),'second material step')
+  await host.hooks.get('context')!(request2)
+  const view=await host.tools.get('research_query').execute({collection:'evidence',refs:[ref],limit:16384},
+    {sessionID:'ses_main',messageID:'page-response-2',id:'read-view',agent:'build'})
+  const material=JSON.parse(JSON.parse(view.content).chunk).materials.find((item:any)=>item.ref===ref)
+  expect(material.material_read.complete).toBe(true)
+  expect(material.material_read.covered_bytes).toBe(10)
+})
+
 test('node execution observation waits only after evidence conclusion is adopted', async () => {
   const host=await load()
   await host.command('auto','ses_main',{goal:'Compare execution observation'})

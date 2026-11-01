@@ -505,6 +505,8 @@ class EvidenceConclusionStore:
             changed = len(reachable) != before
         report = db.execute('SELECT object_version,content FROM publication_items WHERE publication_id=? AND item_id=?',
                             (publication['publication_id'], publication['report_item_id'])).fetchone()
+        inline_digest = (hashlib.sha256(encoded(json.loads(report['content'])).encode('utf-8')).hexdigest()
+                         if not report['object_version'] else None)
         self_source = []
         for material in data['view']['materials']:
             if material['ref'] not in reachable:
@@ -513,8 +515,9 @@ class EvidenceConclusionStore:
             same_publication = source.get('publication_id') == publication['publication_id']
             same_object = report['object_version'] and (material.get('object') or {}).get('version') == report['object_version']
             same_file = report['object_version'] and (material.get('material_identity') or {}).get('digest') == report['object_version']
-            same_inline = not report['object_version'] and not material.get('object') and material.get('item') and (
-                material['item']['content'] == json.loads(report['content']))
+            same_inline = not report['object_version'] and not material.get('object') and (
+                (material.get('material_identity') or {}).get('digest') == inline_digest or
+                material.get('item') and material['item']['content'] == json.loads(report['content']))
             if same_publication or same_object or same_file or same_inline:
                 self_source.append(material['ref'])
         if self_source:
