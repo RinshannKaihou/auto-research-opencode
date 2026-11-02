@@ -1383,7 +1383,7 @@ class NativeService:
             elif method == 'runtime_execution_start':
                 value = store.runtime_execution_start(host_id, session_id, request['execution_token'], self._operation(request), request.get('event_seq'), request.get('ambiguous', False))
             elif method == 'runtime_execution_bind':
-                value = store.runtime_execution_bind(host_id, session_id, request['execution_token'], request['message_id'], self._operation(request), request.get('event_seq'))
+                value = store.runtime_execution_bind(host_id, session_id, request['execution_token'], request['message_id'], self._operation(request), request.get('event_seq'), request.get('transcript_witness', False))
             elif method == 'runtime_drain_check':
                 value = store.runtime_drain_check(host_id, session_id, request.get('execution_token'))
             elif method == 'runtime_execution_view':

@@ -468,6 +468,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     specialist_states = db.execute('SELECT state,exit_verified FROM specialist_tasks').fetchall()
                     specialist_launches = db.execute("SELECT state FROM workflow_intents WHERE kind='specialist_launch'").fetchall()
                     reservations_final = db.execute('SELECT COUNT(*) FROM runtime_budget_reservations').fetchone()[0]
+                    binding_sources = db.execute("SELECT json_extract(details,'$.binding_source') FROM workflow_intents WHERE kind='execution_start'").fetchall()
                     shells = db.execute("SELECT state,details FROM workflow_intents WHERE kind='native_shell'").fetchall()
                 result = {'actions': ResearchProvider.actions, 'run_state': state, 'node_count': node_count,
                           'task_states': [item[0] for item in tasks], 'intents': intent_states,
@@ -476,6 +477,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                           'paused_before_node_finish': ResearchProvider.pause_node,
                           'reservations_at_pause': reservations_at_pause, 'reservations_final': reservations_final,
                           'background_states': [row[0] for row in shells],
+                          'execution_binding_sources': [row[0] for row in binding_sources],
                           'used_external_model': False}
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
                         (specialist_states != [('completed', 1)] or specialist_launches != [('submitted',)]) or ResearchProvider.pause_node and

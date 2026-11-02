@@ -1,5 +1,7 @@
 """Background shell execution must be part of autonomous control."""
 import sqlite3
+import json
+import pytest
 
 from test_opencode_host import Host
 from test_p0_contracts import node
@@ -217,3 +219,73 @@ def test_resume_refuses_an_unbound_live_start_without_declaring_its_exit_unknown
     assert host.call('runtime_shell_status',session=sid)['starting']==1
     with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
         assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?',(task,)).fetchone()[0]=='running'
+
+
+def transcript_wake(tmp_path, *, reserve=True, sequence=20, ambiguous=False):
+    host, sid, task=setup_node(tmp_path)
+    host.call('runtime_execution_start',session=sid,execution_token='previous',event_seq=1)
+    host.call('runtime_shell_begin',session=sid,call_id='transcript',execution_token='previous')
+    host.call('runtime_shell_result',session=sid,call_id='transcript',state='running',shell_id='sh_transcript')
+    host.call('runtime_execution_end',session=sid,turn='previous',outcome='succeeded',execution_token='previous',event_seq=10)
+    host.call('runtime_shell_notice',session=sid,shell_id='sh_transcript',message_id='msg_transcript',outcome='completed',exit_code=0)
+    if reserve:host.call('runtime_reserve',session=sid,message_id='msg_transcript')
+    host.call('runtime_execution_start',session=sid,execution_token='wake',event_seq=sequence,ambiguous=ambiguous)
+    return host,sid,task
+
+
+def test_transcript_binding_requires_explicit_witness_and_preserves_native_start_sequence(tmp_path):
+    host,sid,_=transcript_wake(tmp_path)
+    assert not host.call('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript')['matched']
+    result=host.call('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript',transcript_witness=True,operation_id='transcript_bind')
+    assert result['matched']
+    assert host.call('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript',transcript_witness=True,operation_id='transcript_bind')==result
+    view=host.call('runtime_execution_view',session=sid,execution_token='wake')
+    assert view['binding_source']=='transcript' and view['event_seq']==20
+    assert view['message_id']=='msg_transcript' and view['reservation_id']
+    assert host.call('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript',event_seq=21)['matched']
+
+
+@pytest.mark.parametrize('case',['no_start_sequence','stale_start','ambiguous','no_authorization','wrong_message','paused_project','paused_session','task_unverified','ended_turn'])
+def test_transcript_binding_rejects_incomplete_or_stale_authorization(tmp_path,case):
+    host,sid,task=transcript_wake(tmp_path,reserve=case!='no_authorization',
+        sequence=None if case=='no_start_sequence' else 10 if case=='stale_start' else 20,ambiguous=case=='ambiguous')
+    if case=='paused_project':host.call('workflow',action='run',fields={'state':'paused'})
+    if case=='paused_session':host.call('workflow',session=sid,action='session',fields={'pause_reason':'fault'})
+    if case=='task_unverified':host.call('workflow',action='task_state',fields={'task_id':task,'state':'unverified'})
+    if case=='ended_turn':host.call('runtime_execution_end',session=sid,turn='wake',outcome='succeeded',execution_token='wake',event_seq=21)
+    result=host.call('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_other' if case=='wrong_message' else 'msg_transcript',transcript_witness=True)
+    assert not result['matched']
+    view=host.call('runtime_execution_view',session=sid,execution_token='wake')
+    assert view['state']==('ended' if case=='ended_turn' else 'open')
+    assert not view.get('reservation_id') and not view.get('message_id')
+
+
+def test_transcript_binding_cannot_fake_a_delivery_sequence_or_be_requested_by_a_model(tmp_path):
+    host,sid,_=transcript_wake(tmp_path)
+    assert 'delivery event sequence' in host.error('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript',transcript_witness=True,event_seq=99)
+    assert host.error('runtime_execution_bind',session=sid,execution_token='wake',message_id='msg_transcript',transcript_witness=True,model_call=True)
+
+
+@pytest.mark.parametrize('orphan_first',[True,False])
+def test_resume_binding_pending_is_side_effect_free_regardless_of_shell_order(tmp_path,orphan_first):
+    host,sid,task=setup_node(tmp_path)
+    host.call('runtime_execution_start',session=sid,execution_token='live_unbound',event_seq=1,ambiguous=True)
+    for call in (['orphan','live'] if orphan_first else ['live','orphan']):
+        host.call('runtime_shell_begin',session=sid,call_id=call,**({'execution_token':'live_unbound'} if call=='live' else {}))
+    revision=host.call('status')['workflow']['run']['control_revision']
+    result=host.call('runtime_resume_session',target_session=sid,expected_revision=revision)
+    assert result['reason']=='execution_binding_pending'
+    with sqlite3.connect(host.root / '.research/state.sqlite3') as db:
+        assert db.execute('SELECT state FROM exploration_tasks WHERE task_id=?',(task,)).fetchone()[0]=='running'
+        assert set(row[0] for row in db.execute("SELECT state FROM workflow_intents WHERE kind='native_shell'"))=={'starting'}
+        assert db.execute("SELECT COUNT(*) FROM workflow_notifications WHERE kind='paused'").fetchone()[0]==0
+
+
+def test_resume_reports_existing_uncertainty_before_an_unbound_live_call(tmp_path):
+    host,sid,task=setup_node(tmp_path)
+    host.call('runtime_execution_start',session=sid,execution_token='live_unbound',event_seq=1,ambiguous=True)
+    host.call('runtime_shell_begin',session=sid,call_id='unknown')
+    host.call('runtime_shell_begin',session=sid,call_id='live',execution_token='live_unbound')
+    host.call('runtime_shell_result',session=sid,call_id='unknown',state='unverified',shell_id=None)
+    revision=host.call('status')['workflow']['run']['control_revision']
+    assert host.call('runtime_resume_session',target_session=sid,expected_revision=revision)=={'resumed':False,'reason':'execution_unverified','task_id':task}

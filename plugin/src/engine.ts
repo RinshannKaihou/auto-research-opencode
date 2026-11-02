@@ -138,7 +138,10 @@ export class Engine {
     this.pendingStarts = runtime.pendingStarts
     this.retried = runtime.retried; this.queues = runtime.queues; this.models = runtime.models
     this.shellInboxes = runtime.shellInboxes ??= new Map()
-    for (const item of this.shellInboxes.values()) item.createdAt ??= Date.now()
+    for (const item of this.shellInboxes.values()) {
+      item.createdAt ??= Date.now()
+      if (!item.execution) item.eligibleAt ??= item.createdAt
+    }
     this.shellWake = runtime.shellWake ??= new Map()
   }
 
@@ -223,6 +226,7 @@ export class Engine {
     if (eventID) this.startedEvents.set(sessionID, eventID)
     const ambiguous = this.busy.has(sessionID)
     this.busy.add(sessionID)
+    for (const item of this.shellInboxes.values()) if (item.sessionID === sessionID) item.eligibleAt=undefined
     if (inferred) this.inferredStart.add(sessionID)
     else this.inferredStart.delete(sessionID)
     const execution = randomUUID()
@@ -240,11 +244,13 @@ export class Engine {
 
   executionToken(sessionID: string): string | undefined { return this.turns.get(sessionID) }
 
-  async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number): Promise<void> {
+  async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number, transcriptWitness = false): Promise<void> {
     if (!this.current() || !this.drives(sessionID) || !messageID) return
     const shell = this.shellInboxes.get(messageID)
     const key = `${sessionID}:${messageID}`
     if (this.runtime.shellDelivered?.has(key)) return
+    // A transcript is not a native start event. Wait for an authenticated started record.
+    if (transcriptWitness && !this.busy.has(sessionID)) return
     try {
       if (shell?.sessionID === sessionID) {
         this.shellInboxes.delete(messageID)
@@ -264,8 +270,10 @@ export class Engine {
       if (!this.busy.has(sessionID)) await this.started(sessionID, `inbox:${messageID}`, eventSeq, true)
       const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
       if (execution) {
-        const bound = await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: messageID, event_seq: eventSeq })
+        const bound = await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: messageID,
+          ...(transcriptWitness ? {transcript_witness:true} : {event_seq:eventSeq}) })
         if (shell && !bound.matched) {
+          if (transcriptWitness) { this.shellInboxes.set(messageID,shell); return }
           this.shellWake.set(sessionID,{matched:false})
           const state=await this.state(sessionID)
           if (state.workflow?.run?.state === 'running' && !state.workflow?.session?.pause_reason)
@@ -282,12 +290,14 @@ export class Engine {
 
   async nodeTurnAllowed(sessionID: string): Promise<boolean> {
     const waiting = [...this.shellInboxes.values()].filter(item => item.sessionID === sessionID && item.matched)
-    if (waiting.length) {
+    const needsBinding=waiting.some(item => !item.execution || item.execution !== this.turns.get(sessionID))
+    if (needsBinding) {
       const messages = await this.recoveryMessages(sessionID)
       const input = messages?.findLast((item: any) => item?.type === 'user' || item?.type === 'synthetic')
-      if (input?.id && this.shellInboxes.get(input.id)?.sessionID === sessionID)
-        await this.inboxDelivered(sessionID, input.id)
-      else if (waiting.some(item => !item.execution || item.execution !== this.turns.get(sessionID))) return false
+      if (input?.id && this.shellInboxes.get(input.id)?.sessionID === sessionID) {
+        await this.inboxDelivered(sessionID, input.id, undefined, true)
+        if (this.shellInboxes.has(input.id)) return false
+      } else return false
     }
     if (this.shellWake.get(sessionID)?.matched === false) return false
     try { await this.call('runtime_drain_check', sessionID, { execution_token: this.turns.get(sessionID) }); return true }
@@ -358,7 +368,8 @@ export class Engine {
       if (this.runtime.shellDelivered?.has(`${sessionID}:${messageID}`)) return
       const authorized = result.matched && !execution ? await this.reserveShellWake(sessionID, messageID) : false
       this.shellInboxes.set(messageID, {sessionID, execution, matched:!!result.matched, authorized,
-        refused:!!result.matched && !execution && !authorized, createdAt:Date.now()})
+        refused:!!result.matched && !execution && !authorized, createdAt:Date.now(),
+        eligibleAt:execution ? undefined : Date.now()})
       if (this.shellInboxes.size > 1024) {
         for (const [id,item] of this.shellInboxes) {
           if (!item.matched) this.shellInboxes.delete(id)
@@ -389,8 +400,11 @@ export class Engine {
           const poll = polls.get(sid) ?? {next:0,delay:15_000}
           if (now < poll.next) continue
           const shells = await this.call('runtime_shell_status', sid)
+          // Warm attachments may inherit an inbox whose turn already ended; start a fresh idle grace period.
+          for (const item of this.shellInboxes.values())
+            if (item.sessionID === sid && item.matched && item.eligibleAt === undefined) item.eligibleAt=now
           const stale = [...this.shellInboxes.entries()].filter(([,item]) => item.sessionID === sid && item.matched &&
-            item.createdAt !== undefined && now-item.createdAt >= 30_000)
+            item.eligibleAt !== undefined && now-item.eligibleAt >= 30_000)
           if (!shells.running && !stale.length) {
             polls.delete(sid)
             for (const key of lost.keys()) if (key.startsWith(`${sid}:`)) lost.delete(key)
@@ -470,6 +484,7 @@ export class Engine {
     const { execution, turn } = pending
     return this.serial(root, async () => {
       this.busy.delete(sessionID)
+      for (const item of this.shellInboxes.values()) if (item.sessionID === sessionID && item.matched) item.eligibleAt=Date.now()
       this.inferredStart.delete(sessionID)
       if (!pending.error) {
         let claim: any

@@ -461,10 +461,20 @@ class RuntimeStore:
             return {'execution_token': execution_token, 'state': 'open'}
         return self._mutate('runtime.execution_start', payload, operation, work)
 
-    def runtime_execution_bind(self, host, session, execution_token, message_id, operation, event_seq=None):
+    def runtime_execution_bind(self, host, session, execution_token, message_id, operation, event_seq=None, transcript_witness=False):
         if event_seq is not None and (not isinstance(event_seq, int) or isinstance(event_seq, bool) or event_seq < 0):
             raise ValidationError('Invalid native event sequence')
+        if not isinstance(transcript_witness, bool) or transcript_witness and event_seq is not None:
+            raise ValidationError('Transcript binding must not supply a delivery event sequence')
+        if transcript_witness:
+            if not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256:
+                raise ValidationError('A valid transcript shell message ID is required')
+            from .controller import CURRENT_MODEL_CALL
+            if CURRENT_MODEL_CALL.get():
+                raise ValidationError('Transcript binding is host-only')
         payload = dict(host=host, session=session, execution_token=execution_token, message_id=message_id, event_seq=event_seq)
+        if transcript_witness:
+            payload['transcript_witness'] = True
 
         def work(db):
             start = db.execute("SELECT * FROM workflow_intents WHERE intent_id=? AND kind='execution_start' AND session_id=? AND state='open'",
@@ -477,7 +487,23 @@ class RuntimeStore:
             if details.get('message_id') == message_id:
                 return {'matched': True, 'execution_token': execution_token}
             previous_end = db.execute("SELECT MAX(CAST(json_extract(details,'$.event_seq') AS INTEGER)) FROM workflow_intents WHERE kind='execution_terminal' AND session_id=? AND json_extract(details,'$.host')=? AND json_extract(details,'$.event_seq') IS NOT NULL", (session, host)).fetchone()[0]
-            if (details.get('ambiguous') or details.get('event_seq') is None or event_seq is None
+            if transcript_witness:
+                run = db.execute('SELECT state,generation FROM workflow_project WHERE id=1').fetchone()
+                actor = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                                   (host, session)).fetchone()
+                witness = db.execute("SELECT 1 FROM workflow_intents i JOIN exploration_tasks t "
+                    "ON t.task_id=json_extract(i.details,'$.task_id') WHERE i.kind='native_shell' AND i.session_id=? "
+                    "AND i.state IN ('completed','failed') AND json_extract(i.details,'$.host')=? "
+                    "AND json_extract(i.details,'$.generation')=? AND json_extract(i.details,'$.message_id')=? "
+                    "AND t.session_id=? AND t.generation=? AND t.state='running' LIMIT 1",
+                    (session, host, details['generation'], message_id, session, details['generation'])).fetchone()
+                sequence = details.get('event_seq')
+                if (not run or run['state'] != 'running' or run['generation'] != details['generation']
+                        or not actor or actor['role'] != 'node_core' or actor['detached'] or actor['pause_reason']
+                        or details.get('ambiguous') or not isinstance(sequence, int) or isinstance(sequence, bool)
+                        or previous_end is not None and sequence <= previous_end or not witness):
+                    return {'matched': False, 'reason': 'transcript_binding_pending'}
+            elif (details.get('ambiguous') or details.get('event_seq') is None or event_seq is None
                     or previous_end is not None and event_seq <= previous_end):
                 run = db.execute('SELECT state FROM workflow_project WHERE id=1').fetchone()
                 if run and run['state'] != 'running' and event_seq is None:
@@ -494,6 +520,8 @@ class RuntimeStore:
             if authorization['host'] != host or authorization['generation'] != details['generation']:
                 return {'matched': False}
             details.update(reservation_id=authorization['reservation_id'], message_id=message_id)
+            if transcript_witness:
+                details['binding_source'] = 'transcript'
             db.execute('UPDATE workflow_intents SET details=?,updated_at=? WHERE intent_id=?',
                        (json.dumps(details, sort_keys=True), timestamp(), start['intent_id']))
             db.execute("UPDATE workflow_intents SET state='bound',updated_at=? WHERE intent_id=?", (timestamp(), auth['intent_id']))
@@ -1298,7 +1326,11 @@ class RuntimeStore:
                 raise ConflictError('Session is not eligible to resume')
             if target['pause_reason'] is not None and target['pause_reason'] not in RESUMABLE_SESSION_PAUSES:
                 return {'resumed': False, 'reason': 'not_paused'}
+            unknown = db.execute("SELECT task_id FROM exploration_tasks WHERE session_id=? AND state='unverified'", (target_session,)).fetchone()
+            if unknown:
+                return {'resumed': False, 'reason': 'execution_unverified', 'task_id': unknown['task_id']}
             shells = pending_shells(db, host, target_session, run['generation'])
+            uncertain = []
             for shell in shells:
                 details = json.loads(shell['details'])
                 live = db.execute("SELECT details FROM workflow_intents WHERE intent_id=? AND session_id=? "
@@ -1311,10 +1343,11 @@ class RuntimeStore:
                         return {'resumed': False, 'reason': 'execution_binding_pending', 'task_id': details['task_id']}
                     continue
                 if shell['state'] != 'running':
-                    mark_shell_unverified(self, db, shell)
-            unknown = db.execute("SELECT task_id FROM exploration_tasks WHERE session_id=? AND state='unverified'", (target_session,)).fetchone()
-            if unknown:
-                return {'resumed': False, 'reason': 'execution_unverified', 'task_id': unknown['task_id']}
+                    uncertain.append(shell)
+            for shell in uncertain:
+                mark_shell_unverified(self, db, shell)
+            if uncertain:
+                return {'resumed': False, 'reason': 'execution_unverified', 'task_id': json.loads(uncertain[0]['details'])['task_id']}
             db.execute('UPDATE workflow_sessions SET pause_reason=NULL WHERE host_id=? AND session_id=?',
                        (host, target_session))
             db.execute('UPDATE runtime_progress SET idle_turns=0 WHERE generation=? AND host_id=? AND session_id=?',

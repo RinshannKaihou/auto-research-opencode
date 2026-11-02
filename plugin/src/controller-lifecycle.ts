@@ -23,7 +23,7 @@ export interface RuntimeState {
   models: Map<string, ModelRef>
   specialistTools: Map<string, readonly string[]>
   specialistResearch: Set<string>
-  shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean; refused?: boolean; createdAt?: number }>
+  shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean; refused?: boolean; createdAt?: number; eligibleAt?: number }>
   shellDelivered?: Set<string>
   shellSeen?: Set<string>
   shellLost?: Map<string, number>

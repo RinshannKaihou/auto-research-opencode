@@ -7,7 +7,7 @@ function fixture() {
   const runtime=attachController(root,`/tmp/shell-reconcile-${crypto.randomUUID()}`).state
   const notice={type:'synthetic',id:'msg_done',metadata:{source:'shell',shellID:'sh_job',state:'completed',exit:0}}
   const f={job:'running',task:'running',run:'running',pending:false,reads:0,reservations:0,allowed:true,bindFailures:0,bindMatched:true,
-    pauses:[] as string[],messages:[notice] as any[],read:undefined as undefined|(()=>Promise<any[]>),
+    binds:[] as any[],pauses:[] as string[],messages:[notice] as any[],read:undefined as undefined|(()=>Promise<any[]>),
     beforeUnknown:undefined as undefined|(()=>void),execution:{state:'open',execution_token:'exec_wake',message_id:'msg_done'}}
   const task=()=>({task_id:'T-job',session_id:'node',parent_session_id:'main',node_id:'X-001',state:f.task})
   const research:any={roots:()=>[root],inScope:()=>true,sessionsIn:()=>['main','node'],rootOf:()=>root,
@@ -25,8 +25,9 @@ function fixture() {
       if(method==='status')return {workflow:{run:{state:f.run},session:{role:sid==='main'?'main':'node_core',pause_reason:null},tasks:[task()]}}
       if(method==='runtime_reserve'){f.reservations++;return {allowed:f.allowed,reservation_id:'BR-wake'}}
       if(method==='runtime_execution_bind' && f.bindFailures-- > 0)throw new Error('lost bind response')
-      if(method==='runtime_execution_bind')return {matched:f.bindMatched}
+      if(method==='runtime_execution_bind'){f.binds.push(fields);return {matched:f.bindMatched && (fields.event_seq !== undefined || fields.transcript_witness === true)}}
       if(['runtime_submitted','runtime_execution_start','runtime_drain_check'].includes(method))return {matched:true}
+      if(method==='runtime_execution_end')return {claimed:true}
       if(method==='runtime_execution_view')return sid==='main'?{state:'ended'}:f.execution
       if(method==='node_launch_get')return {state:'submitted'}
       if(method==='workflow' && fields.action==='run'){f.run=fields.fields.state;return {}}
@@ -108,7 +109,9 @@ test('long-running jobs back off full context reads up to a minute',async()=>{
 test('an undelivered inbox expires into a visible pause instead of a permanent hidden gate',async()=>{
   const {engine,runtime,f}=fixture();f.job='completed';f.messages=[]
   runtime.shellInboxes!.set('msg_missing',{sessionID:'node',execution:'old',matched:true,createdAt:0})
-  await engine.pollShells(30_000);await engine.pollShells(60_000)
+  await engine.pollShells(30_000)
+  expect(f.pauses).toHaveLength(0)
+  await engine.pollShells(60_000)
   expect(runtime.shellInboxes!.get('msg_missing')).toMatchObject({matched:false,refused:true})
   expect(f.task).toBe('running');expect(f.pauses).toHaveLength(1)
 })
@@ -116,18 +119,29 @@ test('an undelivered inbox expires into a visible pause instead of a permanent h
 test('a refused native wake is not reserved or announced again at delivery',async()=>{
   const {engine,f,notice}=fixture();f.allowed=false
   await engine.shellNotice('node',notice.id,notice.metadata)
-  await engine.inboxDelivered('node',notice.id)
+  await engine.inboxDelivered('node',notice.id,2)
   expect(f.reservations).toBe(1);expect(f.pauses).toHaveLength(1)
 })
 
-for(const inline of [true,false])test(`transcript delivery witness clears a missing delivery event (${inline?'inline':'new turn'})`,async()=>{
+test('same-turn pending notices do not cause full transcript reads on tool checks',async()=>{
   const {engine,runtime,f,notice}=fixture()
   runtime.busy.add('node');runtime.turns.set('node','original')
   await engine.shellNotice('node',notice.id,notice.metadata)
-  if(!inline)runtime.turns.set('node','next')
-  expect(await engine.nodeTurnAllowed('node')).toBe(true)
+  for(let i=0;i<5;i++)expect(await engine.nodeTurnAllowed('node')).toBe(true)
+  expect(f.reads).toBe(0);expect(f.reservations).toBe(0)
+  await engine.inboxDelivered('node',notice.id,2)
   expect(runtime.shellInboxes!.has(notice.id)).toBe(false)
-  expect(f.reservations).toBe(inline?0:1)
+})
+
+test('a transcript witness requests the dedicated bind path without forging a delivery sequence',async()=>{
+  const {engine,runtime,f,notice}=fixture()
+  runtime.busy.add('node');runtime.turns.set('node','original')
+  await engine.shellNotice('node',notice.id,notice.metadata)
+  runtime.turns.set('node','next')
+  expect(await engine.nodeTurnAllowed('node')).toBe(true)
+  expect(f.binds.at(-1)).toMatchObject({transcript_witness:true})
+  expect(f.binds.at(-1).event_seq).toBeUndefined()
+  expect(runtime.shellInboxes!.has(notice.id)).toBe(false);expect(f.reservations).toBe(1)
 })
 
 test('warm transcript recovery neither registers a live inbox nor reserves another wake',async()=>{
@@ -141,7 +155,7 @@ test('warm transcript recovery neither registers a live inbox nor reserves anoth
 test('a repeated enqueue after delivery cannot recreate a continuation gate',async()=>{
   const {engine,runtime,f,notice}=fixture()
   await engine.shellNotice('node',notice.id,notice.metadata)
-  await engine.inboxDelivered('node',notice.id)
+  await engine.inboxDelivered('node',notice.id,2)
   await engine.shellNotice('node',notice.id,notice.metadata)
   expect(runtime.shellInboxes!.size).toBe(0);expect(f.reservations).toBe(1)
 })
@@ -152,7 +166,7 @@ test('a user-authorized resume can receive a previously refused notice inline',a
   await engine.shellNotice('node',notice.id,notice.metadata)
   runtime.busy.add('node');runtime.turns.set('node','exec_resume')
   f.execution={state:'open',execution_token:'exec_resume',message_id:'msg_user_resume',reservation_id:'BR-user'} as any
-  await engine.inboxDelivered('node',notice.id)
+  await engine.inboxDelivered('node',notice.id,2)
   expect(await engine.nodeTurnAllowed('node')).toBe(true)
   expect(f.reservations).toBe(1);expect(f.pauses).toHaveLength(1)
 })
@@ -161,9 +175,9 @@ test('failed delivery binding can be retried without another reservation or a st
   const {engine,runtime,f,notice}=fixture()
   await engine.shellNotice('node',notice.id,notice.metadata)
   f.bindFailures=1
-  await expect(engine.inboxDelivered('node',notice.id)).rejects.toThrow('lost bind response')
+  await expect(engine.inboxDelivered('node',notice.id,2)).rejects.toThrow('lost bind response')
   expect(runtime.shellInboxes!.has(notice.id)).toBe(true)
-  await engine.inboxDelivered('node',notice.id)
+  await engine.inboxDelivered('node',notice.id,2)
   expect(runtime.shellInboxes!.has(notice.id)).toBe(false);expect(f.reservations).toBe(1)
 })
 
@@ -180,7 +194,48 @@ test('an unbound new turn cannot gain tools when the delivery witness is unavail
 test('a rejected execution binding does not grant native wake tools',async()=>{
   const {engine,f,notice}=fixture();f.bindMatched=false
   await engine.shellNotice('node',notice.id,notice.metadata)
-  await engine.inboxDelivered('node',notice.id)
+  await engine.inboxDelivered('node',notice.id,2)
   expect(await engine.nodeTurnAllowed('node')).toBe(false)
   expect(f.pauses).toHaveLength(1);expect(f.task).toBe('running')
+})
+
+
+test('a pending transcript bind keeps the inbox and read-only gate without pausing a healthy node',async()=>{
+  const {engine,runtime,f,notice}=fixture()
+  runtime.busy.add('node');runtime.turns.set('node','original')
+  await engine.shellNotice('node',notice.id,notice.metadata)
+  runtime.turns.set('node','next');f.bindMatched=false
+  expect(await engine.nodeTurnAllowed('node')).toBe(false)
+  expect(runtime.shellInboxes!.has(notice.id)).toBe(true);expect(f.pauses).toHaveLength(0)
+  f.bindMatched=true
+  await engine.inboxDelivered('node',notice.id,2)
+  expect(await engine.nodeTurnAllowed('node')).toBe(true)
+  expect(f.reservations).toBe(1)
+})
+
+test('a notification queued during a long turn gets a full idle delivery grace period',async()=>{
+  const {engine,runtime,f}=fixture();f.job='completed';f.messages=[]
+  runtime.shellInboxes!.set('msg_long',{sessionID:'node',execution:'long',matched:true,createdAt:0})
+  runtime.busy.add('node')
+  await engine.pollShells(100_000)
+  runtime.busy.delete('node')
+  await engine.pollShells(100_001)
+  expect(f.pauses).toHaveLength(0)
+  await engine.pollShells(130_000)
+  expect(f.pauses).toHaveLength(0)
+  await engine.pollShells(130_001)
+  expect(f.pauses).toHaveLength(1)
+})
+
+
+test('native start and terminal events reset delivery expiry to the ensuing idle period',async()=>{
+  const {engine,runtime}=fixture()
+  runtime.shellInboxes!.set('msg_long',{sessionID:'node',execution:'old',matched:true,createdAt:0,eligibleAt:0})
+  await engine.started('node','start_long',1)
+  expect(runtime.shellInboxes!.get('msg_long')!.eligibleAt).toBeUndefined()
+  ;(engine as any).afterTurn=async()=>{}
+  const before=Date.now()
+  await engine.ended('node','succeeded','end_long',2)
+  expect(runtime.shellInboxes!.get('msg_long')!.eligibleAt).toBeGreaterThanOrEqual(before)
+  expect(runtime.shellInboxes!.get('msg_long')!.eligibleAt).toBeLessThanOrEqual(Date.now())
 })

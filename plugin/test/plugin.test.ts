@@ -1465,6 +1465,40 @@ describe("autonomous research", () => {
     expect(Object.keys(request.tools)).toContain('shell')
   })
 
+  test('a transcript witness binds a new native wake against the real backend before delivered arrives', async () => {
+    const {host,child}=await shellNode('real transcript binding')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'transcript_job',input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'transcript_job',status:'completed',result:{metadata:{status:'running',shellID:'sh_transcript_job'}}})
+    host.turn.end(child)
+    await until(()=>{
+      const result=spawnSync('python3',['-c',"import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute('SELECT COUNT(*) FROM runtime_progress WHERE session_id=? AND last_finished_turn IS NOT NULL',(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+      return result.stdout.trim()==='1'
+    },'waiting turn ended')
+    const before=shellTurns(child)
+    host.events.push(shellEvent(child,'transcript_enqueued','sh_transcript_job','msg_transcript_job'))
+    host.turn.start(child)
+    const original=host.ctx.session.context
+    host.ctx.session.context=async(args:any)=>args.sessionID===child ? [
+      ...(await original(args)),{type:'synthetic',id:'msg_transcript_job',metadata:{source:'shell',shellID:'sh_transcript_job',state:'completed',exit:0}}
+    ] : original(args)
+    const request=modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect((await host.rpc().session({sessionID:child})).pauseReason).toBeNull()
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect(shellTurns(child)).toBe(before+1)
+    const bound=spawnSync('python3',['-c',"import sqlite3,json,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute(\"SELECT details FROM workflow_intents WHERE kind='execution_start' AND session_id=? ORDER BY rowid DESC LIMIT 1\",(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+    expect(JSON.parse(bound.stdout)).toMatchObject({binding_source:'transcript',message_id:'msg_transcript_job'})
+    expect(typeof JSON.parse(bound.stdout).event_seq).toBe('number')
+    const again=modelRequest(child);await host.hooks.get('context')!(again)
+    expect(Object.keys(again.tools)).toContain('shell')
+    expect(shellTurns(child)).toBe(before+1)
+    host.events.push({id:'transcript_delivered_late',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_transcript_job'}})
+    await host.hooks.get('context')!(modelRequest(child))
+    expect(shellTurns(child)).toBe(before+1)
+    expect((await host.rpc().session({sessionID:child})).pauseReason).toBeNull()
+  })
+
   test('unknown and stale shell notices do not poison subsequent session events', async () => {
     const {host,child}=await shellNode('stale notice')
     host.events.push(shellEvent(child,'no_id','sh_missing',''))

@@ -1,6 +1,6 @@
 # PR #13 Review 处置与验证
 
-本页保留首轮处置（`698722a`）的历史记录；最新补查竞态、投递恢复与验证结果见 [第二轮处置](round2/README.md)。
+本页保留首轮处置（`698722a`）的历史记录；最新真实后端投递绑定修复见 [第三轮处置](round3/README.md)，前一轮补查修复见 [第二轮处置](round2/README.md)。
 
 日期：2026-11-02（Asia/Shanghai）。审阅基线：`d21ccd2`。两条 Review 原文及链接见 [reviews.md](reviews.md)。
 
@@ -12,7 +12,7 @@
 | --- | --- |
 | 中文 B1：暂停收尾轮不能启动 shell | 接受。before hook 传当前 execution token；失败返回带控制 metadata 的 ToolError。回归覆盖暂停后启动 shell，以及在途调用期间 resume。 |
 | 中文 B2／英文 1：中断后无法恢复或核实 | 接受。非正常终态、显式 resume 都同步核实意图和任务，返回具体 task ID 与恢复命令；核实退出入口立即可用。遗漏 after hook 的用例不依赖重载脱困。 |
-| 英文 2：普通前台错误被当作后台不确定性 | 接受，并用真实宿主核实。OpenCode 2.2.5 的前台中断及权限拒绝不触发 execute.after，而发出 session.tool.failed；该事件现已纳入有序订阅并结清前台临时记录。中断探针确认测试进程已退出。主动请求后台而缺少终态见证时继续保留核实要求。 |
+| 英文 2：普通前台错误被当作后台不确定性 | 接受，并用真实宿主核实。OpenCode 2.2.5 的前台中断及经权限配置使 shell 不可用的场景不触发 execute.after，而发出 session.tool.failed；该事件现已纳入有序订阅并结清前台临时记录。中断探针确认测试进程已退出。主动请求后台而缺少终态见证时继续保留核实要求。 |
 | 中文 S1：inline 判定过早 | 接受。以入队时的 execution token 与投递时的实际执行比较；跨轮投递补做预算预留和绑定。排队的原生完成通知会阻止发送重复的人工续轮。测试直接检查节点预留账本。 |
 | 中文 S2／英文 3：未匹配、迟到、格式变化的通知 | 接受。已核实退出、终态冲突和未匹配通知返回 ignored，不改任务状态。插件跳过缺少有效 inbox ID 的事件；不认识的字符串状态规范为 failed 并保存 raw_outcome，非法 exit 不作为成功证明。恢复按 job 隔离错误。续轮授权失败暂停并报告，保留已有终态证据。 |
 | 英文 4：通知早于 execute.after | 接受。在 execute.before 登记跨附件共享的待完成调用，通知有界等待该 session 的结果登记。回归将通知放在 after hook 调用之前，另保留结果 RPC 延迟的回归。 |
@@ -45,7 +45,7 @@
 | 原生后台任务 | [trace](host-background.json)：execute.after 返回 running/shellID，完成消息入队并投递。 |
 | 前台 exit 7 | [trace](host-foreground-error.json)：execute.after 为 completed，metadata.exit=7，没有后台唤醒。 |
 | 前台中断 | [trace](host-foreground-interrupt.json)：无 execute.after，session.tool.failed 为 aborted，测试 PID 已退出。 |
-| 权限拒绝 | [trace](host-foreground-denied.json)：无 execute.after，session.tool.failed 为 tool.execution，未启动测试进程。 |
+| 经权限配置使 shell 工具不可用 | [trace](host-foreground-denied.json)：无 execute.after，session.tool.failed 为 tool.execution，未启动测试进程。 |
 
 复现命令：
 
