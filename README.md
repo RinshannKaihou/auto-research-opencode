@@ -24,7 +24,7 @@
 
 ## 环境要求
 
-- OpenCode V2，最低版本 2.2.5（用 `opencode --version` 查看）；插件 SDK 仍固定为 `@opencode/plugin` 2.0.18
+- OpenCode V2，最低版本 2.2.5（用 `opencode --version` 查看）。`@opencode/plugin` 与 `@opencode/theme` 固定为同一版本 2.2.5，只用于类型检查和安装锁定；宿主加载插件时使用自己的 SDK。2.x 曾在 minor 内更改公开契约，因此不使用会漂到未测试版本的范围
 - Python 3.11 或更高：插件默认调用 `PATH` 里的 `python3`，也可以用插件选项另外指定
 - Bun：用来安装插件依赖
 - 原始宿主验证在 macOS 完成；v0.1.1 的后端、假宿主和打包回归在 Linux 上通过
