@@ -132,6 +132,15 @@ def _inventory(descriptor: int, relative: str = "") -> dict[str, tuple[int, ...]
     return result
 
 
+def _digest_fd(descriptor: int) -> bytes:
+    """SHA-256 of the bytes currently visible on an open file."""
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    while chunk := os.read(descriptor, 1024 * 1024):
+        digest.update(chunk)
+    return digest.digest()
+
+
 def _transfer(
     descriptor: int,
     inventory: dict[str, tuple[int, ...]],
@@ -142,6 +151,7 @@ def _transfer(
         raise ArtifactError("Artifact source changed before it could be copied")
     kind = _kind(os.fstat(descriptor))
     records: list[list[str]] = []
+    copied: bytes | None = None
     if kind == "directory":
         if destination is not None:
             destination.mkdir(mode=0o700)
@@ -169,7 +179,16 @@ def _transfer(
                 stream.flush()
                 os.fsync(stream.fileno())
         records.append(["file", relative, digest.hexdigest()])
+        copied = digest.digest()
     if _signature(os.fstat(descriptor)) != inventory.get(relative):
+        raise ArtifactError("Artifact source changed while it was being copied")
+    # A same-length rewrite can land in the snapshot's filesystem timestamp
+    # tick, leaving size, mtime, and ctime unchanged. Compare the copied
+    # bytes with the source after the copy.
+    if copied is not None and (
+        _digest_fd(descriptor) != copied
+        or _signature(os.fstat(descriptor)) != inventory.get(relative)
+    ):
         raise ArtifactError("Artifact source changed while it was being copied")
     return records
 

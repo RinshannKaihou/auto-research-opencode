@@ -173,6 +173,60 @@ class ArtifactTests(unittest.TestCase):
         self.assert_no_unpublished()
         self.assertFalse([path for path in self.store.objects.iterdir() if len(path.name) == 64])
 
+    def test_same_tick_rewrite_during_copy_is_not_published(self):
+        """A same-length rewrite that keeps the snapshot timestamps is not published.
+
+        ``os.utime`` puts mtime back on the pre-write value. ctime cannot be
+        restored once the filesystem tick moves, so later stats of this inode
+        report the pre-write snapshot. That is the same-tick metadata the
+        guard used to accept.
+        """
+        source = self.file(content="first")
+        before = source.stat()
+        original_read = artifacts.os.read
+        original_fstat = artifacts.os.fstat
+        original_stat = artifacts.os.stat
+        changed = False
+        pinned: dict[tuple[int, int], os.stat_result] = {}
+
+        def read_then_mutate(*args):
+            nonlocal changed
+            chunk = original_read(*args)
+            if chunk and not changed:
+                source.write_text("later")
+                os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+                changed = True
+            return chunk
+
+        def same_tick_fstat(fd):
+            info = original_fstat(fd)
+            key = (info.st_dev, info.st_ino)
+            if key != (before.st_dev, before.st_ino):
+                return info
+            pinned.setdefault(key, info)
+            return pinned[key] if changed else info
+
+        def same_tick_stat(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            key = (info.st_dev, info.st_ino)
+            if changed and key in pinned:
+                return pinned[key]
+            return info
+
+        with (
+            patch.object(artifacts.os, "read", side_effect=read_then_mutate),
+            patch.object(artifacts.os, "fstat", side_effect=same_tick_fstat),
+            patch.object(artifacts.os, "stat", side_effect=same_tick_stat),
+        ):
+            with self.assertRaisesRegex(ArtifactError, "changed"):
+                self.freeze(source)
+        self.assert_no_unpublished()
+        self.assertFalse([path for path in self.store.objects.iterdir() if len(path.name) == 64])
+        reread = source.read_text()
+        self.assertEqual(reread, "later")
+        self.assertEqual(source.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertEqual(len(reread), before.st_size)
+
     def test_source_replaced_after_read_is_not_published(self):
         source = self.file()
         original = artifacts._transfer
