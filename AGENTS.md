@@ -9,11 +9,11 @@
 
 | Rule | Enforced by |
 |---|---|
-| Verify with `make test` | docs only |
+| Verify with `make test` | CI |
 | `cursor/` branch prefix | docs only |
 | Sync by merge; no rebase; no force-push | docs only |
 | No push to `main`; no merging PRs; no tag or release | docs only |
 | PR body sections Why / Verified / Not verified | docs only |
 | Check `docs/evidence/*/review-response.md` before compatibility or version wording | docs only |
 
-These rows are docs only. The `make test` workflow is on open PR #16 and is not on `main`. Branch protection could not be verified (HTTP 403).
+CI (`.github/workflows/ci.yml` on `main`) runs `make test` on push and pull request to `main`. It does not check the other rows. Branch protection was not readable (HTTP 403), so a failing check is not claimed to block merge.
