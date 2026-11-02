@@ -2543,19 +2543,11 @@ CE24 = [
     ({'checks':[{**bc(op='le'), 'tolerance':0.001}]}, ValidationError, 'checks[0]: tolerance_not_allowed'),
     ({'checks':[bc(op='le',value=True)]}, ValidationError, 'checks[0]: invalid_value'),
     # Request serialization now rejects non-finite JSON before opening frozen objects.
-    # Known pre-existing failure on Python 3.12+: the encoder appends ": nan".
-    # Left xfail so CI can run this suite unchanged; fix separately.
-    pytest.param(
-        {'checks':[bc(value=float('nan'))]}, ValidationError,
+    # 3.11 stops at "compliant"; 3.12+ appends ": nan".
+    ({'checks':[bc(value=float('nan'))]}, ValidationError, (
         'Value is not finite JSON: Out of range float values are not JSON compliant',
-        marks=pytest.mark.xfail(
-            reason=(
-                "Known pre-existing failure: Python 3.12+ JSON errors append "
-                "': nan'. Fix separately from CI."
-            ),
-            strict=False,
-        ),
-    ),
+        'Value is not finite JSON: Out of range float values are not JSON compliant: nan',
+    )),
     ({'checks':[bc(op='eq',value=[1,2])]}, ValidationError, 'checks[0]: invalid_value'),
     ({'checks':[{k:v for k,v in bc(op='eq').items() if k!='value'}]}, ValidationError, 'checks[0]: invalid_value'),
     ({'checks':[bc(ref='S-001')]}, ValidationError, 'checks[0]: not_a_file'),
@@ -2572,7 +2564,9 @@ def test_ce24_declaration_table(b_fixture, fields, error, message):
     before = b_counts(b_fixture[2])
     with pytest.raises(error) as caught:
         b_record(b_fixture, 'ce24-bad', **fields)
-    assert str(caught.value).splitlines()[0] == message
+    actual = str(caught.value).splitlines()[0]
+    accepted = (message,) if isinstance(message, str) else message
+    assert actual in accepted
     assert b_counts(b_fixture[2]) == before
 
 
