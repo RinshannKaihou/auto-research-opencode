@@ -24,6 +24,7 @@ turns = th_read.get("turns") or []
 print("turns on thread:", len(turns))
 for t in turns:
     um = [it for it in t.get("items", []) if it.get("type") == "userMessage"]
-    print("  turn", t["id"][-6:], t["status"], "userMessages:", [(u.get("clientUserMessageId"), u.get("id")) for u in um])
+    # Echoed field is item.clientId (REPORT.md S6), not the request's clientUserMessageId.
+    print("  turn", t["id"][-6:], t["status"], "userMessages:", [(u.get("clientId"), u.get("id")) for u in um])
 print("model requests made:", len(open(P).readlines()) - n0)
 a.close()

@@ -8,7 +8,7 @@ UP_HOST = os.environ.get("UP_HOST", "opencode.ai")
 UP_PREFIX = os.environ.get("UP_PREFIX", "/zen/go/v1")
 PORT = int(os.environ.get("PROXY_PORT", "18080"))
 LOG = os.environ.get("PROXY_LOG", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "proxy.jsonl"))
-DUMP = os.environ.get("PROXY_DUMP")  # optional dir for full redacted bodies
+DUMP = os.environ.get("PROXY_DUMP")  # optional dir; bodies are written unredacted (headers, including Authorization, are never written)
 lock = threading.Lock()
 ctr = [0]
 def log(rec):

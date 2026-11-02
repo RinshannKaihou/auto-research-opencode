@@ -1,7 +1,7 @@
 # Phase-0 spike: Codex app-server + OpenCode Go (`deepseek-v4.1-flash`)
 
 Date: 2026-11-02 (Asia/Shanghai, UTC+8) · Box: Linux 6.12, Node v24.22.1, Python 3.13.5
-**Codex CLI: `codex-cli 0.166.0`** (`npm i --prefix npm @openai/codex`; bin `npm/node_modules/.bin/codex`, app-server reports `appServerVersion 0.166.0`)
+**Codex CLI: `codex-cli 0.166.0`** (`npm i --prefix npm @openai/codex@0.166.0`; bin `npm/node_modules/.bin/codex`, app-server reports `appServerVersion 0.166.0`)
 Paths below are relative to the spike root (the directory that contained `scripts/`, `npm/`, `home/`, `work/`, and `logs/`).
 Protocol schema generated with `codex app-server generate-json-schema --out schema/` (v1 + v2, 39 top-level + 282 v2 files).
 No git repo cloned, GitHub not touched. Model calls: ~157 through the logging proxy + 2 direct + 5 raw header probes ≈ 164 total.
@@ -28,6 +28,8 @@ The biggest open items: idempotency has to live in the orchestrator, the `/respo
 | S11 | Static `x-opencode-session` across threads; 500s / rate limits | **PASS** | 157 proxied requests: 156 × 200 and 1 × 400 (the deliberate bogus model). 0 × 5xx, 0 × 429. 6 threads × 2 turns concurrently on one static session: max concurrency 6, all correct. **Important:** the static header is not needed. Codex already sends `session-id: <threadId>` on every request, and OpenCode accepts `session-id` as the session key (raw probe: none → 400 MissingSessionID; `x-opencode-session` → 200; `session-id` → 200; `thread-id` / `x-codex-window-id` → 400). With `http_headers` removed, Codex turns still return 200. A per-thread override also works: `thread/start.config` `{"model_providers.opencode_go.http_headers": {...}}` → seen on the wire. |
 
 ## Exact config (`home/config.toml`; the key is only referenced through `env_key`, never stored)
+
+Spike only: `sandbox_mode = "danger-full-access"`, `approval_policy = "never"`, and `scripts/appclient.py` auto-accepts every approval and elicitation. Do not copy this into production.
 
 ```toml
 model = "deepseek-v4.1-flash"
@@ -138,4 +140,4 @@ post-archive hook notes: [('hook/started','sessionEnd'),('hook/completed','sessi
 - `scripts/proxy.py`: logging reverse proxy (status, usage, input item types, header names; never logs Authorization).
 - `scripts/mcp_fixture.py`: dependency-free stdio MCP server (`lookup`, `step`, `slow`).
 - `scripts/s1_basic.py`, `s1b_direct.py`, `s2_tools.py`, `s2b_text_probe.py`, `s3_continuity.py`, `s4_perthread.py`, `s5_interrupt_resume.py`, `s6_idempotency.py`, `s7_hooks_list.py`, `s7_trust.py`, `s7_hooks.py`, `s8_usage_compare.py`, `s9_compaction.py`, `s9b_autocompact.py`, `s9c_truncation.py`, `s10_mcp_timeout.py`, `s11_session_stress.py`, `s11b_perthread_header.py`, `s11c_no_header.py`, `probe_session_header.py`, `hooks/log_hook.py`.
-- `schema/`: generated app-server JSON schema. `logs/`: raw traces. `home*/`: throwaway CODEX_HOMEs.
+- `schema/`: generated app-server JSON schema. `logs/`: raw traces. `home/config.toml`: committed key-free config. Other `home*/` files: throwaway CODEX_HOME state.

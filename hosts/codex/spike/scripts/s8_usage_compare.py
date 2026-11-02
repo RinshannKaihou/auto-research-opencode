@@ -1,5 +1,6 @@
 """S8: compare app-server thread/tokenUsage/updated (per model call 'last' + cumulative 'total') with provider
-usage captured by the logging proxy (response.completed.usage), for the S2 run."""
+usage captured by the logging proxy (response.completed.usage), for the S2 run.
+logs/s2.start is the proxy.jsonl line offset written by s2_tools.py before that turn."""
 import json, os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 start = int(open(f"{ROOT}/logs/s2.start").read())
