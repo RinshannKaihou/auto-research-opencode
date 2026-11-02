@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -13,6 +13,36 @@ test("release versions agree across Python and plugin metadata", () => {
   const project = readFileSync(join(root, "pyproject.toml"), "utf8")
   expect(python.match(/__version__ = "([^"]+)"/)?.[1]).toBe(manifest.version)
   expect(project.match(/^version = "([^"]+)"/m)?.[1]).toBe(manifest.version)
+})
+
+test("the sync manifest ships and imports every runtime module", () => {
+  const staging = mkdtempSync(join(tmpdir(), "research-sync-"))
+  try {
+    mkdirSync(join(staging, "plugin"), { recursive: true })
+    cpSync(join(root, "plugin/scripts"), join(staging, "plugin/scripts"), { recursive: true })
+    cpSync(join(root, "src"), join(staging, "src"), { recursive: true })
+    const synced = spawnSync("node", [join(staging, "plugin/scripts/sync-python.mjs")], {
+      encoding: "utf8", timeout: 30_000,
+    })
+    expect({ status: synced.status, error: synced.stderr }).toMatchObject({ status: 0 })
+    const sources = readdirSync(join(root, "src/auto_research")).filter(name => name.endsWith(".py")).sort()
+    const shipped = readdirSync(join(staging, "plugin/python/auto_research")).filter(
+      name => name.endsWith(".py")).sort()
+    expect(shipped).toEqual(sources)
+    const python = process.env.RESEARCH_TEST_PYTHON ?? "python3"
+    const imported = spawnSync(python, ["-S", "-c",
+      "import importlib, pkgutil, auto_research\n" +
+      "names = sorted(m.name for m in pkgutil.iter_modules(auto_research.__path__))\n" +
+      "for name in names: importlib.import_module('auto_research.' + name)\n" +
+      "print(','.join(names))"], {
+      cwd: staging, encoding: "utf8", timeout: 60_000,
+      env: { ...process.env, PYTHONPATH: join(staging, "plugin/python"), PYTHONDONTWRITEBYTECODE: "1" },
+    })
+    expect({ status: imported.status, error: imported.stderr }).toMatchObject({ status: 0 })
+    expect(imported.stdout.trim().split(",")).toContain("exploration_read")
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
 })
 
 test("packed backend starts, concludes and restarts without repository sources", () => {

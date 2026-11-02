@@ -11,6 +11,32 @@ from .errors import ValidationError, NotFoundError
 POLICIES = ("memory-v2", "memory-r1-v1")
 COLLECTIONS = ("critical_now", "findings", "completed_findings")
 CHECKPOINT_CONTEXT_CHARS = 4000
+# Standing exploration strategy for the main coordinator. Strategy prompts are
+# not gates: single-path proposals are not rejected for lacking a second route,
+# and execution-control instructions take precedence over these rules.
+EXPLORATION_STRATEGY_VERSION = "exploration-strategy-v1"
+EXPLORATION_STRATEGY = [
+    "large_commit: before committing large effort, name the key unknown that would change that "
+    "commitment and test it with a smaller runnable probe; you judge what counts as large from "
+    "the task and budget.",
+    "alternatives: for a selection or discovery choice, consider a substantively different "
+    "alternative or record why one path suffices; with no scope yet, register the choice "
+    "question as a scope first; delivery work may run directly.",
+    "new_result: when a new result arrives, judge whether it changes the current choice, a "
+    "material alternative or applicability; check registered challenges and counter-evidence "
+    "first; ordinary results are not automatically counter-evidence.",
+    "stop_check: before claiming a plateau or stopping, review the basis, untried options, "
+    "residual uncertainty and the information value of more work; stopping with reasons is "
+    "allowed.",
+]
+EXPLORATION_STRATEGY_CODES = [rule.split(":", 1)[0] for rule in EXPLORATION_STRATEGY]
+# The brief is the always-deliverable strategy: one actionable sentence per
+# trigger that survives without the route samples. Bare codes are observability
+# only and are never the sole strategy a model receives.
+EXPLORATION_STRATEGY_BRIEF = ("Probe decision-changing unknowns with a smaller step before large effort; "
+                              "consider an alternative or state the single-path reason; judge each new "
+                              "result against the current choice; before stopping check basis, untried "
+                              "options and uncertainty.")
 
 
 def encoded(value):
@@ -316,26 +342,43 @@ def compact_risk(item):
     return value
 
 
+ROUTE_SAMPLE_CAP = 4
+ROUTE_PER_SCOPE_CAP = 2
+
+
 def exploration_overview(store, db, generation):
-    """Bounded multi-scope projection; complete objects remain in paged collections."""
+    """Bounded multi-scope projection; complete objects remain in paged collections.
+
+    Sample selection is deterministic and coverage-first: pending work and risks on
+    invested routes, current choices, untried candidates and deferred/excluded routes
+    with registered condition changes, allocated round-robin per scope so one scope
+    cannot fill the global sample. It is a display order, not a quality ranking.
+    """
     from .exploration_store import _scopes, _decode
     scopes = _scopes(db, generation)
     if not scopes:
         return None
     active = [scope for scope in scopes if scope.get('state', 'active') == 'active']
+    ordered_scopes = [*active, *[item for item in scopes if item not in active]]
     routes = [_decode(row, 'route') for row in db.execute(
         "SELECT r.* FROM exploration_routes r JOIN (SELECT route_id,MAX(revision) revision "
         "FROM exploration_routes WHERE scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?) "
         "GROUP BY route_id) x ON r.route_id=x.route_id AND r.revision=x.revision ORDER BY r.route_id", (generation,))]
-    pending = db.execute('SELECT COUNT(*) FROM exploration_results WHERE handled_by_decision IS NULL AND '
-        'scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?)', (generation,)).fetchone()[0]
+    pending_rows = list(db.execute(
+        "SELECT result_id,scope_id,kind,source_ref,data FROM exploration_results WHERE handled_by_decision IS NULL "
+        "AND scope_id IN (SELECT scope_id FROM exploration_scopes WHERE generation=?) ORDER BY result_id",
+        (generation,)))
+    pending = len(pending_rows)
     intents = list(db.execute("SELECT i.state,i.details,t.error FROM workflow_intents i LEFT JOIN exploration_tasks t "
         "ON t.task_id=json_extract(i.details,'$.task_id') WHERE i.kind='exploration_work' "
         "AND json_extract(i.details,'$.generation')=? AND (i.state IN ('pending','waiting_budget') "
         "OR i.state='materialized' AND (t.state IN ('queued','starting','running','waiting','stopping','unverified') "
         "OR t.task_id IS NULL)) ORDER BY i.rowid", (generation,)))
+    live_states = {'queued', 'starting', 'running', 'waiting', 'stopping', 'unverified'}
+    live_work = sum(row['state'] == 'materialized' for row in intents)
     decisions = []
-    for scope in [*active, *[item for item in scopes if item not in active]]:
+    reactivation_refs = set()
+    for scope in ordered_scopes:
         row = db.execute('SELECT decision_id,data FROM exploration_decisions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1',
                          (scope['scope_id'],)).fetchone()
         if row:
@@ -346,28 +389,158 @@ def exploration_overview(store, db, generation):
                 'missing_results_total': len(data.get('expected_missing', [])),
                 'unacknowledged_missing_total': sum(not item.get('acknowledged_by_decision') for item in data.get('expected_missing', [])),
                 'declared_missing_results_total': len(data.get('missing_results', [])),
-                'revises_decision_id': data.get('revises_decision_id')})
+                'revises_decision_id': data.get('revises_decision_id'),
+                'considered_route_refs': list(dict.fromkeys(data.get('considered_route_refs', [])))[:6],
+                **({'considered_route_refs_omitted': len(set(data.get('considered_route_refs', []))) - 6}
+                   if len(set(data.get('considered_route_refs', []))) > 6 else {})})
+    for row in db.execute("SELECT data FROM exploration_decisions WHERE generation=?", (generation,)):
+        evidence = json.loads(row['data']).get('reactivation_evidence') or {}
+        reactivation_refs.update(evidence.keys())
+    # Pending results map back to routes through their recorded route ids, then
+    # through the node bindings captured when the work was allocated.
+    node_routes = {}
+    for binding in db.execute("SELECT b.node_id,b.route_id FROM exploration_bindings b "
+                              "JOIN exploration_scopes s ON s.scope_id=b.scope_id WHERE s.generation=?",
+                              (generation,)):
+        node_routes.setdefault(binding['node_id'], set()).add(binding['route_id'])
+    pending_by_route = {}
+    risk_results = []
+    for row in pending_rows:
+        data = json.loads(row['data'])
+        route_ids = set(data.get('route_ids') or []) | node_routes.get(data.get('node_id'), set())
+        for route_id in route_ids:
+            pending_by_route.setdefault(route_id, []).append(row['result_id'])
+        if row['kind'] in {'review_challenge', 'failed', 'cancelled', 'unverified', 'stopped'}:
+            risk_results.append({'result_id': row['result_id'], 'scope_id': row['scope_id'],
+                                 'kind': row['kind'], 'source_ref': row['source_ref'],
+                                 'selection_reasons': ['registered_risk_pending']})
+    scope_pending = {}
+    for row in pending_rows:
+        scope_pending[row['scope_id']] = scope_pending.get(row['scope_id'], 0) + 1
+    latest_by_scope = {item['scope_id']: item for item in decisions}
+
+    def route_reasons(route):
+        reasons = []
+        route_id = route['route_id']
+        if route.get('disposition') in {'investigating', 'adopted'} and pending_by_route.get(route_id):
+            reasons.append('pending_results_on_invested_route')
+        if route.get('disposition') == 'adopted':
+            reasons.append('current_choice')
+        choice = latest_by_scope.get(route['scope_id'])
+        if (choice and route['ref'] in choice['considered_route_refs']
+                and choice.get('unacknowledged_missing_total')):
+            reasons.append('missing_expected_result')
+        if route.get('disposition') == 'untried':
+            reasons.append('untried_candidate')
+        if route.get('disposition') in {'deferred', 'excluded'}:
+            reasons.append('reactivation_registered' if route['ref'] in reactivation_refs
+                           else 'parked_route')
+        return reasons or ['scope_coverage']
+
+    priority = {'pending_results_on_invested_route': 0, 'current_choice': 1, 'missing_expected_result': 2,
+                'untried_candidate': 3, 'reactivation_registered': 4, 'parked_route': 5, 'scope_coverage': 6}
+
+    def route_rank(route):
+        return (min(priority[reason] for reason in route_reasons(route)), route['route_id'])
+
+    # Round-robin per scope: scopes with pending todos first, then other active
+    # scopes, so a single scope cannot fill the global sample. A lone scope is
+    # the whole sample, so its quota is the global cap.
+    sample, sampled_ids = [], set()
+    scope_order = sorted(ordered_scopes, key=lambda item: (scope_pending.get(item['scope_id'], 0) == 0,
+                                                           item.get('state', 'active') != 'active',
+                                                           item['scope_id']))
+    scope_quota = ROUTE_SAMPLE_CAP if len(scope_order) == 1 else ROUTE_PER_SCOPE_CAP
+    queues = {item['scope_id']: sorted([route for route in routes if route['scope_id'] == item['scope_id']],
+                                       key=route_rank) for item in scope_order}
+    per_scope = {item['scope_id']: 0 for item in scope_order}
+    progressed = True
+    while len(sample) < ROUTE_SAMPLE_CAP and progressed:
+        progressed = False
+        for scope in scope_order:
+            if len(sample) >= ROUTE_SAMPLE_CAP:
+                break
+            queue = queues[scope['scope_id']]
+            while queue and per_scope[scope['scope_id']] < scope_quota:
+                route = queue.pop(0)
+                if route['route_id'] in sampled_ids:
+                    continue
+                sampled_ids.add(route['route_id'])
+                per_scope[scope['scope_id']] += 1
+                sample.append(route)
+                progressed = True
+                break
+    route_status_counts = dict(sorted(Counter(route.get('disposition', 'untried') for route in routes).items()))
+
+    def route_entry(route):
+        value = {key: route[key] for key in ('ref', 'scope_id', 'title', 'disposition')}
+        # Sample titles are bounded; the full title lives in the paged route.
+        if len(value['title']) > 100:
+            value['title'] = value['title'][:100]
+            value['title_truncated'] = True
+        value['selection_reasons'] = route_reasons(route)
+        if route.get('disposition') == 'untried':
+            for key in ('critical_assumption', 'next_probe'):
+                if route.get(key):
+                    text = route[key] if isinstance(route[key], str) else encoded(route[key])
+                    value[key] = text[:120] if len(text) > 120 else text
+        if route.get('disposition') in {'deferred', 'excluded'} and route.get('reactivation_condition'):
+            condition = route['reactivation_condition'] if isinstance(route['reactivation_condition'], str) \
+                else encoded(route['reactivation_condition'])
+            value['reactivation_condition'] = condition[:120]
+        return value
+
+    def scope_entry(item):
+        scope_routes = [route for route in routes if route['scope_id'] == item['scope_id']]
+        value = {'ref': item['ref'], 'scope_id': item['scope_id'], 'objective': item['objective'][:100],
+                'state': item.get('state', 'active'), 'task_kind': item.get('task_kind'),
+                'routes_total': len(scope_routes),
+                'pending_results_total': scope_pending.get(item['scope_id'], 0),
+                'adopted_route_refs': [route['ref'] for route in scope_routes
+                                       if route.get('disposition') == 'adopted'],
+                'selection_reasons': (['pending_todo_first'] if scope_pending.get(item['scope_id'])
+                                      else ['active_scope'])}
+        # Alternatives show as the explicit not-registered note only when no
+        # considerable candidate remains; candidates themselves stay in the
+        # route sample and the paged collection.
+        if not [route for route in scope_routes if route.get('disposition') in {'untried', 'investigating'}]:
+            value['notable_alternatives'] = {'status': 'not_registered',
+                'note': 'No structured alternative is registered; register one or record the single-path reason.'}
+        return value
+
     selected = active[-1] if active else scopes[-1]
     return {'scope_ref': selected['ref'], 'objective': selected['objective'],
         'scopes_total': len(scopes), 'active_scopes_total': len(active),
         'deferred_scopes_total': sum(item.get('state') == 'deferred' for item in scopes),
         'closed_scopes_total': sum(item.get('state') == 'closed' for item in scopes),
         'routes_total': len(routes), 'active_routes_total': sum(item.get('disposition') == 'investigating' for item in routes),
+        'route_status_counts': route_status_counts,
+        'untried_total': route_status_counts.get('untried', 0),
+        'adopted_total': route_status_counts.get('adopted', 0),
+        'parked_routes_total': route_status_counts.get('deferred', 0) + route_status_counts.get('excluded', 0),
         'pending_results_total': pending, 'pending_work_total': len(intents),
+        'live_work_total': live_work,
+        'live_work_note': 'investigating = registered investment; live work from task state',
         'waiting_budget_total': sum(row['state'] == 'waiting_budget' for row in intents),
         'waiting_resource_total': sum((row['error'] or '').startswith('waiting_resource:') for row in intents),
         'provisional_scopes_total': sum(item['provisional'] for item in decisions),
         'missing_results_total': sum(item['missing_results_total'] for item in decisions),
         'unacknowledged_missing_total': sum(item['unacknowledged_missing_total'] for item in decisions),
+        'record_boundary': 'Registered records only; absent entries are unrecorded, not disproven.',
         'index_complete': False,
         'scopes_index': {'collection':'exploration_scopes', 'generation':generation},
         'routes_index': {'collection':'exploration_routes', 'generation':generation},
         'results_index': {'collection':'exploration_results', 'generation':generation},
         'work_index': {'collection':'exploration_intents', 'generation':generation},
-        'scopes': [{'ref': item['ref'], 'scope_id': item['scope_id'], 'objective': item['objective'][:100],
-                    'state': item.get('state', 'active')} for item in [*active, *[scope for scope in scopes if scope not in active]][:3]],
-        'routes': [{key: route[key] for key in ('ref','scope_id','title','disposition')} for route in routes[:3]],
-        'latest_decisions': decisions[:3]}
+        'scopes': [scope_entry(item) for item in ordered_scopes[:3]],
+        'scopes_omitted': max(0, len(scopes) - 3),
+        'routes': [route_entry(route) for route in sample],
+        'routes_omitted': max(0, len(routes) - len(sample)),
+        'result_sample': risk_results[:4],
+        'results_omitted': max(0, pending - min(4, len(risk_results))),
+        'latest_decisions': decisions[:3],
+        'decisions_omitted': max(0, len(decisions) - 3),
+        'sample_order_note': 'Deterministic coverage order, not a quality ranking.'}
 
 
 def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None, final_ref=None):
@@ -385,27 +558,46 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
     ) if value is not None}
     views = {'identity': block_map['identity']}
     exploration_details = None
+    exploration_meta = None
+    exploration_selection = None
     if (block_map['identity']['role'] == 'main' and db.execute('PRAGMA user_version').fetchone()[0] >= 13
             and store._project(db)['config'].get('exploration_policy') == 'exploration-v1'):
         run = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()
         overview = exploration_overview(store, db, run['generation']) if run else None
+        # Tier-2 strategy: the actionable brief and the untried count travel
+        # with the core totals independently of the route samples; full rules
+        # and meta upgrade later only when the budget allows.
+        strategy = {'brief': EXPLORATION_STRATEGY_BRIEF}
         if overview:
             views['exploration'] = {key: overview[key] for key in
                 ('scope_ref', 'scopes_total', 'active_scopes_total', 'routes_total', 'pending_results_total',
-                 'provisional_scopes_total', 'missing_results_total', 'unacknowledged_missing_total')}
-            views['exploration'].update({'details_omitted': True,
+                 'untried_total', 'provisional_scopes_total', 'missing_results_total',
+                 'unacknowledged_missing_total')}
+            views['exploration'].update({'strategy': strategy, 'details_omitted': True,
                 'scopes': {'collection':'exploration_scopes'}, 'routes': {'collection':'exploration_routes'},
                 'results': {'collection':'exploration_results'}, 'intents': {'collection':'exploration_intents'}})
-            exploration_details = {'objective':overview['objective'][:200], 'scope_sample':overview['scopes'],
+            exploration_details = {'objective':overview['objective'][:120], 'scope_sample':overview['scopes'],
                 'route_sample':overview['routes'], 'latest_decisions':overview['latest_decisions'],
                 'pending_work_total':overview['pending_work_total'], 'waiting_budget_total':overview['waiting_budget_total'],
                 'waiting_resource_total':overview['waiting_resource_total']}
+            exploration_meta = {'route_status_counts':overview['route_status_counts'],
+                'untried_total':overview['untried_total'], 'live_work_total':overview['live_work_total'],
+                'live_work_note':'investigating = registered investment; live work from task state',
+                'result_sample':overview['result_sample'],
+                'omitted': {'scopes':overview['scopes_omitted'], 'routes':overview['routes_omitted'],
+                            'results':overview['results_omitted'], 'decisions':overview['decisions_omitted']},
+                'record_boundary':'Registered records only; absent entries are unrecorded, not disproven.',
+                'sample_order_note':'Deterministic coverage order, not a quality ranking.'}
+            exploration_selection = {'version': 'exploration-context-v2',
+                'selection_reasons': {route['ref']: route['selection_reasons'] for route in overview['routes']},
+                'omitted': {'scopes':overview['scopes_omitted'], 'routes':overview['routes_omitted'],
+                            'results':overview['results_omitted'], 'decisions':overview['decisions_omitted']}}
             from .runtime_budget import exploration_budget_view
             budget = exploration_budget_view(store, db)
             if budget.get('available'):
-                exploration_details['budget'] = {key:budget[key] for key in
+                exploration_meta['budget'] = {key:budget[key] for key in
                     ('allocated', 'reserved', 'committed', 'limit', 'unit', 'actual_usage_status')}
-                exploration_details['resources'] = {'held_sample':dict(list(budget['resources_held'].items())[:3]),
+                exploration_meta['resources'] = {'held_sample':dict(list(budget['resources_held'].items())[:3]),
                     'capacity_sample':dict(list(budget['resource_capacities'].items())[:3]),
                     'expand':{'collection':'exploration_budget'}, 'note':'Unverified external exit keeps resources held'}
             exploration_details['instruction'] = ('Read evidence with scope_id before a local choice. Process late results, '
@@ -413,9 +605,12 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
                 'For project conclusion omit scope_id and cover every scope, including deferred/closed scopes. '
                 'A shared probe binds multiple routes to one work allocation; failures are not refutations.')
         else:
-            views['exploration'] = {'scopes_total': 0, 'active_scopes_total': 0,
+            views['exploration'] = {'scopes_total': 0, 'active_scopes_total': 0, 'untried_total': 0,
+                'strategy': strategy,
                 'scopes': {'collection':'exploration_scopes'}, 'routes': {'collection':'exploration_routes'}}
             exploration_details = {'instruction': 'For a choice or discovery with a key unknown, create a scope and save possible routes; direct delivery need not invent alternatives.'}
+            exploration_meta = None
+            exploration_selection = {'version': 'exploration-context-v2', 'selection_reasons': {}, 'omitted': {}}
     for name in ('critical_now', 'findings'):
         views[name] = {'total': len(model[name]), 'items': [], 'index_complete': False,
                        'details_complete': False, 'expand_required': True,
@@ -466,20 +661,47 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
                                                'expand': {'collection': 'completed_findings'}}
     if len(body()) > max_chars:
         del views['identity']
+    # The exploration core degrades before the decision scope can fail: the
+    # brief strategy, operative totals, untried count and the primary scope
+    # and route entries stay; softer counts, the scope pointer and the
+    # secondary result/work entries yield first. Only a still-overflowing body
+    # falls back to bare trigger codes.
+    if len(body()) > max_chars and 'exploration' in views:
+        for key in ('scope_ref', 'provisional_scopes_total', 'missing_results_total',
+                    'unacknowledged_missing_total', 'results', 'intents'):
+            views['exploration'].pop(key, None)
+    if len(body()) > max_chars and 'exploration' in views \
+            and 'brief' in views['exploration'].get('strategy', {}):
+        views['exploration']['strategy'] = {'codes': list(EXPLORATION_STRATEGY_CODES),
+                                            'brief_omitted': True}
     if len(body()) > max_chars:
         raise ValidationError(f'Context budget too small for decision scope; requires at least {len(body())} characters')
+    # Role/control and current task outrank degradable exploration samples:
+    # fill them first so long route prose can never displace them.
+    for key in ('control_instructions', 'role_instructions', 'attempt', 'task', 'project'):
+        if block_map[key] is not None:
+            views[key] = block_map[key]
+            if len(body()) > max_chars:
+                del views[key]
     if exploration_details is not None:
         views['exploration']['details'] = exploration_details
         views['exploration']['details_omitted'] = False
         if len(body()) > max_chars:
             del views['exploration']['details']
             views['exploration']['details_omitted'] = True
-    # Role/control and current task are preserved before filling optional prose.
-    for key in ('role_instructions', 'control_instructions', 'attempt', 'task', 'project'):
-        if block_map[key] is not None:
-            views[key] = block_map[key]
-            if len(body()) > max_chars:
-                del views[key]
+    # The full rules and projection metadata upgrade independently of whether
+    # the route samples fitted: dropped details must not silence the strategy.
+    if 'exploration' in views and 'brief' in views['exploration'].get('strategy', {}):
+        upgraded = {'version': EXPLORATION_STRATEGY_VERSION, 'rules': list(EXPLORATION_STRATEGY),
+                    'note': 'Prompts, not gates; execution-control instructions take precedence.'}
+        brief = views['exploration']['strategy']
+        views['exploration']['strategy'] = upgraded
+        if len(body()) > max_chars:
+            views['exploration']['strategy'] = brief
+    if exploration_meta is not None:
+        views['exploration']['meta'] = exploration_meta
+        if len(body()) > max_chars:
+            del views['exploration']['meta']
     remaining = max_chars - len(body())
     finding_budget = min(4000, remaining * 5 // 8) if model['critical_now'] else min(4000, remaining)
     risk_budget = min(2400, remaining - finding_budget) if model['findings'] else min(2400, remaining)
@@ -572,7 +794,8 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
         'shown': views['findings']['completed_nodes']['shown'] if 'shown' in views['findings']['completed_nodes'] else 0,
         'source_complete': True, 'expand': {'collection': 'completed_findings'}}
     return {'text': text, 'policy_version': 'memory-r1-v1', 'context_mode': block_map['specialist_task']['context_mode'] if block_map['specialist_task'] else None,
-            **({'exploration_context': 'exploration-context-v1'} if exploration_details is not None else {}),
+            **({'exploration_context': 'exploration-context-v2', 'exploration_selection': exploration_selection}
+               if exploration_details is not None else {}),
             'source_digest': hashlib.sha256(text.encode()).hexdigest(),
             'source_sequence': model['source_sequence'], 'dependencies': sorted(dependencies),
             'selection': {value['ref']: {'reasons': value['selection_reasons'], 'scope_origins': value['scope_origins']} for value in shown},

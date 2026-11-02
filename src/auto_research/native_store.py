@@ -1011,8 +1011,16 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
                 )
         self._event(db, "attempt.finished", value)
         if attempt["node_id"] is not None:
-            self.exploration_record_result(db, attempt["node_id"], "attempt:" + attempt["attempt_id"],
-                                           state, None, {"summary": details.get("reason", "")})
+            # A provably mechanical confirmation of the last complete publication
+            # of this attempt adds no new research obligation; the merge verdict,
+            # the finish state update and the audit event share this transaction.
+            merged = self.finish_confirmation_merge(db, attempt, state, details)
+            if merged is not None:
+                merged["actor"] = {"host_id": host_id, "session_id": session_id}
+                self._event(db, "exploration.finish_confirmed", merged)
+            else:
+                self.exploration_record_result(db, attempt["node_id"], "attempt:" + attempt["attempt_id"],
+                                               state, None, {"summary": details.get("reason", "")})
         self.queue_review_in_tx(db, "attempt-finished", attempt["attempt_id"], attempt["node_id"])
         if queued:
             next_id = self._next(db, "attempt", "A")

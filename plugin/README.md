@@ -30,6 +30,8 @@
 
 看板仍只有概览、研究、成果三个主入口；进入“2 研究”后按 `b` 在节点与路线之间切换。概览显示当前选择和结项四维状态，最终材料包含可打开的证据附录。真实模型的质量与成本对照尚未完成，因此新能力保持显式启用。
 
+探索模式的主协调上下文持续提示关键前提检验、替代方案考虑和停止前核查，并优先展示当前待办与未尝试候选。结果可用 `research_query collection=exploration_inbox` 按工作和执行尝试分组读取；group key 只用于导航，决定仍引用明确 result IDs。正常完成且没有补充信息时，finish 可原文复用最后一份完整发布的 summary，系统按严格条件减少重复确认；新增限制、失败和不同总结继续保留待办。详细行为与验证见[交付记录](../docs/evidence/exploration-activation/README.md)。
+
 ## 多范围与多路线（E3）
 
 沿用 `exploration on`，主协调通过 `research_scope` 创建多个本代范围，`research_route` 保存固定关系和组件，`research_decide` 可用 `work_batch` 分批投入；保存候选本身不创建节点。局部选路先 `research_query collection=evidence scope_id=ES-…`，最终结项读取不带 scope_id 的全代视图。无关范围或未选候选变化不取消已批准工作，相关前提变化仍会阻止未启动工作。快结果可作 provisional 选择，expected_results 跟踪既有 intent，迟到证据用新 decision 修订。

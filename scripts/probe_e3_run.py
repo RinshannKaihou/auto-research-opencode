@@ -111,6 +111,11 @@ class E3Provider(E1E2Provider):
             return 'research_record', {'kind': 'claim', 'statement': 'The isolated fixture restored the single-route measurement after combination degradation',
                 'visibility': 'project', 'evidence_refs': [cls.result_ref(key)]}
         cls.finished_nodes.add(nid)
+        if key == 'slow':
+            # B2 host coverage: a verbatim mechanical confirmation of this
+            # attempt's last complete publication must merge instead of adding
+            # another pending exploration result.
+            return 'research_finish', {'state': 'finished', 'summary': 'Controlled fixture ' + key}
         return 'research_finish', {'state': 'finished', 'summary': 'Controlled fixture complete: ' + key}
 
     @classmethod
@@ -123,6 +128,11 @@ class E3Provider(E1E2Provider):
     @classmethod
     def final(cls, body, first):
         offset = cls.stage - first
+        if offset == 0:
+            # Exercise the work-grouped inbox navigation once before the final
+            # reads so a packed backend must ship the exploration_read module.
+            return cls.advance('research_query', {'collection': 'exploration_inbox'})
+        offset -= 1
         claims = cls.rows("SELECT r.knowledge_id,MAX(r.revision) FROM knowledge_revisions r JOIN knowledge_entries e USING(knowledge_id) "
                           "WHERE e.kind='claim' GROUP BY r.knowledge_id")
         refs = [f'knowledge/{kid}@{rev}' for kid, rev in claims]
@@ -452,6 +462,15 @@ def main():
                 assert sum(item['amount'] for item in allocations) <= 8
                 assert len(allocations) == len(tasks) == (5 if args.scenario == 'full' else 2)
                 if args.scenario == 'full':
+                    # B2: the slow node's verbatim finish confirmation merged, so it
+                    # left no separate finished obligation, while the auditable
+                    # confirmation event and every other finish result remain.
+                    slow_node = provider.task('slow')[1]
+                    assert not provider.rows("SELECT 1 FROM exploration_results WHERE kind='finished' "
+                                             "AND json_extract(data,'$.node_id')=?", (slow_node,))
+                    merges = provider.rows("SELECT data FROM events WHERE kind='exploration.finish_confirmed'")
+                    assert merges and json.loads(merges[0][0])['rule'] == 'finish-merge-v1'
+                    assert provider.rows("SELECT COUNT(*) FROM exploration_results WHERE kind='finished'")[0][0] >= 1
                     assert sum(item['node_id'] == tasks[0]['node_id'] for item in bindings) == 2
                     assert any(item['data']['provisional'] and item['data']['expected_missing'] for item in decisions)
                     revised = [item['data'] for item in decisions if item['data']['revises_decision_id']]

@@ -648,7 +648,7 @@ class NativeService:
         view = request.get("view")
         if view == 'evidence':
             return self.evidence.page(store, **{key: request[key] for key in ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'limit', 'scope_id') if key in request})
-        if view == 'page' and request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
+        if view == 'page' and request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents', 'exploration_inbox'}:
             return store.exploration_page(request['collection'], **{key: request[key] for key in
                 ('cursor', 'limit', 'ref', 'scope_id') if key in request})
         if view == 'page' and request.get('collection') in {'review_candidates','review_obligations','review_events'}:
@@ -1102,7 +1102,7 @@ class NativeService:
                 elif request.get('collection') == 'evidence':
                     value = self.evidence.page(store, host=host_id, session=session_id, **{key: request[key] for key in
                         ('refs', 'include_materials', 'draft_id', 'snapshot_id', 'cursor', 'material_ref', 'limit', 'scope_id') if key in request})
-                elif request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents'}:
+                elif request.get('collection') in {'exploration_scopes', 'exploration_routes', 'exploration_decisions', 'exploration_results', 'exploration_intents', 'exploration_inbox'}:
                     value = store.exploration_page(request['collection'], **{key: request[key] for key in
                         ('cursor', 'limit', 'ref', 'scope_id') if key in request})
                 elif isinstance(request.get('ref'), str) and request['ref'].startswith('explore/scope/'):

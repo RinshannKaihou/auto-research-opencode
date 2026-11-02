@@ -656,7 +656,7 @@ export default Plugin.define({
             if (!state.exploration_closing_allowed) delete request.tools.research_decide
             else if (request.tools.research_decide) {
               const spec=TOOLS.find(tool=>tool.name==='research_decide')!.parameters
-              const closing=Object.fromEntries(Object.entries(spec).filter(([key])=>key!=='next_work')
+              const closing=Object.fromEntries(Object.entries(spec).filter(([key])=>key!=='next_work'&&key!=='work_batch')
                 .map(([key,value])=>[key,key==='action' ? {...value,enum:['defer','propose_stop']} : value]))
               request.tools.research_decide.input=parameters(closing) as typeof request.tools.research_decide.input
               request.tools.research_decide.description='Exploration is off. Consider existing results and close or defer routes; do not create new work.'

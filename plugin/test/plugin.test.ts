@@ -2656,6 +2656,7 @@ test('turning exploration off wakes the waiting coordinator and retains closing 
   await host.hooks.get('context')!(context)
   const spec=(context.tools.research_decide.input as any).properties
   expect(spec.next_work).toBeUndefined()
+  expect(spec.work_batch).toBeUndefined()
   expect(spec.action.enum).toEqual(['defer','propose_stop'])
   expect(context.tools.research_scope).toBeUndefined()
 })

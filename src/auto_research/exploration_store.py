@@ -384,10 +384,56 @@ class ExplorationStore:
                 self._exploration_result_in_scope(db, ident, 'scope:' + value['ref'], 'scope_changed',
                                                   value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
             if old and value['state'] != old.get('state', 'active'):
-                self._exploration_result_in_scope(db, ident, 'state:' + value['ref'], 'scope_state_changed',
-                    value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
+                if self._scope_state_action_expressed(db, ident, old, value, run):
+                    # The revision itself is the coordinator's explicit state
+                    # action; recording an extra self-confirmation obligation
+                    # for the same fact would only duplicate the decision cost.
+                    self._event(db, 'exploration.scope_state_expressed', {
+                        'rule': self.SCOPE_STATE_RULE, 'scope_ref': value['ref'],
+                        'before_ref': old['ref'], 'state': value['state'],
+                        'reason': fields.get('reason'),
+                        'reactivation_condition': value.get('reactivation_condition'),
+                        'actor': actor})
+                else:
+                    self._exploration_result_in_scope(db, ident, 'state:' + value['ref'], 'scope_state_changed',
+                        value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
             return value
         return self._mutate("exploration.scope", payload, operation, work)
+
+    SCOPE_STATE_RULE = "scope-state-expressed-v1"
+
+    def _scope_state_action_expressed(self, db, scope_id, old, value, run):
+        """Whitelist for skipping the scope_state_changed self-confirmation.
+
+        True only when the current main coordinator performs a pure close or
+        defer with a reason and a reactivation condition, nothing but the state
+        and its explanation changes, and the scope holds neither unhandled
+        results nor live or scheduled work."""
+        if value['state'] not in {'closed', 'deferred'}:
+            return False
+        if value['goal_version'] != old['goal_version']:
+            return False
+        unchanged = all(old.get(key) == value.get(key) for key in _SCOPE_FIELDS
+                        if key not in {'state', 'reactivation_condition'})
+        if not unchanged:
+            return False
+        if not isinstance(value.get('reason'), str) or not value['reason'].strip():
+            return False
+        if not isinstance(value.get('reactivation_condition'), str) or not value['reactivation_condition'].strip():
+            return False
+        if value.get('changed_conditions'):
+            return False
+        if db.execute('SELECT 1 FROM exploration_results WHERE scope_id=? AND handled_by_decision IS NULL LIMIT 1',
+                      (scope_id,)).fetchone():
+            return False
+        if db.execute("SELECT 1 FROM workflow_intents i LEFT JOIN exploration_tasks t "
+                      "ON t.task_id=json_extract(i.details,'$.task_id') WHERE i.kind='exploration_work' "
+                      "AND json_extract(i.details,'$.scope_id')=? AND json_extract(i.details,'$.generation')=? "
+                      "AND (i.state IN ('pending','waiting_budget') OR i.state='materialized' "
+                      "AND (t.state IN ('queued','starting','running','waiting','stopping','unverified') "
+                      "OR t.task_id IS NULL)) LIMIT 1", (scope_id, run['generation'])).fetchone():
+            return False
+        return True
 
     def exploration_route(self, host, session, fields, operation):
         payload = {"host": host, "session": session, "fields": fields}
@@ -755,7 +801,8 @@ class ExplorationStore:
                 route_id, route_rev = _parse_ref(ref, "route")
                 db.execute("INSERT INTO exploration_bindings VALUES(?,?,?,?,?,?,?)",
                            (details["decision_id"], route_id, route_rev, details["scope_id"],
-                            _parse_ref(details["scope_ref"], "scope")[1], node["node_id"], "probe"))
+                            _parse_ref(details["scope_ref"], "scope")[1], node["node_id"],
+                            work.get("work_kind", "probe")))
             details.update(node_id=node["node_id"], task_id=task["task_id"])
             if db.execute('PRAGMA user_version').fetchone()[0] >= 16:
                 from .runtime_budget import materialize_exploration_work
@@ -765,6 +812,54 @@ class ExplorationStore:
             self._event(db, "exploration.work_materialized", {"intent_id": intent_id, "node_id": node["node_id"], "task_id": task["task_id"]})
             return {"intent_id": intent_id, "state": "materialized", "node_id": node["node_id"], "task_id": task["task_id"]}
         return self._mutate("exploration.materialize", payload, operation, work)
+
+    FINISH_MERGE_RULE = "finish-merge-v1"
+
+    def finish_confirmation_merge(self, db, attempt, state, details):
+        """Strict whitelist for a mechanical finish confirmation.
+
+        A normal finish of a managed node attempt whose summary is verbatim the
+        last complete publication of the same attempt, with no other payload,
+        provably republishes information the coordinator already owes a
+        decision on, so it does not create an additional pending exploration
+        result. Returns the audit payload when the finish merges, None when the
+        original pending-result path must run. Basis comparison, review risk,
+        resource-exit verification and notifications are unaffected.
+        """
+        if db.execute("PRAGMA user_version").fetchone()[0] < 13:
+            return None
+        if state != "finished" or attempt["mode"] != "auto" or attempt["node_id"] is None:
+            return None
+        if any(key != "reason" for key in details):
+            return None
+        publications = list(db.execute(
+            "SELECT publication_id,status,summary FROM publications WHERE attempt_id=? ORDER BY rowid",
+            (attempt["attempt_id"],)))
+        if not publications:
+            return None
+        last = publications[-1]
+        if last["status"] != "complete" or details.get("reason", "") != (last["summary"] or ""):
+            return None
+        run = db.execute("SELECT generation FROM workflow_project WHERE id=1").fetchone()
+        if not run:
+            return None
+        bindings = list(db.execute(
+            "SELECT DISTINCT b.scope_id FROM exploration_bindings b "
+            "JOIN exploration_scopes s ON s.scope_id=b.scope_id "
+            "WHERE b.node_id=? AND s.generation=?", (attempt["node_id"], run["generation"])))
+        if not bindings:
+            return None
+        for row in bindings:
+            if not db.execute("SELECT 1 FROM exploration_results WHERE scope_id=? AND source_key=?",
+                              (row["scope_id"], "publication:" + last["publication_id"])).fetchone():
+                return None
+        task = db.execute("SELECT task_id FROM exploration_tasks WHERE node_id=? "
+                          "ORDER BY rowid DESC LIMIT 1", (attempt["node_id"],)).fetchone()
+        return {"rule": self.FINISH_MERGE_RULE, "attempt_id": attempt["attempt_id"],
+                "node_id": attempt["node_id"], "task_id": task["task_id"] if task else None,
+                "publication_id": last["publication_id"],
+                "scope_ids": sorted(row["scope_id"] for row in bindings),
+                "summary": details.get("reason", "")}
 
     def exploration_record_result(self, db, node_id, source_key, kind, source_ref, details):
         if db.execute("PRAGMA user_version").fetchone()[0] < 13:
@@ -839,6 +934,12 @@ class ExplorationStore:
     def exploration_page(self, collection, *, cursor=None, limit=50, ref=None, scope_id=None):
         if cursor is not None and not isinstance(cursor, dict):
             raise ValidationError('Exploration cursor must be an object')
+        if collection == 'exploration_inbox':
+            from .exploration_read import inbox_page
+            with self._read() as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] < 13:
+                    return {"available": False, "items": [], "cursor": None, "semantics": "legacy"}
+                return inbox_page(self, db, cursor=cursor, limit=limit, ref=ref, scope_id=scope_id)
         kinds = {"exploration_scopes": "scope", "exploration_routes": "route",
                  "exploration_decisions": "decision", "exploration_results": "result", "exploration_intents": "intent"}
         if collection not in kinds:

@@ -97,24 +97,50 @@ STATUSES = {"proposed", "working", "disputed", "superseded", "retracted"}
 # Hosts without autonomous dispatch replace the role and control blocks; the
 # default (None) keeps the DSH wording byte for byte.
 CONTEXT_PROFILES = {None, "opencode-manual", "opencode-auto"}
-OPENCODE_AUTO_ROLES = {
-    "main": (
-        "You coordinate this research project autonomously; the research engine keeps you working "
-        "turn after turn. Each turn read the project state and act. Propose bounded nodes with "
-        "research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready "
-        "nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing "
-        "else is useful. Full experiments belong to node executors, not to you. When node results "
-        "arrive, synthesize them: record project-level knowledge with evidence, revise or retract "
-        "earlier conclusions, and propose follow-up nodes where evidence is missing. When adopting "
-        "materials for current synthesis, use research_review_scope with exact refs and reason; "
-        "[] explicitly clears the scope. This does not need a checkpoint. "
-        "Read review_obligations and link exact reports using research_relate label=reviews; review "
-        "task completion does not resolve scientific risk. When the goal is "
-        "answered, or further work cannot change the conclusion, publish a final report with "
-        "research_publish (status complete) and call research_conclude with summary, final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. Messages starting with "
-        "【Research 自动推进】 come from the research engine; other user messages are guidance from "
-        "the human lead: follow them and keep going."
+OPENCODE_AUTO_MAIN_COORDINATION = (
+    "You coordinate this research project autonomously; the research engine keeps you working "
+    "turn after turn. Each turn read the project state and act. Propose bounded nodes with "
+    "research_propose (question, plan, acceptance criteria, typed predecessors), dispatch ready "
+    "nodes with research_dispatch, and call research_wait for your dispatched tasks when nothing "
+    "else is useful. Full experiments belong to node executors, not to you. When node results "
+    "arrive, synthesize them: record project-level knowledge with evidence, revise or retract "
+    "earlier conclusions, and propose follow-up nodes where evidence is missing. When adopting "
+    "materials for current synthesis, use research_review_scope with exact refs and reason; "
+    "[] explicitly clears the scope. This does not need a checkpoint. "
+    "Read review_obligations and link exact reports using research_relate label=reviews; review "
+    "task completion does not resolve scientific risk. "
+)
+OPENCODE_AUTO_MAIN_CONCLUSIONS = {
+    "legacy-v1": (
+        "When the goal is answered, or further work cannot change the conclusion, publish a final "
+        "report with research_publish (status complete) and call research_conclude with summary, "
+        "final_ref, outcome (answered/partial/unresolved), gaps, and review {status,refs,limitations}. "
+        "Review is self-declared coverage, not a correctness certificate; unreviewed/partial needs "
+        "limitations; partial/reviewed needs frozen review refs. Partial/unresolved outcomes need gaps. "
     ),
+    "evidence-v1": (
+        "When the goal is answered, or further work cannot change the conclusion, call "
+        "research_prepare_conclusion with a current evidence snapshot; read every page of the "
+        "returned draft in the same model request, publish the draft's bound final report with "
+        "research_publish (status complete), then call research_conclude with summary, final_ref "
+        "and draft_id after the complete draft was delivered in that request. Outcome and review "
+        "are derived from the prepared draft, not declared separately at conclude time. "
+    ),
+}
+OPENCODE_AUTO_MAIN_SUFFIX = (
+    "Messages starting with 【Research 自动推进】 come from the research engine; other user "
+    "messages are guidance from the human lead: follow them and keep going."
+)
+
+
+def _main_role_text(config):
+    contract = config.get("conclusion_contract", "legacy-v1")
+    passage = OPENCODE_AUTO_MAIN_CONCLUSIONS.get(contract, OPENCODE_AUTO_MAIN_CONCLUSIONS["legacy-v1"])
+    return OPENCODE_AUTO_MAIN_COORDINATION + passage + OPENCODE_AUTO_MAIN_SUFFIX
+
+
+OPENCODE_AUTO_ROLES = {
+    "main": _main_role_text({}),
     "node_core": (
         "You execute one research node for the coordinator. Work inside the workspace directory "
         "given in your task message and keep inputs unchanged. Plan briefly, run the experiments or "
@@ -1769,7 +1795,7 @@ class MemoryStore:
                 ).fetchone() else None
             )),
             ("checkpoint_recovery", checkpoint_info),
-            ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else (role_override or OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role.")) if profile == "opencode-auto" else {
+            ("role_instructions", OPENCODE_MANUAL_ROLE if profile == "opencode-manual" else (role_override or (_main_role_text(project["config"]) if session and session["role"] == "main" else OPENCODE_AUTO_ROLES.get(session["role"] if session else "", "Follow the assigned research role."))) if profile == "opencode-auto" else {
                 "main": "Coordinate inventory, planning, dispatch, synthesis and continuation. Propose then dispatch node work; full coding and experiments belong to node_core. Do not use research_finish. In manual mode prepare the plan; /research auto enables node execution. If the user requests plan confirmation, submit the complete plan and wait; clarification answers alone do not approve it. Record acceptance criteria in plans/checkpoints and report evidence, gaps and stopping reasons. A successor must declare its actual predecessors and fixed inputs; a handoff failure does not make it a root. Already authorized execution needs no extra confirmation.",
                 "node_core": "Own this node's planning, coding, experiments and analysis. Delegate bounded read-only specialists, publish node findings and use research_finish to end the work segment. Put explicit evidence references, scope and known applicability limits into structured knowledge fields; do not invent missing conditions.",
                 "specialist": "Read only the assigned question and materials; return evidence and uncertainty. Do not change research records or delegate.",

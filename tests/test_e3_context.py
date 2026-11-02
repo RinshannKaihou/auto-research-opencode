@@ -27,7 +27,7 @@ def test_context_and_board_keep_all_scopes_and_expansion_paths(tmp_path):
     scopes = {item['ref']:item for item in large['details']['scope_sample']}
     assert scopes[deferred['ref']]['state'] == 'deferred'
     assert scopes[second['ref']]['state'] == 'active'
-    assert large['details']['budget']['actual_usage_status'] == 'unknown'
+    assert large['meta']['budget']['actual_usage_status'] == 'unknown'
     assert route['ref'] in [item['ref'] for item in large['details']['route_sample']]
     store = NativeStore(host.root)
     with store._read() as db:

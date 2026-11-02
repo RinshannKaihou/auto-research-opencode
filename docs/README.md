@@ -2,6 +2,8 @@
 
 更新日期：2026-11-01。旧 R1～R4 完整路线图已废止；后续开发采用 E1 → E2 → E3，已完成能力和历史证据继续保留。
 
+本轮增量见[探索触发与决策负担开发计划](<./Exploration activation and decision overhead development plan.md>)及[交付验证](./evidence/exploration-activation/README.md)。
+
 ## 当前生效
 
 - [研究探索与多路线管理设计](<./Exploration and multi-route management design.md>)：设计语义。
