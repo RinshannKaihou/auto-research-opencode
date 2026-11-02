@@ -183,8 +183,10 @@ def _transfer(
     if _signature(os.fstat(descriptor)) != inventory.get(relative):
         raise ArtifactError("Artifact source changed while it was being copied")
     # A same-length rewrite can land in the snapshot's filesystem timestamp
-    # tick, leaving size, mtime, and ctime unchanged. Compare the copied
-    # bytes with the source after the copy.
+    # tick, leaving size, mtime, and ctime unchanged. Each file is re-hashed
+    # immediately after its own copy. That does not cover a directory
+    # snapshot: an earlier file rewritten later, with the same length and
+    # unchanged timestamps, can still be combined with files copied after it.
     if copied is not None and (
         _digest_fd(descriptor) != copied
         or _signature(os.fstat(descriptor)) != inventory.get(relative)
