@@ -1,0 +1,51 @@
+# Runs the same checks as `make test`: Python pytest, plugin bun tests, and tsc.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pytest
+        run: python3 -m pip install "pytest>=8"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('plugin/bun.lock') }}
+
+      - name: Install plugin dependencies
+        working-directory: plugin
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: make test
