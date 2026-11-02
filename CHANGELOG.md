@@ -1,5 +1,11 @@
 # 版本记录
 
+## 未发布 · SDK
+
+- `@opencode/plugin` 与 `@opencode/theme` 固定为 2.2.5，只锁定可复现安装和类型检查，不代表宿主只支持这一版。宿主兼容至 2.2.5（含）：已在 2.2.5 验证，更早在 2.0.18 验证过，中间版本未逐个复验；2.2.5 之后尚未测试。插件不绑死某一个版本，运行时不检查宿主版本。拉取后在 `plugin/` 执行 `bun install`。
+- 2.0.18 带入的 zod 4.1.8 落在 GHSA-mrhx-c7xc-m3w5（高，CVSS 3.1 7.5；4.6.6 之前的版本，固定于 4.6.6）范围内。2.2.5 的锁文件不再包含 zod。
+- `@opencode/plugin` 2.2.5 的 peer 要求 `@opentui/core` 与 `@opentui/solid` >=0.8.0，本仓库 devDependency 仍为 0.5.12；`@opencode/theme` 另嵌一套 `@opentui/core` 0.8.0。宿主编译 JSX 时换用自己的 OpenTUI，运行不受这份重复影响；`bun install` 可能提示 peer 不一致。
+
 ## 未发布 · 后台执行与暂停恢复
 
 - PR #13 第三轮 review：真实后端验证 transcript 投递见证，保留原生 start 序号并检查精确消息授权，修复缺失／迟到投递事件时的新轮绑定；同轮检查避免重复读取完整 context。resume 先分类再修改，投递过期从空闲等待开始计时，补充事件缺口修复分工。
