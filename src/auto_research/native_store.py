@@ -451,7 +451,7 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
                         or operation.startswith(('runtime.', 'specialist.'))) and operation not in {
                             'runtime.controller_attach', 'runtime.controller_ready', 'runtime.controller_adopt'}:
                     reconciling = (operation == 'workflow' and payload.get('action') in {'run', 'session', 'task_state'}
-                                   or operation == 'specialist.finish')
+                                   or operation in {'specialist.finish', 'runtime.shell_notice', 'runtime.shell_unverified'})
                     require_controller(db, reconciling=reconciling)
                 model_call = CURRENT_MODEL_CALL.get()
                 if model_call and operation not in {'runtime.controller_attach', 'runtime.controller_ready'}:

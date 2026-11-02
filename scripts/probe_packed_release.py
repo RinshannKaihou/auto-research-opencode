@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--cold-restart-node', action='store_true')
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
+    parser.add_argument('--drop-shell-delivery', action='store_true', help='drop only shell delivery callbacks in the temporary extracted plugin')
+    parser.add_argument('--background-node', action='store_true', help='exercise a native background shell in the packed plugin')
     parser.add_argument('--e1e2', action='store_true', help='run E1/E2 instead of the basic node lifecycle')
     parser.add_argument('--e3', action='store_true', help='run the multi-route lifecycle from an independent package')
     parser.add_argument('--e3-output', type=Path, help='retain the E3 host summary and synthetic tool trace')
@@ -27,6 +29,10 @@ def main():
     args = parser.parse_args()
     if args.e3 and args.e1e2:
         parser.error('Choose --e3 or --e1e2')
+    if args.drop_shell_delivery and not args.background_node:
+        parser.error('--drop-shell-delivery requires --background-node')
+    if args.background_node and (args.e3 or args.e1e2):
+        parser.error('--background-node uses the basic node lifecycle')
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
     root = Path(__file__).resolve().parents[1]
@@ -61,6 +67,14 @@ def main():
             if text.count(needle) != 1:
                 raise RuntimeError('Cannot instrument the extracted test artifact')
             entry.write_text(text.replace(needle, needle + injection))
+        if args.drop_shell_delivery:
+            entry = package / 'index.ts'
+            text = entry.read_text()
+            needle = "else if (type === 'session.inbox.delivered') await engine.inboxDelivered"
+            guard = "else if (type === 'session.inbox.delivered' && !lifecycle.state.shellSeen?.has(`${sessionID}:${(data as any)?.inboxID}`)) await engine.inboxDelivered"
+            if text.count(needle) != 1:
+                raise RuntimeError('Cannot instrument shell delivery in extracted artifact')
+            entry.write_text(text.replace(needle, guard))
         # Dependencies are the locally installed pinned SDK, not repository source;
         # the packed Python module must resolve inside the extracted archive.
         (package / 'node_modules').symlink_to((root / 'plugin' / 'node_modules').resolve(), target_is_directory=True)
@@ -94,13 +108,19 @@ def main():
             command.append('--cold-restart-specialist')
         if args.warm_reload_specialist:
             command.append('--warm-reload-specialist')
+        if args.background_node:
+            command.append('--background-node')
         result = subprocess.run(command, capture_output=True, text=True, timeout=240 if args.e3 else 120 if args.e1e2 else 45)
         if result.returncode:
             sys.stderr.write(result.stdout + result.stderr)
             raise SystemExit(result.returncode)
+        report = json.loads(result.stdout)
+        if args.drop_shell_delivery and 'transcript' not in report.get('execution_binding_sources', []):
+            raise RuntimeError('Dropped delivery did not exercise a transcript binding')
         print(json.dumps({'backend_from_extracted_package': True, 'build_tree_deleted': True,
-                          'temporary_fault_injection': args.lost_report_response or args.lost_kickoff_response,
-                          'dependencies': 'local pinned SDK', 'host_result': json.loads(result.stdout)}))
+                          'temporary_fault_injection': args.lost_report_response or args.lost_kickoff_response or args.drop_shell_delivery,
+                          'dropped_shell_delivery_callback': args.drop_shell_delivery,
+                          'dependencies': 'local pinned SDK', 'host_result': report}))
 
 
 if __name__ == '__main__':

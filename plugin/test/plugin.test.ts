@@ -1168,6 +1168,372 @@ describe("autonomous research", () => {
     expect((await host.rpc().session({ sessionID: "ses_main" })).pauseReason).toBeNull()
   })
 
+  test('a background shell waits without idle nudges and its native completion wakes only once', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'background work' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'now', plan: 'measure', root_reason: 'first' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume), 'node launched')
+    await host.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_background', input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_background', status:'completed',
+      result:{metadata:{status:'running',shellID:'sh_background'}}})
+    const sent = host.said(child).filter(item => item.resume).length
+    host.turn.end(child)
+    await until(async () => (await host.rpc().session({sessionID:child})).externalRunning === 1, 'background waiting state')
+    await Bun.sleep(150)
+    expect(host.said(child).filter(item => item.resume)).toHaveLength(sent)
+    expect((await host.rpc().session({sessionID:child})).pauseReason).toBeNull()
+    const event = {id:'job-enqueued', type:'session.inbox.enqueued', durable:{seq:20}, data:{sessionID:child,
+      inboxID:'msg_job_done', item:{payload:{metadata:{source:'shell',shellID:'sh_background',state:'completed',exit:0}}}}}
+    host.events.push(event)
+    host.events.push(event)
+    host.events.push({id:'job-started',type:'session.execution.started',durable:{seq:21},data:{sessionID:child}})
+    host.events.push({id:'job-delivered',type:'session.inbox.delivered',durable:{seq:22},data:{sessionID:child,inboxID:'msg_job_done'}})
+    await until(async () => (await host.rpc().session({sessionID:child})).externalRunning === 0, 'background terminal')
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect(host.said(child).filter(item => item.resume)).toHaveLength(sent)
+  })
+
+  test('a completed background shell cannot resume a paused node or trigger a read loop', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'pause background work' })
+    await host.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
+    await host.call('research_dispatch', 'ses_main', { node_id:'X-001' })
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume), 'node launched')
+    await host.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_paused', input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_paused', status:'completed',
+      result:{metadata:{status:'running',shellID:'sh_paused'}}})
+    host.turn.end(child)
+    await until(async () => (await host.rpc().session({sessionID:child})).externalRunning === 1, 'background waiting state')
+    await host.command('pause', 'ses_main')
+    host.events.push({id:'paused-job',type:'session.inbox.enqueued',durable:{seq:30},data:{sessionID:child,
+      inboxID:'msg_paused_done',item:{payload:{metadata:{source:'shell',shellID:'sh_paused',state:'completed',exit:0}}}}})
+    host.events.push({id:'paused-start',type:'session.execution.started',durable:{seq:31},data:{sessionID:child}})
+    host.events.push({id:'paused-delivery',type:'session.inbox.delivered',durable:{seq:32},data:{sessionID:child,inboxID:'msg_paused_done'}})
+    await until(async () => (await host.rpc().session({sessionID:child})).externalRunning === 0, 'paused terminal')
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(request.system.some(item => item.text.includes('background completion arrived'))).toBe(true)
+    expect((await host.rpc().session({sessionID:child})).runState).toBe('paused')
+    host.turn.end(child)
+    await until(() => {
+      const query = spawnSync('python3', ['-c', "import sqlite3,sys,json; d=sqlite3.connect(sys.argv[1]); r=d.execute(\"SELECT details FROM workflow_intents WHERE session_id=? AND kind='execution_start' ORDER BY rowid DESC LIMIT 1\",(sys.argv[2],)).fetchone(); t=json.loads(r[0])['execution_token']; print(d.execute(\"SELECT COUNT(*) FROM workflow_intents WHERE session_id=? AND kind='execution_terminal' AND json_extract(details,'$.execution_token')=?\",(sys.argv[2],t)).fetchone()[0])", join(project,'.research','state.sqlite3'), child], {encoding:'utf8'})
+      return query.stdout.trim() === '1'
+    }, 'paused wake terminal persisted')
+    cleanups.pop()!()
+    const reloaded = await load()
+    await until(async () => (await reloaded.command('status','ses_main')).state?.workflow?.controller?.phase === 'ready', 'paused reload ready')
+    expect((await reloaded.page('tasks')).items[0].state).toBe('running')
+    expect((await reloaded.summary()).run.state).toBe('paused')
+    expect(reloaded.said(child).filter(item => item.resume)).toHaveLength(0)
+  })
+
+  test('a shell completion delivered inside an active turn does not reserve another turn', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal:'inline background completion' })
+    await host.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
+    await host.call('research_dispatch', 'ses_main', { node_id:'X-001' })
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume), 'node launched')
+    await host.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_inline', input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_inline', status:'completed',
+      result:{metadata:{status:'running',shellID:'sh_inline'}}})
+    const before = shellTurns(child)
+    host.events.push({id:'inline-job',type:'session.inbox.enqueued',durable:{seq:30},data:{sessionID:child,
+      inboxID:'msg_inline_done',item:{payload:{metadata:{source:'shell',shellID:'sh_inline',state:'completed',exit:0}}}}})
+    host.events.push({id:'inline-delivery',type:'session.inbox.delivered',durable:{seq:31},data:{sessionID:child,inboxID:'msg_inline_done'}})
+    await until(async () => (await host.rpc().session({sessionID:child})).externalRunning === 0, 'inline completion')
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect(shellTurns(child)).toBe(before)
+  })
+
+  test('a fast shell completion waits for its shell ID to be persisted', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal:'fast background completion' })
+    await host.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
+    await host.call('research_dispatch', 'ses_main', { node_id:'X-001' })
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume), 'node launched')
+    await host.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_fast', input:{background:true}})
+    const original = StorageClient.prototype.request
+    let release: (() => void) | undefined
+    let notices = 0
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation) {
+      if (method === 'runtime_shell_result') await new Promise<void>(resolve => { release = resolve })
+      if (method === 'runtime_shell_notice') notices++
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const after = host.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_fast', status:'completed',
+        result:{metadata:{status:'running',shellID:'sh_fast'}}})
+      await until(() => !!release, 'shell result is being persisted')
+      host.events.push({id:'fast-job',type:'session.inbox.enqueued',durable:{seq:40},data:{sessionID:child,
+        inboxID:'msg_fast_done',item:{payload:{metadata:{source:'shell',shellID:'sh_fast',state:'completed',exit:0}}}}})
+      await Bun.sleep(80)
+      expect(notices).toBe(0)
+      release!()
+      await after
+      host.events.push({id:'fast-delivery',type:'session.inbox.delivered',durable:{seq:41},data:{sessionID:child,inboxID:'msg_fast_done'}})
+      await until(() => notices === 1, 'terminal notice after registration')
+      const request = modelRequest(child)
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toContain('shell')
+      expect((await host.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+    } finally { release?.(); spy.mockRestore() }
+  })
+
+  test('same-process warm reload preserves a running background shell', async () => {
+    const first = await load()
+    await first.command('auto', 'ses_main', { goal:'background recovery' })
+    await first.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
+    await first.call('research_dispatch', 'ses_main', { node_id:'X-001' })
+    const child = first.created[0]!
+    await until(() => first.said(child).some(item => item.resume), 'node launched')
+    await first.hooks.get('tool.execute.before')!({tool:'shell', sessionID:child, id:'call_reload', input:{background:true}})
+    await first.hooks.get('tool.execute.after')!({tool:'shell', sessionID:child, id:'call_reload', status:'completed',
+      result:{metadata:{status:'running',shellID:'sh_reload'}}})
+    first.turn.end(child)
+    await until(async () => (await first.rpc().session({sessionID:child})).externalRunning === 1, 'background waiting state')
+    await until(() => {
+      const query = spawnSync('python3', ['-c', "import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute('SELECT COUNT(*) FROM runtime_progress WHERE session_id=? AND last_finished_turn IS NOT NULL',(sys.argv[2],)).fetchone()[0])", join(project,'.research','state.sqlite3'), child], {encoding:'utf8'})
+      return query.stdout.trim() === '1'
+    }, 'waiting turn persisted')
+    cleanups.pop()!()
+    const second = await load()
+    await until(async () => (await second.command('status','ses_main')).state?.workflow?.controller?.phase === 'ready', 'warm controller ready')
+    expect((await second.page('tasks')).items[0].state).toBe('running')
+    expect((await second.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+    await second.command('resume','ses_main')
+    expect(second.said(child).filter(item => item.resume)).toHaveLength(0)
+    expect(second.created).toHaveLength(0)
+  })
+
+  async function shellNode(goal: string) {
+    const host = await load()
+    await host.command('auto', 'ses_main', {goal})
+    await host.call('research_propose','ses_main',{question:'Q?',why_now:'now',plan:'measure',root_reason:'first'})
+    await host.call('research_dispatch','ses_main',{node_id:'X-001'})
+    const child = host.created[0]!
+    await until(() => host.said(child).some(item => item.resume),'node launched')
+    return {host,child}
+  }
+  function shellTurns(child: string): number {
+    const result=spawnSync('python3',['-c',"import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute(\"SELECT COUNT(*) FROM runtime_budget_reservations WHERE session_id=? AND kind='turn' AND state!='not_sent'\",(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+    if (result.status !== 0) throw new Error(result.stderr)
+    return Number(result.stdout.trim())
+  }
+  function shellEvent(child:string, id:string, shellID:string, messageID:string, state:any='completed') {
+    return {id,type:'session.inbox.enqueued',data:{sessionID:child,inboxID:messageID,
+      item:{payload:{metadata:{source:'shell',shellID,state,exit:0}}}}}
+  }
+
+  test('a draining paused turn may start a shell with its execution token', async () => {
+    const {host,child}=await shellNode('drain shell')
+    await host.command('pause','ses_main')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'drain',input:{}})
+    expect((await host.rpc().session({sessionID:child})).externalStarting).toBe(1)
+    expect((await host.command('resume','ses_main')).message).not.toContain('execution_unverified')
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'drain',status:'completed',result:{metadata:{}}})
+    host.turn.end(child)
+    await Bun.sleep(80)
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('foreground tool errors leave no background recovery obligation', async () => {
+    const {host,child}=await shellNode('foreground failure')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'fg_error',input:{background:false}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'fg_error',status:'error'})
+    expect((await host.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','native pause')
+    const result=await host.command('resume','ses_main')
+    expect(result.message).not.toContain('execution_unverified')
+  })
+
+  test('pause notice delivery failures do not change the task execution state', async () => {
+    const {host,child}=await shellNode('pause notice failure')
+    const original=host.ctx.session.synthetic
+    host.ctx.session.synthetic=async(input:any)=>{
+      if (!input.resume && input.sessionID===child) throw new Error('notice unavailable')
+      return original(input)
+    }
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','pause saved')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('native foreground tool failure settles even when execute.after is absent', async () => {
+    const {host,child}=await shellNode('native foreground abort')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'native_abort',input:{}})
+    host.events.push({id:'native_tool_failed',type:'session.tool.failed',data:{sessionID:child,id:'native_abort',error:{type:'aborted'}}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','foreground abort settled')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect((await host.rpc().session({sessionID:child})).externalStarting).toBe(0)
+  })
+
+  test('storage failure while settling a native failure cannot block its terminal event', async () => {
+    const {host,child}=await shellNode('failed event storage gap')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'storage_abort',input:{}})
+    const original=StorageClient.prototype.request
+    let attempts=0
+    const spy=spyOn(StorageClient.prototype,'request').mockImplementation(async function(method,fields,operation){
+      if(method==='runtime_shell_result'){attempts++;throw new Error('temporary storage failure')}
+      return original.call(this,method,fields,operation)
+    })
+    try {
+      host.events.push({id:'storage_tool_failed',type:'session.tool.failed',data:{sessionID:child,id:'storage_abort',error:{type:'aborted'}}})
+      host.turn.end(child,'interrupted')
+      await until(async()=>(await host.page('tasks')).items[0].state==='unverified','terminal reconciliation after result gap')
+      expect(attempts).toBe(1)
+      expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
+      expect((await host.command('resume','ses_main')).message).toContain('/research recover task')
+    } finally {spy.mockRestore()}
+  })
+
+  test('shell begin preserves the storage error code instead of claiming the project is paused', async () => {
+    const {host,child}=await shellNode('begin error classification')
+    const original=StorageClient.prototype.request
+    const spy=spyOn(StorageClient.prototype,'request').mockImplementation(async function(method,fields,operation){
+      if(method==='runtime_shell_begin')throw Object.assign(new Error('storage offline'),{code:'storage_offline'})
+      return original.call(this,method,fields,operation)
+    })
+    try {
+      await expect(host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'begin_error',input:{}}))
+        .rejects.toMatchObject({metadata:{code:'storage_offline'}})
+      expect((await host.page('tasks')).items[0].state).toBe('running')
+    } finally {spy.mockRestore()}
+  })
+
+  test('untracked tool failures do not consume the research event queue', async () => {
+    const {host,child}=await shellNode('unrelated failure flood')
+    for(let i=0;i<300;i++)host.events.push({id:`untracked_${i}`,type:'session.tool.failed',data:{sessionID:child,id:`other_${i}`,error:{type:'tool.execution'}}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.rpc().session({sessionID:child})).pauseReason==='native_stop','terminal after unrelated events')
+    expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('an interrupted call without an after hook has an immediate operator recovery path', async () => {
+    const {host,child}=await shellNode('orphaned shell')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'missing_after',input:{}})
+    host.turn.end(child,'interrupted')
+    await until(async()=>(await host.page('tasks')).items[0].state==='unverified','task follows shell uncertainty')
+    const result=await host.command('resume','ses_main')
+    expect(result.message).toContain('/research recover task')
+    const task=(await host.page('tasks')).items[0]
+    await host.command('recover','ses_main',{kind:'task',task_id:task.task_id,reason:'verified process exit'})
+    expect((await host.page('tasks')).items[0].state).toBe('failed')
+    expect((await host.rpc().session({sessionID:child})).externalUnverified).toBe(0)
+  })
+
+  test('a notice arriving before execute.after waits for its matching shell result', async () => {
+    const {host,child}=await shellNode('early terminal notice')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'before_after',input:{background:true}})
+    host.events.push(shellEvent(child,'early','sh_early','msg_early'))
+    await Bun.sleep(60)
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'before_after',status:'completed',result:{metadata:{status:'running',shellID:'sh_early'}}})
+    host.events.push({id:'early_delivered',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_early'}})
+    await until(async()=>(await host.rpc().session({sessionID:child})).externalRunning===0,'terminal matched')
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+  })
+
+  test('enqueue in one turn and delivery in the next reserves the native wake exactly once', async () => {
+    const {host,child}=await shellNode('delivery boundary')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'boundary',input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'boundary',status:'completed',result:{metadata:{status:'running',shellID:'sh_boundary'}}})
+    const before=shellTurns(child)
+    host.events.push(shellEvent(child,'boundary_notice','sh_boundary','msg_boundary'))
+    await until(async()=>(await host.rpc().session({sessionID:child})).externalRunning===0,'notice enqueued')
+    const sent=host.said(child).filter(item=>item.resume).length
+    host.turn.end(child)
+    await Bun.sleep(100)
+    expect(host.said(child).filter(item=>item.resume)).toHaveLength(sent)
+    host.turn.start(child)
+    host.events.push({id:'boundary_delivery',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_boundary'}})
+    await until(()=>shellTurns(child)===before+1,'new wake reserved')
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+  })
+
+  test('a transcript witness binds a new native wake against the real backend before delivered arrives', async () => {
+    const {host,child}=await shellNode('real transcript binding')
+    await host.hooks.get('tool.execute.before')!({tool:'shell',sessionID:child,id:'transcript_job',input:{background:true}})
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'transcript_job',status:'completed',result:{metadata:{status:'running',shellID:'sh_transcript_job'}}})
+    host.turn.end(child)
+    await until(()=>{
+      const result=spawnSync('python3',['-c',"import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute('SELECT COUNT(*) FROM runtime_progress WHERE session_id=? AND last_finished_turn IS NOT NULL',(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+      return result.stdout.trim()==='1'
+    },'waiting turn ended')
+    const before=shellTurns(child)
+    host.events.push(shellEvent(child,'transcript_enqueued','sh_transcript_job','msg_transcript_job'))
+    host.turn.start(child)
+    const original=host.ctx.session.context
+    host.ctx.session.context=async(args:any)=>args.sessionID===child ? [
+      ...(await original(args)),{type:'synthetic',id:'msg_transcript_job',metadata:{source:'shell',shellID:'sh_transcript_job',state:'completed',exit:0}}
+    ] : original(args)
+    const request=modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell')
+    expect((await host.rpc().session({sessionID:child})).pauseReason).toBeNull()
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect(shellTurns(child)).toBe(before+1)
+    const bound=spawnSync('python3',['-c',"import sqlite3,json,sys; d=sqlite3.connect(sys.argv[1]); print(d.execute(\"SELECT details FROM workflow_intents WHERE kind='execution_start' AND session_id=? ORDER BY rowid DESC LIMIT 1\",(sys.argv[2],)).fetchone()[0])",join(project,'.research','state.sqlite3'),child],{encoding:'utf8'})
+    expect(JSON.parse(bound.stdout)).toMatchObject({binding_source:'transcript',message_id:'msg_transcript_job'})
+    expect(typeof JSON.parse(bound.stdout).event_seq).toBe('number')
+    const again=modelRequest(child);await host.hooks.get('context')!(again)
+    expect(Object.keys(again.tools)).toContain('shell')
+    expect(shellTurns(child)).toBe(before+1)
+    host.events.push({id:'transcript_delivered_late',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_transcript_job'}})
+    await host.hooks.get('context')!(modelRequest(child))
+    expect(shellTurns(child)).toBe(before+1)
+    expect((await host.rpc().session({sessionID:child})).pauseReason).toBeNull()
+  })
+
+  test('unknown and stale shell notices do not poison subsequent session events', async () => {
+    const {host,child}=await shellNode('stale notice')
+    host.events.push(shellEvent(child,'no_id','sh_missing',''))
+    host.events.push(shellEvent(child,'stale','sh_missing','msg_stale'))
+    host.events.push({id:'stale_delivered',type:'session.inbox.delivered',data:{sessionID:child,inboxID:'msg_stale'}})
+    await Bun.sleep(100)
+    const request=modelRequest(child);await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('shell') // Already-active legitimate turn remains authorized.
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect((await host.command('status','ses_main')).state.event_recovery.state).toBe('ready')
+  })
+
+  test('a recovered paused shell notification cannot start a read loop, while later user questions can read', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal:'paused recovery context' })
+    await host.call('research_propose', 'ses_main', { question:'Q?', why_now:'now', plan:'measure', root_reason:'first' })
+    await host.call('research_dispatch', 'ses_main', { node_id:'X-001' })
+    const child = host.created[0]!
+    host.turn.end(child, 'interrupted')
+    await until(async () => (await host.rpc().session({sessionID:child})).pauseReason === 'native_stop', 'node paused')
+    const original = host.ctx.session.context
+    host.ctx.session.context = async ({sessionID}: any) => sessionID === child
+      ? [{type:'synthetic',id:'msg_recovered',metadata:{source:'shell',shellID:'sh_recovered',state:'completed'}}]
+      : original({sessionID})
+    const recovered = modelRequest(child)
+    await host.hooks.get('context')!(recovered)
+    expect(Object.keys(recovered.tools)).toHaveLength(0)
+    host.ctx.session.context = async ({sessionID}: any) => sessionID === child
+      ? [{type:'synthetic',metadata:{source:'shell'}},{type:'user',id:'msg_question'}] : original({sessionID})
+    const question = modelRequest(child)
+    await host.hooks.get('context')!(question)
+    expect(Object.keys(question.tools)).toContain('read')
+    expect(Object.keys(question.tools)).not.toContain('shell')
+  })
+
   test("a failed turn is retried once, then the session pauses", async () => {
     const host = await load()
     await host.command("auto", "ses_main", { goal: "Find X" })
@@ -1246,6 +1612,7 @@ describe("autonomous research", () => {
     host.turn.start(child)
     await host.command('pause', 'ses_main')
     await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'old-turn', input: {} })
+    await host.hooks.get('tool.execute.after')!({tool:'shell',sessionID:child,id:'old-turn',status:'completed',result:{metadata:{}}})
     host.turn.end(child)
     host.turn.start(child)
     await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'new-turn', input: {} }))

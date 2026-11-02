@@ -57,9 +57,10 @@ export function palette(context: Context) {
 }
 
 /**
- * Newer OpenTUI (OpenCode 2.1) ties a style's native resources to an owner, the
- * renderer's scene, and throws without one; 0.5.12 has no owner and ignores the
- * extra argument. The types here are 0.5.12's, hence the narrow casts.
+ * OpenTUI 0.8, which the host substitutes when it compiles this JSX file, ties a
+ * style's native resources to an owner and throws without renderer.nativeScene.
+ * Typecheck still sees the 0.5.12 devDependency: its fromStyles type has no owner
+ * parameter and that runtime ignores the extra argument, hence the cast.
  */
 type StyleFactory = { fromStyles(styles: Record<string, StyleDefinitionInput>, owner?: unknown): SyntaxStyle }
 
