@@ -24,6 +24,7 @@ class ResearchProvider(BaseHTTPRequestHandler):
     use_specialist = False
     hold_specialist = False
     hold_node = False
+    background_node = False
     node_waiting = threading.Event()
     node_gate = threading.Event()
     coordinator_gate = threading.Event()
@@ -54,7 +55,12 @@ class ResearchProvider(BaseHTTPRequestHandler):
                 action, args = 'research_dispatch', {'node_id': 'X-001'}
                 self.actions.append('dispatch')
         elif 'research_finish' in names and 'node_finish' not in self.actions:
-            if self.use_specialist and 'delegate' not in self.actions:
+            if self.background_node and 'background_start' not in self.actions:
+                action, args = 'shell', {'command': 'sleep 2', 'background': True, 'timeout': 20000}
+                self.actions.append('background_start')
+            elif self.background_node and 'background_wait' not in self.actions:
+                self.actions.append('background_wait')
+            elif self.use_specialist and 'delegate' not in self.actions:
                 action, args = 'research_delegate', {'label': 'independent review', 'question': 'Check the fixture',
                     'purpose': 'independent review', 'deliverable': 'a short report',
                     'completion_criteria': 'provide an assessment', 'report_requirements': 'state the basis'}
@@ -103,6 +109,7 @@ def main():
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
     parser.add_argument('--plugin', type=Path, help='plugin directory to load (defaults to the source tree)')
+    parser.add_argument('--background-node', action='store_true', help='exercise a native background shell and completion wake')
     args = parser.parse_args()
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
@@ -124,6 +131,7 @@ def main():
     ResearchProvider.use_specialist = args.specialist
     ResearchProvider.hold_specialist = args.stop_during_specialist or args.warm_reload_specialist or args.cold_restart_specialist
     ResearchProvider.hold_node = args.lost_kickoff_response or args.cold_restart_node
+    ResearchProvider.background_node = args.background_node
     ResearchProvider.node_waiting.clear()
     ResearchProvider.node_gate.clear()
     ResearchProvider.coordinator_gate.clear()
@@ -460,12 +468,16 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     specialist_states = db.execute('SELECT state,exit_verified FROM specialist_tasks').fetchall()
                     specialist_launches = db.execute("SELECT state FROM workflow_intents WHERE kind='specialist_launch'").fetchall()
                     reservations_final = db.execute('SELECT COUNT(*) FROM runtime_budget_reservations').fetchone()[0]
+                    binding_sources = db.execute("SELECT json_extract(details,'$.binding_source') FROM workflow_intents WHERE kind='execution_start'").fetchall()
+                    shells = db.execute("SELECT state,details FROM workflow_intents WHERE kind='native_shell'").fetchall()
                 result = {'actions': ResearchProvider.actions, 'run_state': state, 'node_count': node_count,
                           'task_states': [item[0] for item in tasks], 'intents': intent_states,
                           'requests': ResearchProvider.requests, 'sessions': sessions, 'auth_states': auth_states,
                           'specialists': specialist_states, 'specialist_launches': specialist_launches,
                           'paused_before_node_finish': ResearchProvider.pause_node,
                           'reservations_at_pause': reservations_at_pause, 'reservations_final': reservations_final,
+                          'background_states': [row[0] for row in shells],
+                          'execution_binding_sources': [row[0] for row in binding_sources],
                           'used_external_model': False}
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
                         (specialist_states != [('completed', 1)] or specialist_launches != [('submitted',)]) or ResearchProvider.pause_node and
@@ -474,6 +486,10 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     log.seek(0)
                     print('\n'.join(line for line in log.read().splitlines() if 'Research execution controller' in line or 'Research controller initialization' in line or 'probe ' in line)[-6000:])
                     raise SystemExit(1)
+                if args.background_node and (not {'background_start', 'background_wait', 'node_finish'}.issubset(ResearchProvider.actions)
+                        or [row[0] for row in shells] != ['completed']):
+                    print(json.dumps(result, sort_keys=True))
+                    raise RuntimeError('Background shell did not settle once before node completion')
                 if args.resume_after_pause:
                     resume_status, resume = command('resume', {})
                     with sqlite3.connect(database) as db:

@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-02",
+  "timezone": "Asia/Shanghai",
+  "reviewed_head": "698722a322b58dcc44330ad64955dcff81d21c3c",
+  "product_source_sha256": "01d60a443b839ddefcdb9c4d6364c48269e99f2cd313b542c4213861e24c2fe8",
+  "digest_algorithm": "sorted relative path + NUL + contents + NUL; src/auto_research/*.py, plugin/*.ts, plugin/src/**/*.ts(x)",
+  "product_source_files": 74,
+  "python": "3.11.4",
+  "bun": "1.3.10",
+  "opencode": "2.2.5",
+  "pytest": 799,
+  "bun_tests": 219,
+  "typecheck": "passed",
+  "packed_background_host": "passed",
+  "expected_baseline_failures": 4,
+  "external_model_used": false
+}

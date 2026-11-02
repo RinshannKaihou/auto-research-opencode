@@ -1,0 +1,19 @@
+bun test v1.3.10 (30e609e0)
+
+test/plugin.test.ts:
+161 |   const deadline = Date.now() + ms
+162 |   while (Date.now() < deadline) {
+163 |     if (await check()) return
+164 |     await Bun.sleep(10)
+165 |   }
+166 |   throw new Error(`timed out waiting for ${label}`)
+                  ^
+error: timed out waiting for terminal reconciliation after result gap
+      at until (<baseline>/plugin/test/plugin.test.ts:166:13)
+      at async <anonymous> (<baseline>/plugin/test/plugin.test.ts:1394:13)
+(fail) autonomous research > storage failure while settling a native failure cannot block its terminal event [3284.99ms]
+
+ 0 pass
+ 133 filtered out
+ 1 fail
+Ran 1 test across 1 file. [3.47s]

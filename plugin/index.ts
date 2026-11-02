@@ -68,13 +68,26 @@ export default Plugin.define({
     const earlyEvents: any[] = []
     const eventChains = new Map<string, Promise<void>>()
     const failedEvents = new Map<string, any[]>()
+    const shellCalls = lifecycle.state.shellCalls ??= new Map()
+    const shellSeen = lifecycle.state.shellSeen ??= new Set()
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
-      'session.inbox.delivered', 'session.execution.interrupted'])
+      'session.inbox.enqueued', 'session.inbox.delivered', 'session.execution.interrupted', 'session.tool.failed'])
     let notifyEventState = () => {}
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
     const queueEvent = (event: any) => {
+      if (event?.type === 'session.tool.failed' && !shellCalls.has(`${event.data?.sessionID}:${event.data?.id}`)) {
+        telemetryHandler?.(event); return
+      }
+      if (event?.type === 'session.inbox.enqueued' && event.data?.item?.payload?.metadata?.source === 'shell' &&
+          typeof event.data?.inboxID === 'string') {
+        shellSeen.add(`${event.data.sessionID}:${event.data.inboxID}`)
+        if (shellSeen.size > 1024) shellSeen.delete(shellSeen.values().next().value!)
+      }
+      if (event?.type === 'session.inbox.enqueued' && event.data?.item?.payload?.metadata?.source !== 'shell') {
+        telemetryHandler?.(event); return
+      }
       if (!relevantEvents.has(event?.type)) { telemetryHandler?.(event); return }
       const sessionID = event.data?.sessionID
       if (!sessionID) return
@@ -255,6 +268,13 @@ export default Plugin.define({
         await verifyController(sessionID, true)
         return (await ctx.session.context({ sessionID })) as any[]
       },
+      eventsPending: (sessionID) => eventGap || eventChains.has(sessionID) || failedEvents.has(sessionID),
+      recoveryMessages: async (sessionID) => {
+        requireCurrent()
+        const messages = await ctx.session.context({ sessionID })
+        requireCurrent()
+        return messages as any[]
+      },
     }
     const nativeObservations = new NativeObservations(research,observations)
     await ctx.session.hook('model.request',request => { if (lifecycle.current()) nativeObservations.modelRequest(request) })
@@ -264,6 +284,8 @@ export default Plugin.define({
         attempt:request.attempt,model:request.model,will_retry:request.decision.retry})
     })
     const externalStarts = new Map<string,number>()
+    // The host may enqueue a very fast shell's terminal notice while the
+    // execute.after hook is still persisting its shell ID.
     let specialists!: Specialists
     const beforeTool = async (request: any) => {
       if (!lifecycle.current() && !RESEARCH_READS.has(request.tool)) {
@@ -318,6 +340,21 @@ export default Plugin.define({
         throw new ToolError({ message: '当前节点执行轮没有暂停期间的收尾授权；请先核对状态。',
           metadata: { code: 'research_control_paused', retryable: false, allow_fallback: false } })
       }
+      if (role === 'node_core' && request.tool === 'shell') {
+        const key = `${request.sessionID}:${request.id}`
+        let resolve!: () => void
+        const settled = new Promise<void>(done => { resolve = done })
+        shellCalls.set(key, {sessionID:request.sessionID, background:request.input?.background === true, settled, resolve})
+        try {
+          await research.call('runtime_shell_begin', request.sessionID,
+            { call_id: request.id, execution_token: engine.executionToken(request.sessionID) },
+            `shell-begin:${request.sessionID}:${request.id}`)
+        } catch (error) {
+          resolve(); shellCalls.delete(key)
+          throw new ToolError({message:error instanceof Error ? error.message : String(error),
+            metadata:{code:(error as any)?.code ?? 'research_storage_unavailable',retryable:false,allow_fallback:false}})
+        }
+      }
       if (TOOLS.some(tool => tool.name === request.tool)) return
       externalStarts.set(`${request.sessionID}:${request.id}`,performance.now())
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
@@ -330,9 +367,24 @@ export default Plugin.define({
       if (started===undefined) return
       externalStarts.delete(key)
       const root = research.rootOf(request.sessionID)!
+      if (request.tool === 'shell' && research.roleOf(request.sessionID) === 'node_core') {
+        const metadata = request.status === 'completed' ? request.result?.metadata : undefined
+        const running = metadata?.status === 'running'
+        const shellID = typeof metadata?.shellID === 'string' ? metadata.shellID : null
+        const state = running && !shellID || request.status !== 'completed' && shellCalls.get(key)?.background
+          ? 'unverified' : running ? 'running' : 'finished'
+        const pending = research.call('runtime_shell_result', request.sessionID,
+          { call_id: request.id, state, shell_id: state === 'running' ? shellID : null },
+          `shell-result:${request.sessionID}:${request.id}`).then(() => {}).catch(error => {
+          observations.append(root,{phase:'coverage_gap',source:'shell_result',session_id:request.sessionID,
+            error_code:error.code ?? 'storage_unavailable'})
+        })
+        try { await pending }
+        finally { shellCalls.get(key)?.resolve(); shellCalls.delete(key) }
+      }
       observations.append(root,{phase:'external_execution',session_id:request.sessionID,id:request.id,tool:request.tool,
-        status:request.status,duration_ms:performance.now()-started,resource_usage:'unknown'})
-      if (request.status === 'completed' && research.roleOf(request.sessionID) === 'node_core' &&
+        status:request.status,background:request.status === 'completed' && request.result?.metadata?.status === 'running',duration_ms:performance.now()-started,resource_usage:'unknown'})
+      if (request.status === 'completed' && request.result?.metadata?.status !== 'running' && research.roleOf(request.sessionID) === 'node_core' &&
           ['bash','shell','python','terminal'].includes(request.tool) && research.conclusionContractOf(request.sessionID)==='evidence-v1') {
         const observed = await within(research.call('runtime_tool_observed', request.sessionID,
           {tool:request.tool,call_id:request.id}, `tool-observed:${request.sessionID}:${request.id}`).catch(error => {
@@ -628,10 +680,18 @@ export default Plugin.define({
         if (role === 'node_core') {
           await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
-            for (const name of Object.keys(request.tools)) {
-              if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            let shellWake = engine.isShellWake(request.sessionID)
+            if (!shellWake) {
+              const transcript = await within(host.recoveryMessages!(request.sessionID).catch(() => undefined), 1000)
+              const lastInput = transcript?.slice(-64).findLast((item: any) => item?.type === 'user' || item?.type === 'synthetic')
+              shellWake = lastInput?.type === 'synthetic' && lastInput.metadata?.source === 'shell'
             }
-            request.system.push({ type: 'text', text: 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
+            for (const name of Object.keys(request.tools)) {
+              if (shellWake || !COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            }
+            request.system.push({ type: 'text', text: shellWake
+              ? 'A background completion arrived while execution is paused or unverified. Stop this response and report that explicit recovery is required.'
+              : 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
           }
         }
         const deadline=performance.now()+2000
@@ -712,6 +772,12 @@ export default Plugin.define({
         if(dirtyBudgets.delete(root) && listening)void refreshBudget(root)
       }
     }
+    const shellMonitor = setInterval(() => {
+      if (listening && lifecycle.current()) void engine.pollShells().catch(error => {
+        process.stderr.write(`Research shell monitor deferred: ${String(error)}\n`)
+      })
+    }, 15_000)
+    shellMonitor.unref?.()
     eventHandler = async event => {
       if (!listening || !lifecycle.current()) return
       const { type, data } = event as { type: string; data?: { sessionID?: string } }
@@ -725,6 +791,31 @@ export default Plugin.define({
       if (main && research.inScope(root)) await ensureController(root, main)
       const sequence = typeof event.durable?.seq === 'number' ? event.durable.seq : undefined
       if (type === "session.execution.started") await engine.started(sessionID, event.id, sequence)
+      else if (type === 'session.inbox.enqueued') {
+        const metadata = (data as any)?.item?.payload?.metadata
+        // Register in execute.before: the notification can precede execute.after itself.
+        if (metadata?.source === 'shell') await within(Promise.all([...shellCalls.values()]
+          .filter(call => call.sessionID === sessionID).map(call => call.settled)).then(() => {}), 2000)
+        await engine.shellNotice(sessionID, String((data as any)?.inboxID ?? ''), metadata)
+      }
+      else if (type === 'session.tool.failed') {
+        const callID = (data as any)?.id
+        const key = `${sessionID}:${callID}`
+        const call = shellCalls.get(key)
+        if (call) {
+          // OpenCode 2.2.5 omits execute.after for foreground failure/abort.
+          // Its terminal tool event arrives after the foreground shell is killed.
+          try {
+            await research.call('runtime_shell_result', sessionID, {call_id:callID,
+              state:call.background ? 'unverified' : 'finished',shell_id:null}, `shell-result:${sessionID}:${callID}`)
+          } catch (error) {
+            observations.append(root,{phase:'coverage_gap',source:'shell_failure_result',session_id:sessionID,
+              error_code:(error as any)?.code ?? 'storage_unavailable'})
+          } finally {
+            call.resolve(); shellCalls.delete(key); externalStarts.delete(key)
+          }
+        }
+      }
       else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
@@ -898,6 +989,7 @@ export default Plugin.define({
     void bootstrap().then(() => lifecycle.markReady()).catch(() => {})
 
     return () => {
+      clearInterval(shellMonitor)
       lifecycle.detach()
       listening = false
       subscription?.abort()

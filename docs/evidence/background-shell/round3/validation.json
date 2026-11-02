@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-02",
+  "timezone": "Asia/Shanghai",
+  "reviewed_head": "a6e48976d6063aa144ada5c037961e4b66acd369",
+  "product_source_sha256": "bd404914ac94585c6de138f33439390a93a071d91a4370dc20493f314cb4adcd",
+  "digest_algorithm": "sorted relative path + NUL + contents + NUL; src/auto_research/*.py, plugin/*.ts, plugin/src/**/*.ts(x)",
+  "product_source_files": 74,
+  "python": "3.11.4",
+  "bun": "1.3.10",
+  "opencode": "2.2.5",
+  "pytest": 813,
+  "bun_tests": 223,
+  "typecheck": "passed",
+  "expected_baseline_failures": 1,
+  "packed_normal_delivery": "passed",
+  "packed_dropped_delivery": "passed",
+  "fault_injection": "skip shell delivered callback only in temporary extracted index.ts",
+  "external_model_used": false
+}

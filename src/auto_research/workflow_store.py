@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS workflow_intents (
  intent_id TEXT PRIMARY KEY, kind TEXT NOT NULL, session_id TEXT,
  state TEXT NOT NULL, details TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS native_shell_pending ON workflow_intents(session_id,state)
+ WHERE kind='native_shell';
+CREATE INDEX IF NOT EXISTS native_shell_identity ON workflow_intents(session_id,json_extract(details,'$.host'),json_extract(details,'$.shell_id'))
+ WHERE kind='native_shell';
 CREATE TABLE IF NOT EXISTS snapshot_handoffs (
  snapshot_id TEXT PRIMARY KEY, context TEXT NOT NULL
 );
@@ -267,7 +271,8 @@ class WorkflowStore:
     @staticmethod
     def notify_in_transaction(db, session_id, fields):
         task = db.execute(
-            "SELECT * FROM exploration_tasks WHERE session_id=?", (session_id,)
+            "SELECT * FROM exploration_tasks WHERE session_id=? AND (? IS NULL OR task_id=?) ORDER BY rowid DESC LIMIT 1",
+            (session_id, fields.get('task_id'), fields.get('task_id'))
         ).fetchone()
         if not task:
             return {"ignored": True}

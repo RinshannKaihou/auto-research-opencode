@@ -31,6 +31,7 @@ export interface PermissionRule {
 }
 
 export interface SessionHost {
+  eventsPending?(sessionID: string): boolean
   source?(sessionID:string):Promise<SourceSnapshot | undefined>
   create(title: string, directory: string, model?: ModelRef, permissions?: PermissionRule[], sessionID?: string): Promise<string>
   switchModel(sessionID: string, model: ModelRef): Promise<void>
@@ -41,6 +42,8 @@ export interface SessionHost {
   wait(sessionID: string): Promise<void>
   /** The session's messages; the record of a finished turn ends with `{ type: "idle", outcome }`. */
   messages(sessionID: string): Promise<any[]>
+  /** Read-only context during controller reconciliation, before it becomes ready. */
+  recoveryMessages?(sessionID: string): Promise<any[]>
 }
 
 export interface ConclusionInput {
@@ -66,6 +69,7 @@ const NOTICE_OUTCOME: Record<string, string> = {
   failed: "失败",
   unknown: "结束（状态未核实）",
   published: "发布了新材料",
+  paused: "已暂停，等待处理",
 }
 /** Pauses that /research resume clears; wait and closed segments resolve themselves. */
 const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress",'budget'])
@@ -114,6 +118,8 @@ export class Engine {
   private queues: Map<string, Promise<unknown>>
   /** Per project: the model the user chose in the TUI when starting or resuming. */
   private models: Map<string, ModelRef>
+  private shellInboxes: NonNullable<RuntimeState['shellInboxes']>
+  private shellWake: NonNullable<RuntimeState['shellWake']>
 
   constructor(
     private readonly research: Research,
@@ -131,6 +137,12 @@ export class Engine {
     this.inferredStart = runtime.inferredStart
     this.pendingStarts = runtime.pendingStarts
     this.retried = runtime.retried; this.queues = runtime.queues; this.models = runtime.models
+    this.shellInboxes = runtime.shellInboxes ??= new Map()
+    for (const item of this.shellInboxes.values()) {
+      item.createdAt ??= Date.now()
+      if (!item.execution) item.eligibleAt ??= item.createdAt
+    }
+    this.shellWake = runtime.shellWake ??= new Map()
   }
 
   private serial<T>(root: string, work: () => Promise<T>): Promise<T> {
@@ -214,6 +226,7 @@ export class Engine {
     if (eventID) this.startedEvents.set(sessionID, eventID)
     const ambiguous = this.busy.has(sessionID)
     this.busy.add(sessionID)
+    for (const item of this.shellInboxes.values()) if (item.sessionID === sessionID) item.eligibleAt=undefined
     if (inferred) this.inferredStart.add(sessionID)
     else this.inferredStart.delete(sessionID)
     const execution = randomUUID()
@@ -229,19 +242,222 @@ export class Engine {
     this.pendingInbox.delete(sessionID)
   }
 
-  async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number): Promise<void> {
+  executionToken(sessionID: string): string | undefined { return this.turns.get(sessionID) }
+
+  async inboxDelivered(sessionID: string, messageID: string, eventSeq?: number, transcriptWitness = false): Promise<void> {
     if (!this.current() || !this.drives(sessionID) || !messageID) return
-    const pending = this.pendingStarts.get(sessionID)
-    if (pending) await this.started(sessionID, pending.eventID, pending.eventSeq)
-    if (!this.busy.has(sessionID)) await this.started(sessionID, `inbox:${messageID}`, eventSeq, true)
-    const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
-    if (execution) await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: messageID, event_seq: eventSeq })
-    else this.pendingInbox.set(sessionID, [...(this.pendingInbox.get(sessionID) ?? []), { id: messageID, seq: eventSeq }].slice(-32))
+    const shell = this.shellInboxes.get(messageID)
+    const key = `${sessionID}:${messageID}`
+    if (this.runtime.shellDelivered?.has(key)) return
+    // A transcript is not a native start event. Wait for an authenticated started record.
+    if (transcriptWitness && !this.busy.has(sessionID)) return
+    try {
+      if (shell?.sessionID === sessionID) {
+        this.shellInboxes.delete(messageID)
+        // A notice may join the enqueue-time turn or a separately authorized user resume.
+        let inline = !!shell.execution && this.busy.has(sessionID) && shell.execution === this.turns.get(sessionID)
+        if (!inline && this.busy.has(sessionID)) {
+          const current = await this.call('runtime_execution_view', sessionID, {execution_token:this.turns.get(sessionID)})
+          inline = current?.state === 'open' && current.execution_token === this.turns.get(sessionID) &&
+            !!current.message_id && current.message_id !== messageID && !!current.reservation_id && !current.ambiguous
+        }
+        if (inline) { this.rememberShellDelivery(sessionID,messageID); return }
+        if (shell.matched && !shell.authorized && !shell.refused) shell.authorized = await this.reserveShellWake(sessionID, messageID)
+        this.shellWake.set(sessionID, { matched: !!shell.authorized })
+      }
+      const pending = this.pendingStarts.get(sessionID)
+      if (pending) await this.started(sessionID, pending.eventID, pending.eventSeq)
+      if (!this.busy.has(sessionID)) await this.started(sessionID, `inbox:${messageID}`, eventSeq, true)
+      const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
+      if (execution) {
+        const bound = await this.call('runtime_execution_bind', sessionID, { execution_token: execution, message_id: messageID,
+          ...(transcriptWitness ? {transcript_witness:true} : {event_seq:eventSeq}) })
+        if (shell && !bound.matched) {
+          if (transcriptWitness) { this.shellInboxes.set(messageID,shell); return }
+          this.shellWake.set(sessionID,{matched:false})
+          const state=await this.state(sessionID)
+          if (state.workflow?.run?.state === 'running' && !state.workflow?.session?.pause_reason)
+            await this.pauseSession(sessionID,'fault','后台通知的执行绑定未完成；请核对宿主状态后恢复。')
+        }
+      }
+      else this.pendingInbox.set(sessionID, [...(this.pendingInbox.get(sessionID) ?? []), { id: messageID, seq: eventSeq }].slice(-32))
+      if (shell) this.rememberShellDelivery(sessionID,messageID)
+    } catch (error) {
+      if (shell) this.shellInboxes.set(messageID,shell)
+      throw error
+    }
   }
 
   async nodeTurnAllowed(sessionID: string): Promise<boolean> {
+    const waiting = [...this.shellInboxes.values()].filter(item => item.sessionID === sessionID && item.matched)
+    const needsBinding=waiting.some(item => !item.execution || item.execution !== this.turns.get(sessionID))
+    if (needsBinding) {
+      const messages = await this.recoveryMessages(sessionID)
+      const input = messages?.findLast((item: any) => item?.type === 'user' || item?.type === 'synthetic')
+      if (input?.id && this.shellInboxes.get(input.id)?.sessionID === sessionID) {
+        await this.inboxDelivered(sessionID, input.id, undefined, true)
+        if (this.shellInboxes.has(input.id)) return false
+      } else return false
+    }
+    if (this.shellWake.get(sessionID)?.matched === false) return false
     try { await this.call('runtime_drain_check', sessionID, { execution_token: this.turns.get(sessionID) }); return true }
     catch { return false }
+  }
+
+  isShellWake(sessionID: string): boolean { return this.shellWake.has(sessionID) }
+
+  private async reserveShellWake(sessionID: string, messageID: string): Promise<boolean> {
+    try {
+      const source_snapshot = await this.host.source?.(sessionID)
+      const reservation = await this.call('runtime_reserve', sessionID, { message_id: messageID, source_snapshot },
+        `shell-wake:${sessionID}:${messageID}`)
+      if (!reservation.allowed) {
+        await this.pauseSession(sessionID, 'budget', '后台完成通知已记录，但续轮预算已到限。')
+        return false
+      }
+      await this.call('runtime_submitted', sessionID, { reservation_id: reservation.reservation_id },
+        `shell-wake-submitted:${sessionID}:${messageID}`)
+      return true
+    } catch (error) {
+      const state = await this.state(sessionID)
+      if (state.workflow?.run?.state === 'running' && !state.workflow?.session?.pause_reason)
+        await this.pauseSession(sessionID, 'fault', '完成通知已记录，续轮授权失败；请检查后恢复。')
+      process.stderr.write(`Research shell wake withheld: ${String(error)}\n`)
+      return false
+    }
+  }
+
+  private rememberShellDelivery(sessionID: string, messageID: string): void {
+    const delivered=this.runtime.shellDelivered ??= new Set()
+    delivered.add(`${sessionID}:${messageID}`)
+    if (delivered.size>1024) delivered.delete(delivered.values().next().value!)
+  }
+
+  private validShellNotice(messageID: string, metadata: any): boolean {
+    return metadata?.source === 'shell' && typeof metadata.shellID === 'string' && metadata.shellID.startsWith('sh_') &&
+      metadata.shellID.length <= 256 && messageID.startsWith('msg_') && messageID.length <= 256
+  }
+
+  private async recordShellNotice(sessionID: string, messageID: string, metadata: any): Promise<any> {
+    if (!this.validShellNotice(messageID, metadata)) return {matched:false}
+    const result = await this.call('runtime_shell_notice', sessionID, {
+      shell_id: metadata.shellID, message_id: messageID,
+      outcome: typeof metadata.state === 'string' ? metadata.state.slice(0,80) : 'unknown',
+      exit_code: Number.isSafeInteger(metadata.exit) ? metadata.exit : null,
+    }, `shell-notice:${sessionID}:${messageID}`)
+    if (result.first && result.call_id && this.research.conclusionContractOf(sessionID) === 'evidence-v1')
+      await this.call('runtime_tool_observed', sessionID, {tool:'shell',call_id:result.call_id},
+        `tool-observed:${sessionID}:${result.call_id}`).catch(error => {
+          process.stderr.write(`Research terminal execution observation deferred: ${String(error)}\n`)
+        })
+    return result
+  }
+
+  /** A host-generated completion wakes the model itself; never send a second wake. */
+  async shellNotice(sessionID: string, messageID: string, metadata: any): Promise<void> {
+    if (!this.current() || !this.drives(sessionID) || this.research.roleOf(sessionID) !== 'node_core' ||
+        !this.validShellNotice(messageID, metadata)) return
+    const seen = this.runtime.shellSeen ??= new Set()
+    seen.add(`${sessionID}:${messageID}`)
+    this.runtime.shellLost?.delete(`${sessionID}:${messageID}`)
+    if (seen.size > 1024) seen.delete(seen.values().next().value!)
+    const root = this.research.rootOf(sessionID)!
+    await this.serial(root, async () => {
+      const execution = this.busy.has(sessionID) ? this.turns.get(sessionID) : undefined
+      const result = await this.recordShellNotice(sessionID, messageID, metadata)
+      if (this.runtime.shellDelivered?.has(`${sessionID}:${messageID}`)) return
+      const authorized = result.matched && !execution ? await this.reserveShellWake(sessionID, messageID) : false
+      this.shellInboxes.set(messageID, {sessionID, execution, matched:!!result.matched, authorized,
+        refused:!!result.matched && !execution && !authorized, createdAt:Date.now(),
+        eligibleAt:execution ? undefined : Date.now()})
+      if (this.shellInboxes.size > 1024) {
+        for (const [id,item] of this.shellInboxes) {
+          if (!item.matched) this.shellInboxes.delete(id)
+          if (this.shellInboxes.size <= 1024) break
+        }
+      }
+      this.research.notifyChanged(root)
+    })
+  }
+
+  private async recoveryMessages(sessionID: string): Promise<any[] | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([this.host.recoveryMessages?.(sessionID) ?? Promise.resolve([]),
+        new Promise<undefined>(resolve => {timer=setTimeout(()=>resolve(undefined),1000)})])
+    } finally { clearTimeout(timer) }
+  }
+
+  /** Long context reads stay outside the project queue; acting requires a mature, still-missing notice. */
+  async pollShells(now = Date.now()): Promise<void> {
+    const lost = this.runtime.shellLost ??= new Map()
+    const polls = this.runtime.shellPoll ??= new Map()
+    for (const root of this.research.roots().filter(item => this.research.inScope(item))) {
+      for (const sid of this.research.sessionsIn(root).filter(sid => this.drives(sid) &&
+        this.research.roleOf(sid) === 'node_core' && !this.busy.has(sid))) {
+        if (!this.current() || this.host.eventsPending?.(sid)) continue
+        try {
+          const poll = polls.get(sid) ?? {next:0,delay:15_000}
+          if (now < poll.next) continue
+          const shells = await this.call('runtime_shell_status', sid)
+          // Warm attachments may inherit an inbox whose turn already ended; start a fresh idle grace period.
+          for (const item of this.shellInboxes.values())
+            if (item.sessionID === sid && item.matched && item.eligibleAt === undefined) item.eligibleAt=now
+          const stale = [...this.shellInboxes.entries()].filter(([,item]) => item.sessionID === sid && item.matched &&
+            item.eligibleAt !== undefined && now-item.eligibleAt >= 30_000)
+          if (!shells.running && !stale.length) {
+            polls.delete(sid)
+            for (const key of lost.keys()) if (key.startsWith(`${sid}:`)) lost.delete(key)
+            continue
+          }
+          poll.delay=Math.min(poll.delay*2,60_000); poll.next=now+poll.delay; polls.set(sid,poll)
+          const messages = await this.recoveryMessages(sid)
+          if (!messages || !this.current()) continue
+          await this.serial(root, async () => {
+            if (!this.current() || this.busy.has(sid) || this.host.eventsPending?.(sid)) return
+            const fresh = await this.call('runtime_shell_status', sid)
+            let changed = false
+            for (const job of fresh.jobs.filter((job:any) => job.state === 'running')) {
+              const notice = messages.find((item:any) => item?.type === 'synthetic' &&
+                item.metadata?.shellID === job.shell_id && typeof item.id === 'string' && this.validShellNotice(item.id,item.metadata))
+              if (!notice) continue
+              const key = `${sid}:${notice.id}`
+              if (this.runtime.shellSeen?.has(key)) { lost.delete(key); continue }
+              const first = lost.get(key)
+              if (first === undefined) { lost.set(key,now); poll.next=now+15_000; continue }
+              if (now-first < 15_000 || this.host.eventsPending?.(sid)) continue
+              const result = await this.call('runtime_shell_unverified', sid, {call_id:job.call_id})
+              if (!result.changed) continue
+              await this.recordShellNotice(sid, notice.id, notice.metadata)
+              lost.delete(key); changed=true
+            }
+            // A lost delivery must not leave a permanent hidden continuation gate.
+            for (const [id,item] of stale) {
+              const current = this.shellInboxes.get(id)
+              if (current !== item || !current.matched) continue
+              current.matched=false; current.refused=true
+              changed=true
+            }
+            if (changed) {
+              const state = await this.state(sid)
+              if (state.workflow?.run?.state === 'running' && !state.workflow?.session?.pause_reason)
+                await this.pauseSession(sid, 'fault', '后台通知或投递未能核对，自动续轮已暂停；请查看任务状态并使用恢复入口。')
+            }
+          })
+        } catch (error) { process.stderr.write(`Research shell scan deferred: ${String(error)}\n`) }
+      }
+    }
+  }
+
+  private async reconcileShells(sessionID: string): Promise<boolean> {
+    const shells = await this.call('runtime_shell_status', sessionID)
+    for (const job of shells.jobs.filter((item: any) => item.state !== 'running')) {
+      await this.call('runtime_shell_unverified', sessionID, {call_id:job.call_id})
+      const key = `${sessionID}:${job.call_id}`
+      this.runtime.shellCalls?.get(key)?.resolve()
+      this.runtime.shellCalls?.delete(key)
+    }
+    return !!(shells.starting || shells.unverified)
   }
 
   wroteLedger(sessionID: string): void {
@@ -268,6 +484,7 @@ export class Engine {
     const { execution, turn } = pending
     return this.serial(root, async () => {
       this.busy.delete(sessionID)
+      for (const item of this.shellInboxes.values()) if (item.sessionID === sessionID && item.matched) item.eligibleAt=Date.now()
       this.inferredStart.delete(sessionID)
       if (!pending.error) {
         let claim: any
@@ -301,11 +518,16 @@ export class Engine {
         process.stderr.write(`Research execution follow-up paused: ${pending.error instanceof Error ? pending.error.message : String(pending.error)}\n`)
       }
       this.runtime.pendingEnds.delete(sessionID)
+      this.shellWake.delete(sessionID)
       if (eventID) this.runtime.endedEvents.set(sessionID, [...(this.runtime.endedEvents.get(sessionID) ?? []), eventID].slice(-32))
     })
   }
 
   private async afterTurn(sessionID: string, root: string, outcome: Outcome, turn:string, execution?:string): Promise<void> {
+    if (this.research.roleOf(sessionID) === 'node_core' && await this.reconcileShells(sessionID)) {
+      await this.pauseSession(sessionID, 'fault', '执行退出待核实；请检查外部进程并使用 /research recover task。')
+      return
+    }
     if (outcome === "interrupted") {
       if (this.ours.delete(sessionID)) return
       await this.pauseSession(sessionID, "native_stop", "你中断了这一轮，本会话的自动推进已暂停；用 /research resume 继续。")
@@ -313,6 +535,7 @@ export class Engine {
     }
     const state = await this.state(sessionID)
     const row = state.workflow?.session
+    if (row?.role === 'node_core' && this.shellWake.get(sessionID)?.matched === false) return
     if (row?.role === 'node_core' && (await this.allTasks(sessionID, state.workflow))
       .some((task: any) => task.session_id === sessionID && task.state === 'unverified')) return
     if (outcome === "succeeded" && row?.role === "node_core") {
@@ -351,6 +574,13 @@ export class Engine {
       return
     }
     if (row.pause_reason) return
+    if (progress.external_unverified) {
+      const shells = await this.call('runtime_shell_status', sessionID)
+      for (const job of shells.jobs.filter((item: any) => item.state !== 'running'))
+        await this.call('runtime_shell_unverified', sessionID, { call_id: job.call_id }, `shell-unknown:${sessionID}:${job.call_id}`)
+      await this.pauseSession(sessionID, 'fault', '后台执行状态未核实；请先核对任务及外部进程。')
+      return
+    }
     // A coordinator with nothing to do while its nodes run waits for them rather
     // than being nudged, or paused as idle, turn after turn.
     const running = row.role === "main" ? this.runningTasks({ workflow: { tasks: await this.allTasks(sessionID, state.workflow) } }, sessionID) : []
@@ -367,6 +597,10 @@ export class Engine {
         "no_progress",
         `连续 ${IDLE_LIMIT} 轮没有研究推进，本会话的自动推进已暂停；用 /research resume 继续。`,
       )
+      return
+    }
+    if (progress.waiting_external || [...this.shellInboxes.values()].some(item => item.sessionID === sessionID && item.matched)) {
+      this.research.notifyChanged(root)
       return
     }
     await this.continueSession(sessionID, state)
@@ -395,9 +629,17 @@ export class Engine {
 
   private async pauseSession(sessionID: string, reason: string, note: string): Promise<void> {
     await this.call("workflow", sessionID, { action: "session", fields: { pause_reason: reason } })
-    await this.say(sessionID, note)
+    await this.say(sessionID, note).catch(() => {})
     const root = this.research.rootOf(sessionID)
-    if (root) this.research.notifyChanged(root)
+    if (root) {
+      if (this.research.roleOf(sessionID) === 'node_core') {
+        await this.call('workflow', sessionID, { action: 'notify', fields: {
+          kind: 'paused', key: `paused:${reason}:${this.turns.get(sessionID) ?? randomUUID()}`, summary: note,
+        } }).catch(() => {})
+        await this.deliver(root).catch(() => {})
+      }
+      this.research.notifyChanged(root)
+    }
   }
 
   // ── Node lifecycle ───────────────────────────────────────────────────────
@@ -846,7 +1088,47 @@ export class Engine {
         }
         const current = await this.call('runtime_execution_view', task.session_id,
           { execution_token: this.turns.get(task.session_id) })
+        const shells = await this.call('runtime_shell_status', task.session_id)
+        if (shells.jobs.length) {
+          const messages = await (this.host.recoveryMessages?.(task.session_id) ?? Promise.resolve([])).catch(() => [])
+          let uncertain = false
+          for (const job of shells.jobs) {
+            try {
+            const notice = messages.find((item: any) => item?.type === 'synthetic' &&
+              item.metadata?.source === 'shell' && item.metadata?.shellID === job.shell_id)
+            if (notice?.id) {
+              // The shell is known to have exited, but a host wake delivered
+              // while detached may have run without a tracked authorization.
+              // Preserve that uncertainty unless the currently open execution
+              // is explicitly bound to this exact notice.
+              if (current?.state !== 'open' || current?.message_id !== notice.id) {
+                await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id },
+                  `shell-unknown:${task.session_id}:${job.call_id}`)
+                uncertain = true
+              }
+              // Transcript recovery records a delivered terminal; it must not recreate a live inbox or reserve a wake.
+              this.shellInboxes.delete(notice.id)
+              this.rememberShellDelivery(task.session_id,notice.id)
+              await this.recordShellNotice(task.session_id, notice.id, notice.metadata)
+            } else {
+              if (job.state !== 'running' && !(job.state === 'starting' && this.runtime.shellCalls?.has(`${task.session_id}:${job.call_id}`))) {
+                await this.call('runtime_shell_unverified', task.session_id, { call_id: job.call_id })
+                uncertain = true
+              }
+            }
+            } catch (error) {
+              process.stderr.write(`Research shell recovery deferred: ${String(error)}\n`)
+              uncertain = true
+            }
+          }
+          if (uncertain || shells.running && current?.state === 'ended') continue
+        }
         const execution = current?.execution_token
+        // A disallowed wake can still reach a native terminal while the
+        // project is paused. Its revoked authorization stays revoked; the
+        // terminal is enough to preserve the paused task without replaying it.
+        if (state.workflow?.run?.state === 'paused' && current?.state === 'revoked' &&
+            current.terminal && !current.has_unbound_turn && !this.busy.has(task.session_id)) continue
         if (current?.state === 'ended' && !current.has_unbound_turn && !this.busy.has(task.session_id)) {
           this.runtime.pendingEnds.delete(task.session_id)
           const finish = await this.call('node_finish_pending', task.session_id)
@@ -1056,6 +1338,7 @@ export class Engine {
       if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
       const tasks = await this.allTasks(main, state.workflow)
       const resumed: string[] = []
+      const skipped: string[] = []
       for (const member of this.research.sessionsIn(root).filter((sessionID) => this.drives(sessionID))) {
         const current = await this.state(member)
         const row = current.workflow?.session
@@ -1064,19 +1347,34 @@ export class Engine {
         const task = tasks.find((item: any) => item.session_id === member && (
           ACTIVE_TASK.has(item.state) || item.state==='waiting' && item.error?.startsWith('wall_clock_budget:')))
         if (row.role === "node_core" && !task) continue
-        if (task?.state==='unverified') continue
         if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
-        if (row.pause_reason) await this.call("workflow", member, { action: "session", fields: { pause_reason: null } })
+        let result: any
+        for (let attempt=0; attempt<2; attempt++) {
+          const fresh = await this.state(member)
+          try {
+            result = await this.call('runtime_resume_session', main, {
+              target_session: member, expected_revision: fresh.workflow.run.control_revision,
+            })
+            break
+          } catch (error) {
+            if (attempt === 1 || !(error instanceof Error) || !error.message.includes('revision')) throw error
+          }
+        }
+        if (!result?.resumed) {
+          skipped.push(`${row.node_id ?? member}：${result?.reason ?? '状态已变化'}${result?.reason === 'execution_unverified' && result.task_id ? `；/research recover task ${result.task_id} <核实说明>` : result?.reason === 'execution_binding_pending' ? '；执行轮绑定未完成，请核对宿主后重试 resume' : ''}`)
+          continue
+        }
+        const waitingExternal = !!result.waiting_external
         await this.useModel(root, member)
         this.retried.delete(member)
         this.idle.delete(member)
-        if (!this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
+        if (!waitingExternal && !this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
         resumed.push(member)
       }
       await this.deliver(root)
       await this.schedule(root)
       this.research.notifyChanged(root)
-      return { message: `已恢复自主研究（${resumed.length} 个会话继续）。` }
+      return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}` }
     })
   }
 

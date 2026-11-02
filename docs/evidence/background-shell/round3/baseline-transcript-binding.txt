@@ -1,0 +1,23 @@
+bun test v1.3.10 (30e609e0)
+
+plugin/test/plugin.test.ts:
+1481 |     host.ctx.session.context=async(args:any)=>args.sessionID===child ? [
+1482 |       ...(await original(args)),{type:'synthetic',id:'msg_transcript_job',metadata:{source:'shell',shellID:'sh_transcript_job',state:'completed',exit:0}}
+1483 |     ] : original(args)
+1484 |     const request=modelRequest(child)
+1485 |     await host.hooks.get('context')!(request)
+1486 |     expect(Object.keys(request.tools)).toContain('shell')
+                                              ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "shell"
+Received: []
+
+      at <anonymous> (<worktree>/plugin/test/plugin.test.ts:1486:40)
+(fail) autonomous research > a transcript witness binds a new native wake against the real backend before delivered arrives [403.38ms]
+
+ 0 pass
+ 134 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [478.00ms]
