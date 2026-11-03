@@ -25,6 +25,10 @@ RUN_FORCED = (
     "const exited = (await this.finished(child, controller.signal)) || true\n"
     "      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified'"
 )
+RUN_PREFIX_TRUE = (
+    "const exited = true || await this.finished(child, controller.signal)\n"
+    "      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified'"
+)
 
 
 def body(source: str, name: str, kind: str) -> str:
@@ -76,21 +80,46 @@ def _run_span(source: str) -> str:
     return extractors[0](source)
 
 
+def _other_fingerprints(specialists: str) -> dict[tuple[str, str], str]:
+    index = INDEX.read_text(encoding="utf-8")
+    files = {
+        "plugin/src/specialists.ts": specialists,
+        "plugin/index.ts": index,
+    }
+    found = {}
+    for relative, name, kind in verify.COVERED:
+        found[(relative, name)] = verify.sha256_text(verify.extract_function(files[relative], name, kind))
+    return found
+
+
 def test_forcing_finished_true_changes_only_the_run_slice():
     source = SPECIALISTS.read_text(encoding="utf-8")
     assert source.count(RUN_EXITED) == 1
+    assert source.count(RUN_PREFIX_TRUE) == 0
     span = _run_span(source)
-    assert span.startswith("this.finished(")
+    assert span.startswith("const exited = await this.finished(")
     assert "this.finishChild(" in span
     assert "exited" in span
     assert "this.stop(child)" not in span
     assert "专家任务" not in span
     assert span.count("{") == span.count("}")
+    original = _other_fingerprints(source)
+
+    # A prefix before this.finished( is still the same statement. true ||
+    # short-circuits the call and forces exited true.
+    prefixed = source.replace(RUN_EXITED, RUN_PREFIX_TRUE, 1)
+    prefixed_span = _run_span(prefixed)
+    assert prefixed_span.startswith("const exited = true || await this.finished(")
+    assert "true ||" in prefixed_span
+    assert prefixed_span != span
+    assert _other_fingerprints(prefixed) == original
 
     forced = source.replace(RUN_EXITED, RUN_FORCED, 1)
     forced_span = _run_span(forced)
+    assert forced_span.startswith("const exited = (await this.finished(")
     assert "|| true" in forced_span
     assert forced_span != span
+    assert _other_fingerprints(forced) == original
 
     # An edit elsewhere in run(), including the catch path, is not this slice.
     kickoff = source.replace("`专家任务 ${reserved.task_id}`", "`专家任务改 ${reserved.task_id}`", 1)

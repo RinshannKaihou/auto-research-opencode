@@ -13,7 +13,7 @@ Harm: the node can treat a live child as finished, or can store an opening progr
 
 ## When to run
 
-Run `make verify-specialist-lifecycle` after any edit under the fingerprinted functions below, including `host.wait`, `host.messages`, and the `run` slice from `finished` through the `finishChild` call that receives `exited`. Skip it when the diff does not touch those regions.
+Run `make verify-specialist-lifecycle` after any edit under the fingerprinted functions below, including `host.wait`, `host.messages`, and the `run` slice from `const exited =` through the `finishChild` call that receives `exited`. Skip it when the diff does not touch those regions.
 
 ## Run
 
@@ -72,7 +72,7 @@ A pass prints `Checked invariant Safe` for the code on disk. If that sentence is
 
 Sync commit: `fb1b19b9d33723f9a35cb87f23a2e198595a060b`
 
-Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. `host.wait`, `host.messages`, and the slice of `run` from `this.finished(` through the `finishChild` call that receives `exited` are fingerprinted from that same commit. The rest of `run` is not. The product files are unchanged, so the sync commit stays on this product snapshot. This verification does not change those files. The script hashes each function's signature and body (not the comment above it), and that one slice, and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
+Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. `host.wait`, `host.messages`, and the slice of `run` from `const exited =` through the `finishChild` call that receives `exited` are fingerprinted from that same commit. The rest of `run` is not. The product files are unchanged, so the sync commit stays on this product snapshot. This verification does not change those files. The script hashes each function's signature and body (not the comment above it), and that one slice, and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
 
 | Code | What the model includes |
 |---|---|
@@ -83,7 +83,7 @@ Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and
 | `Specialists.noteBusy` `256-265`, called from `observeSpecialist` `434-437` | Writes the event-derived busy bit. Idle and deleted clear it. `busy` or `retry` sets it only when this process already has the session in `tools` or `progressAt`. |
 | `Specialists.appearsBusy` `268-270` | The bit `noteBusy` stored. False when this process has not stored a busy status. |
 | `Specialists.armLimits` `456-488` | Stall only after a quiet window. Cap fires even when progress continues. A parent abort already aborted the work controller, so the current cap does not mark. |
-| `Specialists.run` slice `417-421` | From `this.finished(` through the `this.finishChild(` call that passes `exited`. The rest of `run` is not hashed. Coercing that result to true changes this slice. |
+| `Specialists.run` slice `417-421` | From the start of that statement (`const exited =`) through the `this.finishChild(` call that passes `exited`. The rest of `run` is not hashed. `true || await this.finished(...)` and `(await this.finished(...)) || true` both change this slice. |
 | `Specialists.finished` `491-502` | Race of `host.wait` against the abort. Idle returns true. Abort calls `stop` with the same wait. |
 | `Specialists.stop` `504-514` | Interrupt, then race the wait against the grace. Grace means not verified. |
 | `Specialists.finishChild` `600-676` | Limit plus a non-success outcome calls `summarize` unless the parent already aborted. Otherwise `exit_verified` is the `finished`/`stop` result, and an unverified exit does not archive the opening line. A non-empty `summary.text` is archived. |
@@ -115,7 +115,7 @@ Checked state space on the sync commit, current variant: 902 distinct states, de
 
 - `delegate`, `reserve`, launch phases, `host.create`, bind, and kickoff.
 - `delegateBatch` and a second child.
-- The `run` catch path (`plugin/src/specialists.ts:422-445`) that stops a child after a create, bind, or archive failure. The fingerprint covers only the success-path slice from `finished` to `finishChild` (`417-421`), not this catch.
+- The `run` catch path (`plugin/src/specialists.ts:422-445`) that stops a child after a create, bind, or archive failure. The fingerprint covers only the success-path slice from `const exited =` through `finishChild` (`417-421`), not this catch.
 - `recover`, `recoverWarm`, `watchRecovered`, and `interruptUnverified`. `watchRecovered` has its own `finished` / `finishChild` pair (`766-781`). That pair is not the `run` slice.
 - A parent abort that is not a stall or a cap archiving the turn's own text. Property 2 is only the stall/cap archive.
 - A succeeded turn that is also past the cap keeping its own report text. That text is the turn's report, not a timeout summary.

@@ -9,11 +9,11 @@ Exit codes (GNU make prints this number as ``Error N`` and then exits 2 itself):
    trace is a product bug. Do not weaken Safe.
 2  Model or tool failure. The spec, a config, or TLC failed, or a known break
    stopped failing. Not a product-bug verdict.
-3  Drift. A covered function body, or the run() slice from finished() through
-   the finishChild() call that receives exited, differs from the sync commit
-   recorded in skills/verify-specialist-child-lifecycle/SKILL.md. Re-sync the
-   model before trusting a pass. A same-meaning rewrite is drift, not a
-   counterexample.
+3  Drift. A covered function body, or the run() slice from the `const exited`
+   statement through the finishChild() call that receives exited, differs
+   from the sync commit recorded in
+   skills/verify-specialist-child-lifecycle/SKILL.md. Re-sync the model before
+   trusting a pass. A same-meaning rewrite is drift, not a counterexample.
 4  Setup. git or java is missing, a required commit is not in this clone, or
    the TLC jar could not be downloaded or is not the pinned release.
 """
@@ -297,15 +297,201 @@ def _code_find_all(source: str, needle: str) -> list[int]:
     return found
 
 
-def extract_run_exited_span(source: str) -> str:
-    """The run() slice from this.finished( through the finishChild call that receives exited.
+# A line that ends in one of these words has not finished a statement.
+_NO_END_WORDS = frozenset({
+    "await", "async", "new", "typeof", "void", "delete", "yield",
+    "instanceof", "in", "of", "else", "catch", "finally", "extends",
+    "case", "class", "function", "if", "for", "while", "do", "switch",
+    "try", "const", "let", "var", "import", "export", "throw", "return",
+    "get", "set", "static", "public", "private", "protected", "readonly",
+    "implements", "interface", "type", "enum", "namespace", "declare",
+    "abstract", "as", "satisfies", "infer", "keyof", "unique", "override",
+    "from", "with",
+})
 
-    The rest of run(), including launch and the catch path, is not part of the slice.
+# `{` after one of these opens a statement block, not an object literal.
+_BLOCK_PREV = frozenset({">", ")", "=>", "try", "else", "do", "finally"})
+
+_CONTINUATION_WORDS = frozenset({"instanceof", "in", "of", "as", "satisfies"})
+
+_THREE_CHAR_OPS = frozenset({"===", "!==", "**=", ">>=", "<<=", "??="})
+
+_TWO_CHAR_OPS = frozenset({
+    "&&", "||", "??", "=>", "?.", "==", "!=", "<=", ">=",
+    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+    "**", "<<", ">>", "++", "--",
+})
+
+
+def _word_end(source: str, index: int) -> int:
+    end = index + 1
+    while end < len(source) and (source[end].isalnum() or source[end] in "_$"):
+        end += 1
+    return end
+
+
+def _starts_continuation(source: str, index: int) -> bool:
+    """True when the token at index continues the previous line's statement."""
+    if index >= len(source):
+        return False
+    three = source[index:index + 3]
+    two = source[index:index + 2]
+    if three in _THREE_CHAR_OPS or two in _TWO_CHAR_OPS - {"++", "--"}:
+        return True
+    if source[index] in ".,?:([+*/%=<>&|^":
+        return True
+    if source[index].isalpha() or source[index] in "_$":
+        return source[index:_word_end(source, index)] in _CONTINUATION_WORDS
+    return False
+
+
+def _can_split(paren: int, bracket: int, brace_stack: list[str]) -> bool:
+    """Newlines separate statements only outside calls, arrays, and object literals."""
+    if paren or bracket:
+        return False
+    return not brace_stack or brace_stack[-1] == "block"
+
+
+def _statement_start(source: str, index: int) -> int:
+    """Index of the first token of the statement that contains index.
+
+    The slice then includes a prefix such as ``const exited = true ||``.
+    A newline is a boundary where automatic semicolon insertion would end the
+    statement. A block ``{`` starts the next statement.
+    """
+    if index < 0 or index > len(source):
+        raise ExtractError("statement index out of range")
+    statement_start = _skip_ws_comments(source, 0)
+    paren = 0
+    bracket = 0
+    brace_stack: list[str] = []
+    prev_can_end = False
+    prev_token = ""
+    i = 0
+    while i < len(source) and i <= index:
+        if source.startswith("//", i) or source.startswith("/*", i):
+            i = _skip_comment(source, i)
+            continue
+        ch = source[i]
+        if ch in " \t\r":
+            i += 1
+            continue
+        if ch == "\n":
+            i += 1
+            if prev_can_end and _can_split(paren, bracket, brace_stack):
+                nxt = _skip_ws_comments(source, i)
+                if nxt <= index and (nxt >= len(source) or not _starts_continuation(source, nxt)):
+                    statement_start = nxt
+                    prev_can_end = False
+            continue
+        nxt = _skip_string(source, i)
+        if nxt != i:
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = True
+            prev_token = source[i]
+            i = nxt
+            continue
+        if ch.isalpha() or ch in "_$":
+            end = _word_end(source, i)
+            word = source[i:end]
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = word not in _NO_END_WORDS
+            prev_token = word
+            i = end
+            continue
+        if ch.isdigit():
+            end = i + 1
+            while end < len(source) and (source[end].isalnum() or source[end] in "._"):
+                end += 1
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = True
+            prev_token = source[i:end]
+            i = end
+            continue
+        three = source[i:i + 3]
+        two = source[i:i + 2]
+        if three in _THREE_CHAR_OPS or two in _TWO_CHAR_OPS:
+            op = three if three in _THREE_CHAR_OPS else two
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = op in {"++", "--"}
+            prev_token = op
+            i += len(op)
+            continue
+        if ch == "(":
+            paren += 1
+            prev_can_end = False
+            prev_token = ch
+            i += 1
+            continue
+        if ch == ")":
+            if paren:
+                paren -= 1
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = True
+            prev_token = ch
+            i += 1
+            continue
+        if ch == "[":
+            bracket += 1
+            prev_can_end = False
+            prev_token = ch
+            i += 1
+            continue
+        if ch == "]":
+            if bracket:
+                bracket -= 1
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = True
+            prev_token = ch
+            i += 1
+            continue
+        if ch == "{":
+            kind = "block" if prev_token in _BLOCK_PREV else "object"
+            brace_stack.append(kind)
+            prev_can_end = False
+            prev_token = ch
+            i += 1
+            if kind == "block":
+                nxt = _skip_ws_comments(source, i)
+                if nxt <= index and nxt < len(source) and source[nxt] != "}":
+                    statement_start = nxt
+            continue
+        if ch == "}":
+            if brace_stack:
+                brace_stack.pop()
+            if _can_split(paren, bracket, brace_stack):
+                prev_can_end = True
+            prev_token = ch
+            i += 1
+            continue
+        if ch == ";" and _can_split(paren, bracket, brace_stack):
+            nxt = _skip_ws_comments(source, i + 1)
+            if nxt <= index:
+                statement_start = nxt
+            prev_can_end = False
+            prev_token = ch
+            i += 1
+            continue
+        if _can_split(paren, bracket, brace_stack):
+            prev_can_end = False
+        prev_token = ch
+        i += 1
+    if statement_start > index:
+        raise ExtractError("statement start fell after the finished() call")
+    return statement_start
+
+
+def extract_run_exited_span(source: str) -> str:
+    """The run() slice from the start of the `const exited` statement through finishChild.
+
+    The statement prefix is part of the slice, so ``true || await this.finished(...)``
+    changes the hash. The rest of run(), including launch and the catch path, is not.
     """
     run = extract_function(source, "run", "method")
     starts = _code_find_all(run, "this.finished(")
     if len(starts) != 1:
         raise ExtractError(f"{len(starts)} this.finished( calls in run()")
+    statement = _statement_start(run, starts[0])
     calls = [at for at in _code_find_all(run, "this.finishChild(") if at > starts[0]]
     if len(calls) != 1:
         raise ExtractError(f"{len(calls)} this.finishChild( calls after finished() in run()")
@@ -314,7 +500,7 @@ def extract_run_exited_span(source: str) -> str:
     arguments = run[open_paren + 1 : close]
     if re.search(r"(?<![\w.])exited\b", arguments) is None:
         raise ExtractError("finishChild in run() does not receive exited")
-    return run[starts[0] : close + 1]
+    return run[statement : close + 1]
 
 
 def extract_function(source: str, name: str, kind: str) -> str:
