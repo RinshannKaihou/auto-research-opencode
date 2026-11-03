@@ -2406,6 +2406,183 @@ describe("node specialists", () => {
     expect(result.result.report_path).toBeUndefined()
   })
 
+  test("a completed specialist keeps its report when the last message is reasoning only", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        const native = raw.ctx.session.context
+        raw.ctx.session.context = async (input: { sessionID: string }) => {
+          const messages = await native(input)
+          const idle = messages.at(-1)
+          if (raw.created.includes(input.sessionID) && input.sessionID !== raw.created[0]
+            && idle?.type === "idle" && idle.outcome === "succeeded") {
+            const report = messages.find((item: any) => item?.type === "assistant"
+              && (item.content ?? []).some((part: any) => part?.type === "text" && String(part.text ?? "").trim()))
+            return [
+              ...messages.filter((item: any) => item?.type !== "assistant" && item !== idle),
+              report ?? { type: "assistant", content: [{ type: "text", text: "FINAL REPORT" }] },
+              { type: "assistant", content: [{ type: "reasoning", text: "still thinking" }] },
+              idle,
+            ]
+          }
+          return messages
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    host.reply(child, "FINAL REPORT")
+    const result = await pending
+    expect(result).toMatchObject({ state: "completed", exit_verified: true, child_session_id: child })
+    expect(result.result.preview).toBe("FINAL REPORT")
+    expect(result.error).toBeFalsy()
+  })
+
+  /** Later interrupt calls are recorded but do not end the summary turn. */
+  function ignoreSummaryStop(host: Awaited<ReturnType<typeof load>>) {
+    const native = host.ctx.session.interrupt
+    host.ctx.session.interrupt = async (input: { sessionID: string }) => {
+      if (host.interrupted.includes(input.sessionID)) {
+        host.interrupted.push(input.sessionID)
+        return { interrupted: true }
+      }
+      return native(input)
+    }
+  }
+
+  test("a summary turn that ignores the interrupt stays unverified", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        ignoreSummaryStop(raw)
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "timeout summary", 4000)
+    const result = await pending
+    expect(host.interrupted.filter((id) => id === child).length).toBeGreaterThan(1)
+    expect(result).toMatchObject({
+      state: "unverified",
+      exit_verified: false,
+      error: "专家会话被中断后没有按时停下，退出未核实",
+      child_session_id: child,
+    })
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.error).not.toBe("达到专家时间上限，没有可用报告")
+    expect((await host.page("specialists")).items[0]?.state).toBe("unverified")
+  }, 120_000)
+
+  test("a summary send that throws after the turn starts stays unverified when stop fails", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        ignoreSummaryStop(raw)
+        const original = raw.ctx.session.synthetic
+        let resumes = 0
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          const summary = node && input.sessionID !== node && input.resume && ++resumes >= 2
+          const result = await original(input)
+          if (summary) throw new Error("summary accepted then host failed")
+          return result
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    const result = await pending
+    expect(host.interrupted.filter((id) => id === child).length).toBeGreaterThan(1)
+    expect(result).toMatchObject({
+      state: "unverified",
+      exit_verified: false,
+      error: "专家会话被中断后没有按时停下，退出未核实",
+      child_session_id: child,
+    })
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+  }, 90_000)
+
+  test("a summary send that never resolves still settles within the grace", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        const original = raw.ctx.session.synthetic
+        let resumes = 0
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          if (node && input.sessionID !== node && input.resume && ++resumes >= 2) return new Promise(() => {})
+          return original(input)
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    const started = Date.now()
+    const result = await pending
+    expect(Date.now() - started).toBeLessThan(45_000)
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，没有可用报告",
+      child_session_id: child,
+    })
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+  }, 60_000)
+
+  test("a summary that uses up its grace records no usable report", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "timeout summary", 4000)
+    const started = Date.now()
+    const result = await pending
+    expect(Date.now() - started).toBeGreaterThan(25_000)
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，没有可用报告",
+      child_session_id: child,
+    })
+    expect(result.error).not.toBe("达到专家时间上限，已收回部分报告")
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+    expect(host.interrupted).toContain(child)
+  }, 60_000)
+
+  test("a parent abort during the summary records no usable report", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const controller = new AbortController()
+    const pending = host.call("research_delegate", host.created[0]!, TASK, controller.signal)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "timeout summary", 4000)
+    expect(host.said(child).at(-1).text).toContain("不要使用任何工具")
+    const started = Date.now()
+    controller.abort()
+    const result = await pending
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，没有可用报告",
+      child_session_id: child,
+    })
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+    expect(host.interrupted).toContain(child)
+  })
+
   test("a failed timeout summary records no usable report instead of the opening line", async () => {
     const host = await load({
       hostSetup: (raw) => {

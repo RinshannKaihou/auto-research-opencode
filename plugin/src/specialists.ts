@@ -127,15 +127,15 @@ function assistantText(message: any): string {
     .trim()
 }
 
-/** How a specialist session's turn ended, and the text of its latest assistant message.
- * An earlier progress sentence is not the report once a later assistant message exists. */
+/** How a specialist session's turn ended and the last text it wrote. */
 export function sessionResult(messages: any[]): { outcome: string | null; text: string } {
   const last = messages.at(-1)
   const outcome = last?.type === "idle" && last.outcome ? String(last.outcome) : null
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index]
     if (item?.type !== "assistant") continue
-    return { outcome, text: assistantText(item) }
+    const text = assistantText(item)
+    if (text) return { outcome, text }
   }
   return { outcome, text: "" }
 }
@@ -377,28 +377,43 @@ export class Specialists {
     }
   }
 
-  /** After a timeout, ask the same child — with its tools withdrawn — to summarize work already in the session. */
-  private async summarize(child: string, signal?: AbortSignal): Promise<string> {
-    if (signal?.aborted || !this.current()) return ""
+  /** One tool-free follow-up after a timeout. Host calls share the summary grace; exited is false when the child is still running. */
+  private async summarize(child: string, signal?: AbortSignal): Promise<{ text: string; exited: boolean }> {
+    if (signal?.aborted || !this.current()) return { text: "", exited: true }
     this.tools.set(child, [])
     const summaryMessageID = `msg_research_${randomUUID().replaceAll("-", "")}`
     const controller = new AbortController()
-    let summaryTimedOut = false
-    const onAbort = () => controller.abort()
-    signal?.addEventListener("abort", onAbort, { once: true })
-    const timer = setTimeout(() => {
-      summaryTimedOut = true
+    let resolveDeadline!: (value: "deadline") => void
+    const deadline = new Promise<"deadline">((resolve) => { resolveDeadline = resolve })
+    const onAbort = () => {
       controller.abort()
-    }, SUMMARY_GRACE_MS)
+      resolveDeadline("deadline")
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+    const timer = setTimeout(onAbort, SUMMARY_GRACE_MS)
+    // A host call that never settles must not keep the delegating tool waiting past the grace.
+    const bounded = async <T>(work: Promise<T>): Promise<T | "deadline"> => {
+      const settled = work.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      const winner = await Promise.race([settled, deadline])
+      if (winner === "deadline") return "deadline"
+      if (!winner.ok) throw winner.error
+      return winner.value
+    }
+    const stopped = () => this.stop(child).catch(() => false)
     try {
-      await this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID)
+      const sent = await bounded(this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID))
+      if (sent === "deadline") return { text: "", exited: await stopped() }
       const exited = await this.finished(child, controller.signal)
-      if (!exited || summaryTimedOut || signal?.aborted) return ""
-      const messages = await this.host.messages(child).catch(() => [])
-      return textSince(messages, summaryMessageID)
+      if (!exited) return { text: "", exited: false }
+      if (controller.signal.aborted) return { text: "", exited: true }
+      const messages = await bounded(this.host.messages(child).catch(() => []))
+      if (messages === "deadline" || controller.signal.aborted) return { text: "", exited: true }
+      return { text: textSince(messages, summaryMessageID), exited: true }
     } catch {
-      await this.stop(child).catch(() => false)
-      return ""
+      return { text: "", exited: await stopped() }
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener("abort", onAbort)
@@ -419,11 +434,20 @@ export class Specialists {
     if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
     const found = sessionResult(await this.host.messages(child).catch(() => []))
     if (timedOut && exited && found.outcome !== "succeeded") {
-      const summary = signal?.aborted ? "" : await this.summarize(child, signal)
+      const summary = signal?.aborted ? { text: "", exited: true } : await this.summarize(child, signal)
       if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
       const stopReason = found.outcome ?? "interrupted"
-      if (summary) {
-        const text = markUnverified(summary)
+      if (!summary.exited) {
+        const failed = verdict(false, stopReason, "", true)
+        return this.settle(parent, taskID, {
+          state: failed.state,
+          error: failed.error,
+          exit_verified: false,
+          result: { stop_reason: stopReason, session_id: child, preview: "" },
+        }, `${operationID}:finish`)
+      }
+      if (summary.text) {
+        const text = markUnverified(summary.text)
         let archiveError: string | undefined
         const artifact = await this.archive(root, parent, taskID, stopReason, text, operationID, true).catch((failure) => {
           archiveError = message(failure)
