@@ -2637,6 +2637,52 @@ describe("node specialists", () => {
     expect(host.interrupted).toContain(child)
   }, 15_000)
 
+  test("a summary interrupted at grace with partial text archives a truncated summary", async () => {
+    const partial = "已核对两处计数，第三处还没看完。"
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        shortGrace(raw, 200, 40)
+        const native = raw.ctx.session.context
+        raw.ctx.session.context = async (input: { sessionID: string }) => {
+          const messages = await native(input)
+          const node = raw.created[0]
+          if (!node || input.sessionID === node) return messages
+          const summaryAt = messages.findIndex((item: any) =>
+            item?.type === "synthetic" && String(item.text ?? "").includes("不要使用任何工具"))
+          if (summaryAt < 0 || messages.some((item: any) => String(item?.content?.[0]?.text ?? "").includes(partial))) return messages
+          const next = messages.slice()
+          next.splice(summaryAt, 0, { type: "assistant", content: [{ type: "text", text: OPENING_LINE }] })
+          next.splice(summaryAt + 2, 0, { type: "assistant", content: [{ type: "text", text: partial }] })
+          return next
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，已收回部分报告",
+      child_session_id: child,
+    })
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBe(true)
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview).toContain("【未完成·未核实】")
+    expect(result.result.preview).toContain(partial)
+    expect(result.result.preview).not.toContain(OPENING_LINE)
+    expect(result.result.preview).not.toContain(AUDIT_REASONING)
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    expect(archived).toMatchObject({ stop_reason: "interrupted", incomplete: true, unverified: true })
+    expect(archived.output[0].text).toContain("【未完成·未核实】")
+    expect(archived.output[0].text).toContain(partial)
+    expect(archived.output[0].text).not.toContain(OPENING_LINE)
+    expect(host.interrupted).toContain(child)
+  }, 15_000)
+
   test("a parent abort during the summary records no usable report", async () => {
     const host = await load({ hostSetup: timeoutTranscript })
     await nodeAtWork(host)
@@ -2837,6 +2883,7 @@ describe("node specialists", () => {
 
   test("a late summary stop stays unverified when the child is still busy", async () => {
     let releaseSend = () => {}
+    let sawBusy = false
     const gate = new Promise<void>((resolve) => {
       releaseSend = () => resolve()
     })
@@ -2868,6 +2915,12 @@ describe("node specialists", () => {
           }
           return nativeInterrupt(input)
         }
+        const nativeBusy = raw.ctx.session.busy
+        raw.ctx.session.busy = (input: { sessionID: string }) => {
+          const value = nativeBusy(input)
+          if (summaryStarted && input.sessionID !== raw.created[0] && value) sawBusy = true
+          return value
+        }
       },
     })
     try {
@@ -2875,6 +2928,9 @@ describe("node specialists", () => {
       const pending = host.call("research_delegate", host.created[0]!, TASK)
       const child = await specialist(host, 1)
       const result = await pending
+      // The summary message has landed and the child is still busy. Unverified comes from that, not from a missing send.
+      expect(sawBusy).toBe(true)
+      expect(host.said(child).some((item) => String(item.text).includes("不要使用任何工具"))).toBe(true)
       expect(result).toMatchObject({
         state: "unverified",
         exit_verified: false,

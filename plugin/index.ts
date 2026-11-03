@@ -275,8 +275,14 @@ export default Plugin.define({
       },
       busy: async (sessionID) => {
         const probe = (ctx.session as { busy?: (input: { sessionID: string }) => boolean | Promise<boolean> }).busy
-        if (typeof probe === "function") return !!(await probe({ sessionID }))
-        return specialists.appearsBusy(sessionID)
+        if (typeof probe !== "function") return specialists.appearsBusy(sessionID)
+        try {
+          const result = await within(Promise.resolve(probe({ sessionID })), 2_000)
+          // A probe that never returns is not proof the session went idle.
+          return result === undefined ? true : !!result
+        } catch {
+          return true
+        }
       },
       eventsPending: (sessionID) => eventGap || eventChains.has(sessionID) || failedEvents.has(sessionID),
       recoveryMessages: async (sessionID) => {
@@ -425,7 +431,8 @@ export default Plugin.define({
       if (typeof sessionID !== "string" || !sessionID) return
       if (specialistProgressEvent(event.type)) specialists.noteProgress(sessionID)
       const type = event.type
-      if (type === "session.status") specialists.noteBusy(sessionID, event.data?.status?.type)
+      if (type === "session.deleted") specialists.noteBusy(sessionID, "deleted")
+      else if (type === "session.status") specialists.noteBusy(sessionID, event.data?.status?.type)
       else if (type === "session.idle" || type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") specialists.noteBusy(sessionID, "idle")
       else if (type === "session.execution.started") specialists.noteBusy(sessionID, "busy")
     }

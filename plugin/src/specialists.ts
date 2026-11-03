@@ -45,6 +45,8 @@ export const STOP_GRACE_MS = 60_000
  * Long enough for a reasoning reply. The summary turn does not turn reasoning down.
  */
 export const SUMMARY_GRACE_MS = 60_000
+/** One host read or busy probe after the summary grace. Not a plugin option. */
+const HOST_PROBE_MS = 2_000
 /** Silence that stops a specialist. Any new reasoning, text, or tool activity resets it. */
 export const SPECIALIST_STALL_MS = 300_000
 /** Absolute backstop for a specialist that never goes quiet. */
@@ -180,6 +182,15 @@ function messageID(item: any): string {
   return String(item?.id ?? item?.info?.id ?? "")
 }
 
+/** A host call that must return. `fallback` is used when it outlives `ms`. */
+function probeWithin<T>(work: Promise<T>, fallback: T, ms = HOST_PROBE_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms) }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 /** Text written after the summary prompt. Earlier progress lines are not part of it. */
 function textSince(messages: any[], id: string): string {
   const start = messages.findIndex((item) => messageID(item) === id)
@@ -215,7 +226,7 @@ export class Specialists {
   private researchMode: Set<string>
   /** Last streamed activity for a specialist this process is watching. Missing means it is not watched. */
   private progressAt = new Map<string, number>()
-  /** Last session.status this process observed. Absent means unknown, not busy. */
+  /** Specialist children currently busy. Idle and deleted sessions are removed. */
   private sessionBusy = new Map<string, boolean>()
 
   constructor(
@@ -241,11 +252,16 @@ export class Specialists {
     if (sessionID && this.progressAt.has(sessionID)) this.progressAt.set(sessionID, Date.now())
   }
 
-  /** Remembers idle versus busy so a late stop can refuse a verified exit. */
+  /** Remembers a busy specialist so a late stop can refuse a verified exit. */
   noteBusy(sessionID: string, status: unknown): void {
     if (!sessionID) return
-    if (status === "busy" || status === "retry") this.sessionBusy.set(sessionID, true)
-    else if (status === "idle") this.sessionBusy.set(sessionID, false)
+    if (status === "idle" || status === "deleted") {
+      this.sessionBusy.delete(sessionID)
+      return
+    }
+    if ((status === "busy" || status === "retry") && (this.tools.has(sessionID) || this.progressAt.has(sessionID))) {
+      this.sessionBusy.set(sessionID, true)
+    }
   }
 
   /** False when this process has not seen a busy status for the session. */
@@ -253,15 +269,17 @@ export class Specialists {
     return this.sessionBusy.get(sessionID) === true
   }
 
-  /** Prefer the host's own busy bit. A missing probe uses statuses this process has seen. */
-  private async childBusy(child: string): Promise<boolean> {
-    try {
-      if (this.host.busy) return (await this.host.busy(child)) === true
-      return this.appearsBusy(child)
-    } catch {
-      // A failed probe is not proof the child went idle.
-      return true
-    }
+  /** Prefer the host's own busy bit. A missing, failed, or slow probe is not proof the child went idle. */
+  private childBusy(child: string): Promise<boolean> {
+    const probe = (async (): Promise<boolean> => {
+      try {
+        if (this.host.busy) return (await this.host.busy(child)) === true
+        return this.appearsBusy(child)
+      } catch {
+        return true
+      }
+    })()
+    return probeWithin(probe, true)
   }
 
   /** None for a specialist from before a restart; its session's permission rules still hold. */
@@ -531,13 +549,8 @@ export class Specialists {
     }
     const stopped = () => this.stop(child).catch(() => false)
     // Once the delegating call has moved on, a late send must not leave a turn running.
-    // A host can already be busy when that send returns; a stop that leaves it busy is not verified.
     const stopLateSend = (send: Promise<unknown>) => {
-      const confirm = async () => {
-        const halted = await this.stop(child).catch(() => false)
-        if (!halted || await this.childBusy(child)) return
-      }
-      void send.then(() => confirm(), () => confirm()).catch(() => {})
+      void send.then(() => this.stop(child).catch(() => {}), () => this.stop(child).catch(() => {}))
     }
     try {
       const send = this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID)
@@ -566,7 +579,12 @@ export class Specialists {
       }
       const exited = await this.finished(child, controller.signal)
       if (!exited) return { text: "", exited: false }
-      if (controller.signal.aborted) return { text: "", exited: true }
+      if (controller.signal.aborted) {
+        if (fromAbort) return { text: "", exited: true }
+        // The grace already fired, so the shared deadline cannot bound this read.
+        const messages = await probeWithin(this.host.messages(child).catch(() => [] as any[]), [] as any[])
+        return { text: textSince(messages, summaryMessageID), exited: true }
+      }
       const messages = await bounded(this.host.messages(child).catch(() => []))
       if (messages === "deadline" || controller.signal.aborted) return { text: "", exited: true }
       return { text: textSince(messages, summaryMessageID), exited: true }
