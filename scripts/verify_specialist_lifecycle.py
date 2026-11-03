@@ -58,6 +58,8 @@ COVERED = (
     ("plugin/src/specialists.ts", "probeWithin", "function"),
     ("plugin/src/specialists.ts", "textSince", "function"),
     ("plugin/src/specialists.ts", "noteProgress", "method"),
+    ("plugin/src/specialists.ts", "noteBusy", "method"),
+    ("plugin/src/specialists.ts", "appearsBusy", "method"),
     ("plugin/src/specialists.ts", "childBusy", "method"),
     ("plugin/src/specialists.ts", "armLimits", "method"),
     ("plugin/src/specialists.ts", "finished", "method"),

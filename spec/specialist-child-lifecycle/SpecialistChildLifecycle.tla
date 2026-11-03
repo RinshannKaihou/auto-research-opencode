@@ -450,8 +450,13 @@ DeadReadReturns ==
 \* specialists.ts:574. childBusy true -> do not claim a verified exit.
 \* index.ts:276-286: a probe that hangs, times out, or throws is not proof of idle
 \* (within at index.ts:30-34 returns undefined; childBusy's probeWithin at
-\* specialists.ts:186-192 and 282 substitutes TRUE). A completed probe reports
-\* the running bit at this step.
+\* specialists.ts:186-192 and 282 substitutes TRUE).
+\* A completed probe is assumed to report the running bit at this step.
+\* When ctx.session.busy is missing, host.busy returns appearsBusy
+\* (specialists.ts:268-270). noteBusy (256-265) fills that bit from events,
+\* and the bit may lag the turn. This model does not represent that lag:
+\* the completed answer is still assumed to equal running. Safe is not
+\* weakened to allow a false answer while running is true.
 BusyProbeSeesRunningChild ==
   /\ pc = "BusyProbe"
   /\ running

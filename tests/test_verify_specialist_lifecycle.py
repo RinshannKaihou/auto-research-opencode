@@ -46,6 +46,28 @@ def test_text_since_returning_every_message_changes_its_body():
     assert body(broken, "textSince", "function") != body(source, "textSince", "function")
 
 
+def test_event_derived_busy_functions_are_covered():
+    covered = {(relative, name) for relative, name, _kind in verify.COVERED}
+    assert ("plugin/src/specialists.ts", "noteBusy") in covered
+    assert ("plugin/src/specialists.ts", "appearsBusy") in covered
+
+
+def test_appears_busy_always_false_changes_its_body():
+    source = SPECIALISTS.read_text(encoding="utf-8")
+    original = "return this.sessionBusy.get(sessionID) === true"
+    assert source.count(original) == 1
+    broken = source.replace(original, "return false", 1)
+    assert body(broken, "appearsBusy", "method") != body(source, "appearsBusy", "method")
+
+
+def test_note_busy_that_never_sets_busy_changes_its_body():
+    source = SPECIALISTS.read_text(encoding="utf-8")
+    original = "this.sessionBusy.set(sessionID, true)"
+    assert source.count(original) == 1
+    broken = source.replace(original, "void sessionID", 1)
+    assert body(broken, "noteBusy", "method") != body(source, "noteBusy", "method")
+
+
 def test_child_busy_always_false_changes_its_body():
     source = SPECIALISTS.read_text(encoding="utf-8")
     original = "return probeWithin(probe, true)"

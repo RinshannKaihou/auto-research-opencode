@@ -1,6 +1,6 @@
 ---
 name: verify-specialist-child-lifecycle
-description: Use when changing specialist child stop, stall, summary, busy probe, textSince, or exit_verified recording in plugin/src/specialists.ts or the specialist event wiring in plugin/index.ts. Use when a change might record a running specialist as exited, or archive text from before the summary prompt.
+description: Use when changing specialist child stop, stall, summary, busy probe, textSince, event-derived busy state, or exit_verified recording in plugin/src/specialists.ts or the specialist event wiring in plugin/index.ts. Use when a change might record a running specialist as exited, or archive text from before the summary prompt.
 ---
 
 # Verify specialist child lifecycle
@@ -72,7 +72,7 @@ A pass prints `Checked invariant Safe` for the code on disk. If that sentence is
 
 Sync commit: `fb1b19b9d33723f9a35cb87f23a2e198595a060b`
 
-Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. This verification does not change those files. The script hashes each function's signature and body (not the comment above it) and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
+Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. The product files are unchanged, so the sync commit stays on this product snapshot. This verification does not change those files. The script hashes each function's signature and body (not the comment above it) and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
 
 | Code | What the model includes |
 |---|---|
@@ -80,17 +80,19 @@ Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and
 | `textSince` `195-199` | Text after the summary id only. The `textSinceAll` variant returns `sessionResult` of every message. |
 | `probeWithin` `186-192` | A host call that must return; the fallback is used when it outlives the bound. |
 | `Specialists.noteProgress` `251-253`, wired from `observeSpecialist` `plugin/index.ts:429-438` | Progress resets the stall window. |
+| `Specialists.noteBusy` `256-265`, called from `observeSpecialist` `434-437` | Writes the event-derived busy bit. Idle and deleted clear it. `busy` or `retry` sets it only when this process already has the session in `tools` or `progressAt`. |
+| `Specialists.appearsBusy` `268-270` | The bit `noteBusy` stored. False when this process has not stored a busy status. |
 | `Specialists.armLimits` `456-488` | Stall only after a quiet window. Cap fires even when progress continues. A parent abort already aborted the work controller, so the current cap does not mark. |
 | `Specialists.finished` `491-502` | Race of `host.wait` against the abort. Idle returns true. Abort calls `stop` with the same wait. |
 | `Specialists.stop` `504-514` | Interrupt, then race the wait against the grace. Grace means not verified. |
 | `Specialists.finishChild` `600-676` | Limit plus a non-success outcome calls `summarize` unless the parent already aborted. Otherwise `exit_verified` is the `finished`/`stop` result, and an unverified exit does not archive the opening line. A non-empty `summary.text` is archived. |
 | `Specialists.summarize` `521-597` | Send versus summary grace. Unsettled send: stop, then the message read, then the busy check at `574`. Settled send: `finished` on the summary controller, then `textSince` at `586` and `590`. A rejected send calls `stop` and cannot land afterwards. |
-| `Specialists.childBusy` `273-283` | Hang, timeout, or throw counts as busy. |
-| `plugin/index.ts:276-286` `host.busy` and `within` `30-34` | A probe that does not return is not proof of idle (`undefined` becomes true). |
+| `Specialists.childBusy` `273-283` | Calls `host.busy` when that method exists, otherwise `appearsBusy`. Hang, timeout, or throw counts as busy. |
+| `plugin/index.ts:276-286` `host.busy` and `within` `30-34` | Calls `ctx.session.busy` when that probe is a function. A probe that does not return is not proof of idle (`undefined` becomes true). When `ctx.session.busy` is missing, this method returns `appearsBusy`. |
 | `Specialists.settle` `706-711` | The ledger write of `exit_verified`. |
 | pre-#28 `plugin/src/specialists.ts` at `8a2c6c9:252-255`, `294-318`, `351-373` | Absolute timer only. It sets `timedOut` and aborts with no `signal.aborted` check, so a parent abort does not stop it. `sessionResult` text (`113-126`) is archived, including the opening line, with `exit_verified` from `stop`/`finished`. No summary and no busy check. |
 
-`noteBusy` (`plugin/src/specialists.ts:256-265`, wired from `observeSpecialist`) is not a separate state. On this host `childBusy` calls `host.busy`, which reads `session.busy`, and a hung probe does not fall back to the event map.
+`noteBusy` and `appearsBusy` are fingerprinted above. They are not a separate TLC state. `childBusy` calls `host.busy` when that method is present. A hang, timeout, or throw inside `host.busy` returns true and leaves the event map unread. When `ctx.session.busy` is missing, `host.busy` returns `appearsBusy`. Event-derived busy state may lag the turn. The model assumes a completed probe reports `running` anyway, including when the answer is that event-derived bit. That is a modelling assumption. `Safe` is unchanged.
 
 ## Bounds and assumptions
 
@@ -98,7 +100,7 @@ Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and
 - Time is event order, not milliseconds. Stall, cap, summary grace, stop grace, and the 2-second probe are competing events.
 - `host.wait` resolves only when `running` is false (the test host: wait completes when the session is not busy). If the abort and the idle resolution are both pending, either may win.
 - Accepting the summary message and starting its turn are one host step. The plugin promise can stay pending after that. A promise that has resolved or rejected does not land later.
-- A completed busy probe reports `running` at that step. A hang, timeout, or throw counts as busy.
+- A completed busy probe is assumed to report `running` at that step. A hang, timeout, or throw counts as busy and leaves the event map unread. When `ctx.session.busy` is not a function, the answer is `appearsBusy`. That bit is event-derived and may lag the turn: it stays false until `noteBusy` records `busy` or `retry` for a session already in `tools` or `progressAt`, and it stays true until idle or deleted is recorded. The model does not include that lag. Treating the event-derived answer as `running` is a modelling assumption. `Safe` still forbids a recorded verified exit while `running` is true. It is not weakened to allow a completed probe to return false while the turn is running.
 - Turn outcomes are `succeeded` or `interrupted`. Any other non-success outcome takes the same `summarize` branch as `interrupted`.
 - `current()` stays true. A false `current()` returns without `specialist_finish`, so it cannot record `exit_verified: true`.
 - The parent abort, the stall, the cap, the summary grace, and `stop`'s grace are the aborts in the model.
@@ -114,8 +116,9 @@ Checked state space on the sync commit, current variant: 902 distinct states, de
 - `recover`, `recoverWarm`, `watchRecovered`, and `interruptUnverified`.
 - A parent abort that is not a stall or a cap archiving the turn's own text. Property 2 is only the stall/cap archive.
 - A succeeded turn that is also past the cap keeping its own report text. That text is the turn's report, not a timeout summary.
-- `host.busy` missing, so `childBusy` would read `appearsBusy` from events. `plugin/index.ts` always installs `host.busy`.
-- A busy probe that returns false while the turn is running. `childBusy` hard-coded to return false, an early `return` before the busy check, and dropping the `await` on `stopped()` are not separate TLC variants. They change a fingerprinted body, so the command exits 3. They become a counterexample only after the model is updated to describe them.
+- A busy probe that returns false while the turn is running. `childBusy` hard-coded to return false, `appearsBusy` hard-coded to return false, `noteBusy` never storing busy, an early `return` before the busy check, and dropping the `await` on `stopped()` are not separate TLC variants. They change a fingerprinted body, so the command exits 3. They become a counterexample only after the model is updated to describe them.
+- `queueEvent` (`plugin/index.ts:83-129`) dropping `observeSpecialist?.(event)`. The fingerprint covers `observeSpecialist`'s body, not that call. Without it, `noteBusy` is never fed and `appearsBusy` stays false. The model still assumes a completed probe reports `running`.
+- The `sessionBusy` field initializer at `plugin/src/specialists.ts:230`. The fingerprint covers `noteBusy` and `appearsBusy`, not that declaration.
 - An interrupted summary turn that still wrote assistant text. The model treats that turn as adding none, so `textSinceAll` archives the opening line.
 - The comment above a fingerprinted function, and any edit outside the fingerprinted functions. Those are not drift and are not checked.
 - Tool permissions, the ledger's other fields, and real OpenCode process exit beyond `running`.
