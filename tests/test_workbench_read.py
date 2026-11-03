@@ -21,7 +21,7 @@ def initialized(tmp_path):
 
 def service_call(service, method, operation, **fields):
     result = service.handle({"transport_id": operation, "operation_id": operation,
-                             "host_id": "host", "session_id": "main", "method": method, **fields})
+                             "host_id": "host", "session_id": "ses_main", "method": method, **fields})
     assert result["ok"], result
     return result["value"]
 

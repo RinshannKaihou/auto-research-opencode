@@ -10,7 +10,7 @@ from auto_research.workflow_store import migrate_schema3
 from auto_research.errors import ConflictError, ValidationError, NotFoundError
 
 
-def request(service, method, sid="main", op=None, **fields):
+def request(service, method, sid="ses_main", op=None, **fields):
     return service.handle(
         {
             "transport_id": "transport",
@@ -44,9 +44,9 @@ def test_schema2_upgrade_backup_roles_and_idempotent_totals(tmp_path):
             completeness="actual",
             op=f"finish{i}",
         )
-    request(service, "open", sid="branch", root=str(root))
-    request(service, "focus", sid="branch", mode="auto", role="branch")
-    request(service, "open", sid="unknown", root=str(root))
+    request(service, "open", sid="ses_branch", root=str(root))
+    request(service, "focus", sid="ses_branch", mode="auto", role="branch")
+    request(service, "open", sid="ses_unknown", root=str(root))
     before = store.query()
     with sqlite3.connect(store.db_path) as db:
         for name in [
@@ -61,12 +61,12 @@ def test_schema2_upgrade_backup_roles_and_idempotent_totals(tmp_path):
             db.execute("DROP TABLE " + name)
         db.execute("PRAGMA user_version=2")
     upgraded = NativeStore(root)
-    state = upgraded.query("host", "main")
+    state = upgraded.query("host", "ses_main")
     assert state["schema_version"] == SCHEMA_VERSION
     assert {s["session_id"]: s["role"] for s in state["workflow"]["sessions"]} == {
-        "main": "main",
-        "branch": "exploration",
-        "unknown": "legacy",
+        "ses_main": "main",
+        "ses_branch": "exploration",
+        "ses_unknown": "legacy",
     }
     assert state["workflow"]["session"]["goal_id"] == "ours"
     assert state["workflow"]["run"]["state"] == "cold"
@@ -81,7 +81,7 @@ def test_schema2_upgrade_backup_roles_and_idempotent_totals(tmp_path):
 def test_roles_guards_and_queue_state_machine(tmp_path):
     service, root, store = fixture(tmp_path)
 
-    def wf(action, fields={}, op=None, sid="main"):
+    def wf(action, fields={}, op=None, sid="ses_main"):
         return request(
             service,
             "workflow",
@@ -92,7 +92,7 @@ def test_roles_guards_and_queue_state_machine(tmp_path):
         )
 
     with pytest.raises(ValidationError):
-        wf("register", {"role": "alien"}, sid="main")
+        wf("register", {"role": "alien"}, sid="ses_main")
     with pytest.raises(ValidationError):
         wf("run", {"state": "alien"})
     with pytest.raises(ValidationError):
@@ -141,7 +141,7 @@ def test_roles_guards_and_queue_state_machine(tmp_path):
     wf("session", {"waiting": [task["task_id"]], "pause_reason": "wait"})
     request(service, "usage_begin", source_key="interrupted")
     wf("cold")
-    state = store.query("host", "main")
+    state = store.query("host", "ses_main")
     assert state["workflow"]["session"]["pause_reason"] == "cold"
     assert state["usage"]["missing"] == 1
     wf("run", {"state": "stopping"})

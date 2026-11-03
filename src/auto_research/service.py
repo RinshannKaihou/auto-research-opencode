@@ -225,8 +225,10 @@ class NativeService:
             raise ValueError("host_id is required")
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id is required")
-        if host_id == CODEX and not valid_session_id(host_id, session_id):
-            raise ValueError("session_id is not a valid codex session ID")
+        if not valid_session_id(host_id, session_id):
+            if host_id == CODEX:
+                raise ValueError("session_id is not a valid codex session ID")
+            raise ValueError("session_id is not a valid host session ID")
         return host_id, session_id
 
     @staticmethod
@@ -618,7 +620,7 @@ class NativeService:
                 + " Read RESEARCH_CONTEXT.json for the full frozen material index and background.",
             }
         value = {
-            "session_id": "discussion-" + digest,
+            "session_id": "ses_discussion_" + digest,
             "workspace": str(workspace),
             "context": context,
             "existing": False,
@@ -805,6 +807,10 @@ class NativeService:
             child_session_id = request.get("child_session_id")
             if not isinstance(child_session_id, str) or not child_session_id:
                 raise ValueError("child_session_id is required")
+            if not valid_session_id(host_id, child_session_id):
+                if host_id == CODEX:
+                    raise ValueError("child_session_id is not a valid codex session ID")
+                raise ValueError("child_session_id is not a valid host session ID")
             operation_id = self._operation(request)
             project_id = store.control_state()["project"]["project_id"]
             self.registry.register(project_id, root, host_id, child_session_id)

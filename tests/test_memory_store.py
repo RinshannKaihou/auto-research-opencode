@@ -314,7 +314,7 @@ def test_schema3_upgrade_is_backed_up_and_does_not_arm_execution(tmp_path):
 def test_specialist_is_registered_read_only_and_usage_freezes_to_parent_attempt(tmp_path):
     service = NativeService(tmp_path / "registry.sqlite3")
 
-    def call(method, session="main", operation=None, **fields):
+    def call(method, session="ses_main", operation=None, **fields):
         return service.handle(
             {
                 "transport_id": operation or method,
@@ -362,22 +362,22 @@ def test_specialist_is_registered_read_only_and_usage_freezes_to_parent_attempt(
         "specialist_bind_child",
         operation="bind",
         task_id=task["task_id"],
-        child_session_id="child",
+        child_session_id="ses_child",
         node_id=node["node_id"],
         cwd=str(root),
     )
-    context = call("memory_context", session="child", operation="child-context")
+    context = call("memory_context", session="ses_child", operation="child-context")
     assert "research-read-only" in context["text"]
     with pytest.raises(ValueError, match="cannot modify"):
         call(
             "note",
-            session="child",
+            session="ses_child",
             operation="child-write",
             body="illegal",
             model_call=True,
         )
     observation = call(
-        "usage_begin", session="child", operation="child-usage", source_key="child-llm"
+        "usage_begin", session="ses_child", operation="child-usage", source_key="child-llm"
     )
     assert observation["attempt_id"] == attempt["attempt_id"]
     assert observation["node_id"] == node["node_id"]
@@ -407,7 +407,7 @@ def test_guidance_is_versioned_and_selected_into_stable_context(tmp_path):
                 "transport_id": operation,
                 "operation_id": operation,
                 "host_id": "host",
-                "session_id": "main",
+                "session_id": "ses_main",
                 "method": method,
                 **fields,
             }

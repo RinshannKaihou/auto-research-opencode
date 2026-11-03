@@ -34,7 +34,7 @@ def test_sixty_nodes_keep_input_lesson_and_long_task(tmp_path):
         "target",
         inputs=[f"pub/{pub['publication_id']}"],
     )
-    store.workflow("host", "main", "run", {"state": "running"}, "run")
+    store.workflow("host", "ses_main", "run", {"state": "running"}, "run")
     task = store.workflow("host", "main", "task", {"node_id": target["node_id"]}, "dispatch")
     store.associate("host", task["session_id"], "assoc-child")
     store.workflow(
@@ -220,16 +220,16 @@ def test_task_recovery_receipts_and_atomic_attempt_binding(tmp_path):
 def test_redispatch_of_failed_node_keeps_one_task_identity_then_explicit_retry(tmp_path):
     service, root, store = fixture(tmp_path)
     node = store.propose("Q", "now", "plan", "node")
-    store.workflow("host", "main", "run", {"state": "running"}, "run")
-    first = store.workflow("host", "main", "task", {"node_id": node["node_id"]}, "first")
+    store.workflow("host", "ses_main", "run", {"state": "running"}, "run")
+    first = store.workflow("host", "ses_main", "task", {"node_id": node["node_id"]}, "first")
     store.workflow(
-        "host", "main", "task_state", {"task_id": first["task_id"], "state": "failed"}, "fail"
+        "host", "ses_main", "task_state", {"task_id": first["task_id"], "state": "failed"}, "fail"
     )
-    second = store.workflow("host", "main", "task", {"node_id": node["node_id"]}, "second")
+    second = store.workflow("host", "ses_main", "task", {"node_id": node["node_id"]}, "second")
     assert second["task_id"] == first["task_id"]
     assert second["session_id"] == first["session_id"]
     assert second["state"] == "failed"
     store.workflow(
-        "host", "main", "task_retry", {"task_id": first["task_id"]}, "retry"
+        "host", "ses_main", "task_retry", {"task_id": first["task_id"]}, "retry"
     )
     assert store.reference_query(first["task_id"])["value"]["state"] == "starting"

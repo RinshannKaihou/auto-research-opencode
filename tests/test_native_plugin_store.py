@@ -89,7 +89,7 @@ def request(service, method, *, operation="operation", **fields):
             "transport_id": operation,
             "operation_id": operation,
             "host_id": "host",
-            "session_id": "session",
+            "session_id": "ses_session",
             "method": method,
             **fields,
         }
@@ -216,11 +216,12 @@ def test_branch_materializes_each_fixed_publication_version(tmp_path):
 
 def test_snapshot_rejects_control_and_likely_credential_paths(tmp_path):
     store = initialized(tmp_path)
-    store.focus("host", "session", None, "planner", "manual", "focus")
+    store.associate("host", "ses_session", "associate-service")
+    store.focus("host", "ses_session", None, "planner", "manual", "focus")
     (tmp_path / ".env").write_text("TOKEN=synthetic")
     service = NativeService(tmp_path / "registry.sqlite3")
-    project_id = store.query("host", "session")["project"]["project_id"]
-    service.registry.register(project_id, tmp_path, "host", "session")
+    project_id = store.query("host", "ses_session")["project"]["project_id"]
+    service.registry.register(project_id, tmp_path, "host", "ses_session")
     value = request(service, "snapshot", paths=[".env", ".research"], operation="unsafe")
     assert value["complete"] is False
     assert all(item["status"] == "incomplete" for item in value["manifest"])
@@ -423,7 +424,7 @@ def test_native_service_control_projection_and_registry_conflicts(tmp_path):
                 "transport_id": "removed-budget",
                 "operation_id": "removed-budget",
                 "host_id": "host",
-                "session_id": "session",
+                "session_id": "ses_session",
                 "method": "budget",
                 "budget": 20,
             }
@@ -497,18 +498,18 @@ def test_native_service_control_projection_and_registry_conflicts(tmp_path):
         "transport_id": "child-open",
         "operation_id": "child-open",
         "host_id": "host",
-        "session_id": "child",
+        "session_id": "ses_child",
         "method": "open",
         "root": str(root),
     }
     assert service.handle(child_identity)["ok"] is True
-    child = NativeStore(root).focus("host", "child", None, "handoff", "manual", "child-focus")
+    child = NativeStore(root).focus("host", "ses_child", None, "handoff", "manual", "child-focus")
     recorded = service.handle(
         {
             "transport_id": "record",
             "operation_id": "record",
             "host_id": "host",
-            "session_id": "child",
+            "session_id": "ses_child",
             "method": "record_restore",
             "snapshot_id": snapshot["snapshot_id"],
             "source_attempt_id": snapshot["attempt_id"],
@@ -516,13 +517,13 @@ def test_native_service_control_projection_and_registry_conflicts(tmp_path):
         }
     )["value"]
     assert recorded["target_attempt_id"] == child["attempt_id"]
-    NativeStore(root).finish("host", "child", "finished", {}, "child-finish")
+    NativeStore(root).finish("host", "ses_child", "finished", {}, "child-finish")
     assert service.handle(
         {
             "transport_id": "detach",
             "operation_id": "detach",
             "host_id": "host",
-            "session_id": "child",
+            "session_id": "ses_child",
             "method": "detach",
         }
     )["value"]["ended_at"]
@@ -535,7 +536,7 @@ def test_native_service_control_projection_and_registry_conflicts(tmp_path):
                 "transport_id": "other",
                 "operation_id": "other",
                 "host_id": "host",
-                "session_id": "session",
+                "session_id": "ses_session",
                 "method": "open",
                 "root": str(other),
                 "goal": "Other",

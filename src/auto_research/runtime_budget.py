@@ -744,6 +744,7 @@ class RuntimeStore:
                                    (task_id,)).fetchone()[0] + 1
             reuse = bool(db.execute("SELECT 1 FROM workflow_sessions WHERE session_id=? AND detached=0 AND role='node_core'",
                                     (task['session_id'],)).fetchone())
+            # Codex child thread IDs come from thread/start; host-aware minting is P1.8.
             child = task['session_id'] if reuse else 'ses_research_' + uuid4().hex
             intent_id = f'node-launch:{task_id}:{launch_no}'
             details = dict(host=host, parent=session, task_id=task_id, node_id=task['node_id'],

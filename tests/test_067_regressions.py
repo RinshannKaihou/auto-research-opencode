@@ -1106,9 +1106,9 @@ def test_ce13a_supersedes_may_not_be_a_self_loop(tmp_path):
         )
 
 
-def context_section(instance, name):
+def context_section(instance, name, sid="main"):
     """The coordinator reads rendered text, so assert against what it sees."""
-    text = instance.context_view("host", "main")["text"]
+    text = instance.context_view("host", sid)["text"]
     marker = f"## {name}\n"
     if marker not in text:
         return None
@@ -1622,7 +1622,7 @@ from auto_research.errors import NotFoundError
 from auto_research.service import NativeService
 
 
-def s14_call(service, method, operation, session="main", **fields):
+def s14_call(service, method, operation, session="ses_main", **fields):
     return service.handle(dict(transport_id=operation, operation_id=operation,
         host_id="host", session_id=session, method=method, **fields))["value"]
 
@@ -1728,13 +1728,13 @@ def s14_reader(s14, ref):
     task = s14_call(service, "specialist_create", "reader-task",
                      fields={"purpose": "review", "label": "fixture", "prompt": "read", "inputs": []})
     s14_call(service, "specialist_bind_child", "reader-bind",
-              task_id=task["task_id"], child_session_id="expert")
+              task_id=task["task_id"], child_session_id="ses_expert")
     # Model historical declarations / references whose object later disappears.
     # Deliberately bypass today's registration so read validation is independently tested.
     with instance._connection() as db:
         db.execute("UPDATE nodes SET inputs=? WHERE node_id=?", (json.dumps([ref]), node["node_id"]))
         db.execute("UPDATE specialist_tasks SET inputs=? WHERE task_id=?", (json.dumps([ref]), task["task_id"]))
-    return node["node_id"], lambda: s14_call(service, "specialist_read_input", "read", session="expert", input_id="input-1")
+    return node["node_id"], lambda: s14_call(service, "specialist_read_input", "read", session="ses_expert", input_id="input-1")
 
 
 def test_ce16_five_steps_and_read_boundaries(s14, monkeypatch):
@@ -2081,7 +2081,7 @@ def s7_record(service, op, **fields):
 @pytest.mark.parametrize('case', ['turn', 'bound_turn', 'no_turn', 'forged', 'self_report', 'revise', 'relate', 'publish', 'propose', 'relations', 'grounded_in'])
 def test_ce19_asserted_at(s14, case):
     service, root, instance, _ = s14
-    expected = {'host_id': 'host', 'session_id': 'main', 'turn': 3, 'operation_id': 'ce19'}
+    expected = {'host_id': 'host', 'session_id': 'ses_main', 'turn': 3, 'operation_id': 'ce19'}
     if case == 'bound_turn':
         s14_call(service, 'bind_turn', 'bind5', turn=5)
         value = s7_record(service, 'ce19')
@@ -2102,13 +2102,13 @@ def test_ce19_asserted_at(s14, case):
     elif case == 'revise':
         old = s7_record(service, 'old')
         old_source = old['asserted_at']
-        instance.associate('host', 'other', 'associate-other')
+        instance.associate('host', 'ses_other', 'associate-other')
         # Bind registry routing as well, without registering other as main.
-        service.registry.register(instance.control_state()['project']['project_id'], root, 'host', 'other')
-        value = s14_call(service, 'memory_write', 'ce19', session='other', turn=3,
+        service.registry.register(instance.control_state()['project']['project_id'], root, 'host', 'ses_other')
+        value = s14_call(service, 'memory_write', 'ce19', session='ses_other', turn=3,
             action='revise', fields={'ref': old['ref'], 'changes': {'statement': 'new'},
             'reason': 'edit', 'affected_scope_mode': 'none', 'change_kind': 'reword'})
-        expected['session_id'] = 'other'
+        expected['session_id'] = 'ses_other'
         assert instance.reference_query(old['ref'])['value']['asserted_at'] == old_source
     elif case == 'relate':
         a, b = s7_record(service, 'a'), s7_record(service, 'b')
@@ -2148,12 +2148,12 @@ def test_ce19_asserted_at(s14, case):
 @pytest.mark.parametrize('case', ['linked', 'unlinked', 'omitted', 'invalid', 'persistent'])
 def test_ce20_execution_refs(s14, case):
     service, root, instance, archived = s14
-    linked = ['session:main','attempt:A-001','pub/P-001#report','S-001#REPORT.md','event:1']
+    linked = ['session:ses_main','attempt:A-001','pub/P-001#report','S-001#REPORT.md','event:1']
     unlinked = ['session:ghost','attempt:A-999','pub/P-001#note','tool_call:abc','S-001#missing.txt','S-001#out/../x']
     if case == 'invalid':
         before = s14_counts(instance)
         with pytest.raises(ValidationError):
-            s7_record(service, 'execution', execution_refs='session:main')
+            s7_record(service, 'execution', execution_refs='session:ses_main')
         assert s14_counts(instance) == before
         return
     refs = unlinked if case == 'unlinked' else linked
@@ -2284,7 +2284,7 @@ def test_ce19_offline_new_writes_have_tool_identity(tmp_path):
 
 def test_ce20_revise_omission_does_not_inherit_execution(s14):
     service, _, instance, _ = s14
-    refs = ['session:main', 'attempt:A-001', 'pub/P-001#report', 'S-001#REPORT.md', 'event:1']
+    refs = ['session:ses_main', 'attempt:A-001', 'pub/P-001#report', 'S-001#REPORT.md', 'event:1']
     old = s7_record(service, 'before-edit', execution_refs=refs)
     expected = [dict(ref=ref, status='linked', reason=None) for ref in refs]
     value = s14_call(service, 'memory_write', 'omit-execution', action='revise', fields={
@@ -2373,7 +2373,7 @@ def test_ce21_three_reads(s14,phase):
     if b2:absent.append(b2)
     if phase!=2:absent.append('pub/P-002')
     assert not any(item['target'] in absent for item in page['items'])
-    context=context_section(instance,'structure_hints')
+    context=context_section(instance,'structure_hints',sid='ses_main')
     assert context['items']==expected and context['total']==len(expected)
     assert ce21_counts(instance)==before
 
@@ -2384,7 +2384,7 @@ def test_ce21_paging_selects_and_sorts_before_slice(s14,entry):
     refs=[s7_record(service,f'hint-{i}',kind='claim',statement='plain statement',evidence_refs=['S-001'])['ref'] for i in range(11)]
     before=ce21_counts(instance)
     if entry=='context':
-        page=context_section(instance,'structure_hints')
+        page=context_section(instance,'structure_hints',sid='ses_main')
     elif entry=='summary':
         page=s14_call(service,'query','s8-summary')['structure_hints']
     else:

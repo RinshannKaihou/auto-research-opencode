@@ -94,7 +94,7 @@ finally {probe.close();}
     expect(sourceResult.files).toBe(1)
     const registry = join(temporary, "registry.sqlite3")
     const request = (id: string, method: string, fields: Record<string, unknown> = {}) => ({
-      transport_id: id, operation_id: id, host_id: "opencode", session_id: "main", method, ...fields,
+      transport_id: id, operation_id: id, host_id: "opencode", session_id: "ses_main", method, ...fields,
     })
     const run = (requests: object[]) => {
       const process = spawnSync(python, ["-S", "-m", "auto_research.service", "--registry", registry], {
@@ -168,7 +168,7 @@ service=NativeService(registry)
 def call(method, **fields):
     global count
     count+=1
-    req={'transport_id':str(count),'operation_id':str(count),'host_id':'opencode','session_id':'main','method':method,**fields}
+    req={'transport_id':str(count),'operation_id':str(count),'host_id':'opencode','session_id':'ses_main','method':method,**fields}
     result=service.handle(req)
     assert result['ok'], result
     return result['value']

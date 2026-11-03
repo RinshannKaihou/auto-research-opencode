@@ -174,8 +174,8 @@ def test_detach_succeeds_after_closing_the_open_segment(tmp_path):
 
 def test_takeover_refuses_an_active_project(tmp_path):
     host = Host(tmp_path, host_id="local")
-    host.open(session="dsh-main")
-    host.call("workflow", session="dsh-main", action="run", fields={"state": "running"})
+    host.open(session="ses_dsh_main")
+    host.call("workflow", session="ses_dsh_main", action="run", fields={"state": "running"})
     message = host.error(
         "takeover_main", session="ses_new", host="opencode", root=str(host.root)
     )
@@ -190,8 +190,8 @@ def test_takeover_refuses_an_active_project(tmp_path):
 
 def test_takeover_retires_the_previous_main_one_way(tmp_path):
     host = Host(tmp_path, host_id="local")
-    host.open(session="dsh-main")
-    host.call("note", session="dsh-main", model_call=True, body="old work", kind="progress")
+    host.open(session="ses_dsh_main")
+    host.call("note", session="ses_dsh_main", model_call=True, body="old work", kind="progress")
     state = host.call(
         "takeover_main", session="ses_new", host="opencode", root=str(host.root),
         cwd=str(host.root),
@@ -203,11 +203,11 @@ def test_takeover_retires_the_previous_main_one_way(tmp_path):
         old = db.execute("SELECT * FROM attempts WHERE attempt_id='A-001'").fetchone()
         assert old["state"] == "stopped" and old["ended_at"]
         row = db.execute(
-            "SELECT detached,pause_reason FROM workflow_sessions WHERE session_id='dsh-main'"
+            "SELECT detached,pause_reason FROM workflow_sessions WHERE session_id='ses_dsh_main'"
         ).fetchone()
         assert (row["detached"], row["pause_reason"]) == (1, "detached")
     assert "not associated" in host.error(
-        "note", session="dsh-main", model_call=True, body="late write", kind="progress"
+        "note", session="ses_dsh_main", model_call=True, body="late write", kind="progress"
     )
     guidance = tmp_path / "guidance.md"
     guidance.write_text("# Method\n")
@@ -234,7 +234,7 @@ def test_task_session_binds_the_host_minted_session_before_registration(tmp_path
     host.call("workflow", action="run", fields={"state": "running"})
     host.call("propose", model_call=True, question="Q", why_now="w", plan="p", root_reason="r")
     task = host.call("workflow", action="task", fields={"node_id": "X-001"})
-    assert task["session_id"].startswith("research-")
+    assert task["session_id"].startswith("ses_research_")
     assert "not associated" in host.error(
         "workflow", session="ses_other", action="task_session",
         fields={"task_id": task["task_id"], "session_id": "ses_node"},

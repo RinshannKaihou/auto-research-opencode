@@ -7,7 +7,7 @@ CODEX = 'codex'
 MAX_ID = 256
 CODEX_CLIENT_PREFIX = 'ari-cm-'
 _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
-_CODEX_CLIENT_MESSAGE = re.compile(r'ari-cm-[0-9a-f_-]+')
+_CODEX_CLIENT_MESSAGE = re.compile(r'ari-cm-[0-9a-z_-]+')
 
 
 def valid_session_id(host, value):

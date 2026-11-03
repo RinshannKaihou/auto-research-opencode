@@ -6,7 +6,7 @@ from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research.service import NativeService
 
 
-def call(service, method, operation, session='main', **fields):
+def call(service, method, operation, session='ses_main', **fields):
     return service.handle(dict(transport_id=operation, operation_id=operation, host_id='host', session_id=session, method=method, **fields))['value']
 
 
@@ -19,8 +19,8 @@ def setup(tmp_path):
     (root/'truth-key.txt').write_text('SECRET_TRUTH_CANARY')
     pub = call(service,'publish','pub',status='partial',summary='SECRET_PUBLICATION_CANARY',items=[{'item_id':'sample','source_path':'sample.txt'},{'item_id':'truth','source_path':'truth-key.txt'}])
     node=call(service,'propose','propose',question='SECRET_NODE_CANARY',why_now='now',plan='SECRET_PLAN_CANARY',root_reason='independent')
-    call(service,'open','core-open',session='core',root=str(root),session_role='node_core',node_id=node['node_id'])
-    call(service,'focus','core-focus',session='core',node_id=node['node_id'],role='core',mode='auto')
+    call(service,'open','core-open',session='ses_core',root=str(root),session_role='node_core',node_id=node['node_id'])
+    call(service,'focus','core-focus',session='ses_core',node_id=node['node_id'],role='core',mode='auto')
     ref=pub['refs'][0]
     return service,root,node,ref
 
@@ -28,23 +28,23 @@ def setup(tmp_path):
 def test_blind_context_and_material_access(tmp_path):
     service,root,node,ref=setup(tmp_path)
     fields=dict(purpose='domain',label='review',prompt='Classify supplied samples',inputs=[ref],context_mode='blind')
-    task=call(service,'specialist_create','create',session='core',fields=fields)
-    call(service,'specialist_bind_child','bind',session='core',task_id=task['task_id'],child_session_id='expert')
-    context=call(service,'memory_context','context',session='expert')['text']
+    task=call(service,'specialist_create','create',session='ses_core',fields=fields)
+    call(service,'specialist_bind_child','bind',session='ses_core',task_id=task['task_id'],child_session_id='ses_expert')
+    context=call(service,'memory_context','context',session='ses_expert')['text']
     assert 'input-1' in context
     assert 'SECRET_' not in context and ref not in context and 'sample.txt' not in context
     pieces=[];offset=0
     while offset is not None:
-        page=call(service,'specialist_read_input',f'read-{offset}',session='expert',input_id='input-1',offset=offset,limit=123,model_call=True)
+        page=call(service,'specialist_read_input',f'read-{offset}',session='ses_expert',input_id='input-1',offset=offset,limit=123,model_call=True)
         pieces.append(page['text']);offset=page['next_offset']
         assert set(page)=={'input_id','text','next_offset'}
     assert ''.join(pieces)==(root/'sample.txt').read_text()
     with pytest.raises(ValueError,match='not assigned'):
-        call(service,'specialist_read_input','forbidden',session='expert',input_id='input-2',model_call=True)
+        call(service,'specialist_read_input','forbidden',session='ses_expert',input_id='input-2',model_call=True)
     with pytest.raises(ValueError,match='Blind reviewers'):
-        call(service,'query','query',session='expert',ref=node['node_id'],model_call=True)
+        call(service,'query','query',session='ses_expert',ref=node['node_id'],model_call=True)
     with pytest.raises(ValueError,match='cannot modify'):
-        call(service,'note','note',session='expert',body='no',model_call=True)
+        call(service,'note','note',session='ses_expert',body='no',model_call=True)
 
 
 def test_identity_is_bound_and_main_only_consolidates(tmp_path):
@@ -53,13 +53,13 @@ def test_identity_is_bound_and_main_only_consolidates(tmp_path):
     with pytest.raises(ValueError,match='Main coordinates'):
         call(service,'specialist_create','main-domain',fields=fields)
     with pytest.raises(ValueError,match='match'):
-        call(service,'specialist_create','wrong-node',session='core',fields={**fields,'node_id':'X-other'})
-    task=call(service,'specialist_create','core-domain',session='core',fields=fields)
+        call(service,'specialist_create','wrong-node',session='ses_core',fields={**fields,'node_id':'X-other'})
+    task=call(service,'specialist_create','core-domain',session='ses_core',fields=fields)
     assert task['node_id']==node['node_id'] and task['attempt_id']
     review=call(service,'specialist_create','project-review',fields={**fields,'purpose':'review'})
     assert review['node_id'] is None
     with pytest.raises(ValueError,match='frozen'):
-        call(service,'specialist_create','bad-blind',session='core',fields={**fields,'context_mode':'blind','inputs':[node['question_ref']]})
+        call(service,'specialist_create','bad-blind',session='ses_core',fields={**fields,'context_mode':'blind','inputs':[node['question_ref']]})
 
 
 def test_schema6_migration_preserves_results_and_defaults(tmp_path):

@@ -7,7 +7,7 @@ import pytest
 from auto_research.service import NativeService
 
 
-def call(service, method, operation, session="main", **fields):
+def call(service, method, operation, session="ses_main", **fields):
     return service.handle(
         dict(
             transport_id=operation,

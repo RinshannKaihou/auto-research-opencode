@@ -19,7 +19,7 @@ def make_store(tmp_path):
     return store
 
 
-def call(service, method, operation, session="main", **fields):
+def call(service, method, operation, session="ses_main", **fields):
     return service.handle(
         {
             "transport_id": operation,

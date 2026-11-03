@@ -11,6 +11,7 @@ from test_opencode_host import Host
 
 THREAD = '01a19f80-803f-7110-b12d-049e3173b880'
 TURN = '01a19f80-80c3-7a91-bee3-fdd3c9425cbb'
+CHILD = '11b2f901-91a4-4c22-d55f-26b05394ab92'
 
 
 def test_each_host_accepts_its_own_ids_and_rejects_the_other_hosts_ids():
@@ -106,3 +107,69 @@ def test_specialist_launch_identity_is_host_specific(tmp_path):
         create({'session_id': THREAD, 'message_id': 'ari-cm-0123abcd'}, 'codex-ids-under-opencode', 'opencode')
     with pytest.raises(ValidationError, match='Invalid specialist launch identity or deadline'):
         create({'session_id': 'ses_specialist', 'message_id': 'msg_specialist'}, 'opencode-ids-under-codex', 'codex')
+    assert store.specialist_create(
+        {'parent_session_id': 'ses_main', 'purpose': 'review', 'label': 'review',
+         'prompt': 'check', 'inputs': [],
+         'launch': {'tools': ['read'], 'deadline_at': 2000000000000,
+                    'session_id': CHILD, 'message_id': 'ari-cm-0123abcd'}},
+        'codex-ids-under-codex', host='codex')['task_id']
+
+
+def test_ledger_generated_codex_message_ids_pass_their_own_validator(tmp_path):
+    host = Host(tmp_path, host_id='codex')
+    host.open(session=THREAD)
+    host.call('focus', session=THREAD, node_id=None, role='planner', mode='auto')
+    host.call('workflow', session=THREAD, action='run', fields={'state': 'running'})
+    store = NativeStore(host.root)
+    node = host.call('propose', session=THREAD, model_call=True, question='Q?',
+                     why_now='now', plan='measure', root_reason='first')
+    task = store.workflow('codex', THREAD, 'task', {'node_id': node['node_id']}, 'task')
+
+    launch = store.node_launch_claim('codex', THREAD, task['task_id'], 1, 'claim')
+    assert valid_message_id(CODEX, launch['message_id']) and launch['message_id'].startswith('ari-cm-')
+    child = launch['session_id']
+    store.node_launch_phase('codex', THREAD, launch['intent_id'], 'created', 'created')
+    store.associate('codex', child, 'child-associate')
+    store.workflow('codex', child, 'register',
+                   {'role': 'node_core', 'cwd': str(host.root), 'node_id': node['node_id']}, 'child-role')
+    store.focus('codex', child, node['node_id'], 'core', 'auto', 'child-focus')
+    store.node_launch_phase('codex', THREAD, launch['intent_id'], 'ready', 'ready')
+    assert store.runtime_reserve('codex', child, 'reserve', launch_intent_id=launch['intent_id'],
+                                 message_id=launch['message_id'])['allowed']
+
+    with store._connection() as db:
+        db.execute('INSERT INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)',
+                   ('notice-delivery', task['task_id'], THREAD, 'finished', None, '{}', 'pending', 'now'))
+    delivery = store.notification_begin('codex', THREAD, 'notice-delivery', 'notice',
+                                        'User must verify external exit')
+    assert delivery['send'] and valid_message_id(CODEX, delivery['message_id'])
+    store.notification_confirm('codex', THREAD, delivery['intent_id'], delivery['message_id'], 'delivered')
+
+    with store._connection() as db:
+        db.execute('INSERT INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)',
+                   ('notice-wake', task['task_id'], THREAD, 'finished', None, '{}', 'delivered', 'now'))
+    store.workflow('codex', THREAD, 'session',
+                   {'waiting': [task['task_id']], 'pause_reason': 'wait'}, 'wait')
+    wake = store.notification_wake_begin('codex', THREAD, 'notice-wake', 'wake')
+    assert wake['send'] and valid_message_id(CODEX, wake['message_id'])
+    assert wake['message_id'].startswith('ari-cm-wake_')
+    assert store.runtime_reserve('codex', THREAD, 'reserve-wake', wake_intent_id=wake['intent_id'],
+                                 message_id=wake['message_id'])['allowed']
+
+
+def test_specialist_bind_child_rejects_cross_host_child_ids_before_registering(tmp_path):
+    (tmp_path / 'codex').mkdir()
+    codex = Host(tmp_path / 'codex', host_id='codex')
+    codex.open(session=THREAD)
+    assert 'not a valid codex session ID' in codex.error(
+        'specialist_bind_child', session=THREAD, child_session_id='ses_child', task_id='nope')
+    with pytest.raises(ValueError, match='not associated'):
+        codex.service.registry.root_for('codex', 'ses_child')
+
+    (tmp_path / 'opencode').mkdir()
+    opencode = Host(tmp_path / 'opencode')
+    opencode.open()
+    assert 'not a valid host session ID' in opencode.error(
+        'specialist_bind_child', child_session_id=THREAD, task_id='nope')
+    with pytest.raises(ValueError, match='not associated'):
+        opencode.service.registry.root_for('opencode', THREAD)

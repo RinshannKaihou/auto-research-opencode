@@ -227,8 +227,8 @@ test('an attachment that saw no registry discovers a later research association'
     await observer.confirmMembership('ses_main')
     expect(observer.roleOf('ses_main')).toBe('main')
     expect(keepsTool('shell', true, observer.roleOf('ses_main'), [])).toBe(false)
-    await observer.confirmMembership('ordinary')
-    expect(observer.isAssociated('ordinary')).toBe(false)
+    await observer.confirmMembership('ses_ordinary')
+    expect(observer.isAssociated('ses_ordinary')).toBe(false)
   } finally {
     firstStorage.close()
     secondStorage.close()
@@ -265,7 +265,7 @@ test('ready event health is valid JSON in status and session RPC responses', asy
   const status = await host.command('status','ses_main')
   expect(status.state.event_recovery.state).toBe('ready')
   expect(Object.hasOwn(status.state.event_recovery,'message')).toBe(false)
-  const session = await host.rpc().session({sessionID:'ordinary'})
+  const session = await host.rpc().session({sessionID:'ses_ordinary'})
   expect(session.eventRecovery).toBeNull()
 })
 
@@ -514,11 +514,11 @@ test('unresolved ordinary membership is bounded and cannot freeze known research
   const original = StorageClient.prototype.request
   let failures = 0
   const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation) {
-    if (method === 'session_membership' && fields?.session_id === 'ordinary') { failures++; return Promise.reject(new Error('unresolved membership')) }
+    if (method === 'session_membership' && fields?.session_id === 'ses_ordinary') { failures++; return Promise.reject(new Error('unresolved membership')) }
     return original.call(this, method, fields, operation)
   })
   try {
-    host.turn.end('ordinary')
+    host.turn.end('ses_ordinary')
     await until(() => failures === 3, 'unknown event held')
     await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.unresolved === 1, 'unknown classification visible')
     host.turn.end('ses_main')
@@ -877,12 +877,12 @@ describe("autonomous research", () => {
   test('detaching a quiet main restores ordinary tools without changing other sessions', async () => {
     const host = await load()
     await host.command('init', 'ses_main', { goal: 'detach boundary' })
-    const ordinary = modelRequest('ordinary')
+    const ordinary = modelRequest('ses_ordinary')
     ordinary.tools.webfetch = { description: 'webfetch', input: {} }
     await host.hooks.get('context')!(ordinary)
     expect(Object.keys(ordinary.tools)).toContain('shell')
     expect(Object.keys(ordinary.tools)).toContain('webfetch')
-    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ordinary', id: 'ordinary-call', input: {} })
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: 'ses_ordinary', id: 'ordinary-call', input: {} })
     expect((await host.command('detach', 'ses_main')).error).toBeUndefined()
     const detached = modelRequest('ses_main')
     await host.hooks.get('context')!(detached)
@@ -2189,7 +2189,7 @@ describe("node specialists", () => {
       const input = await second.call('research_read_input', child, { input_id: 'input-1' })
       expect(JSON.stringify(input)).toContain('assigned evidence for review')
       await expect(second.call('research_read_input', child, { input_id: 'input-other' })).rejects.toThrow()
-      await expect(second.call('research_read_input', 'ordinary', { input_id: 'input-1' })).rejects.toThrow('没有关联')
+      await expect(second.call('research_read_input', 'ses_ordinary', { input_id: 'input-1' })).rejects.toThrow('没有关联')
       const request = modelRequest(child)
       request.system.push({ type: 'text', text: 'private workspace AGENTS and project goal' })
       await second.hooks.get('context')!(request)

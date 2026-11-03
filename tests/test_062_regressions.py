@@ -75,7 +75,7 @@ def test_memory_defaults_to_attempt_node_and_retries_keep_original_placement(tmp
     fields = {"kind": "hypothesis", "statement": "testable"}
     saved = request(service, "memory_write", action="record", fields=fields, op="memory")
     assert saved["node_id"] == a["node_id"]
-    legacy_fields = {**fields, "source_identity": {"host_id": "host", "session_id": "main"}}
+    legacy_fields = {**fields, "source_identity": {"host_id": "host", "session_id": "ses_main"}}
     legacy = store.record_knowledge(legacy_fields, "legacy-memory")
     assert legacy["node_id"] is None
     assert (

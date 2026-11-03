@@ -502,7 +502,7 @@ class WorkflowStore:
                     return dict(prior)
                 task_id = "T-" + hashlib.sha256(operation_id.encode()).hexdigest()[:20]
                 context = {**node, "inputs": json.loads(node["inputs"])}
-                sid = "research-" + str(uuid4())
+                sid = "ses_research_" + str(uuid4())
                 db.execute(
                     "INSERT INTO exploration_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
