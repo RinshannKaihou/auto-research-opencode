@@ -620,6 +620,7 @@ class NativeService:
                 + " Read RESEARCH_CONTEXT.json for the full frozen material index and background.",
             }
         value = {
+            # Discussion session IDs are minted ses_ for every host; host-aware minting is P1.8.
             "session_id": "ses_discussion_" + digest,
             "workspace": str(workspace),
             "context": context,

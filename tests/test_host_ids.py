@@ -115,6 +115,30 @@ def test_specialist_launch_identity_is_host_specific(tmp_path):
         'codex-ids-under-codex', host='codex')['task_id']
 
 
+def test_task_session_binds_only_host_shaped_session_ids(tmp_path):
+    for hid, main, bad, message in (
+        (CODEX, THREAD, 'ses_bound_x', 'session_id is not a valid codex session ID'),
+        (OPENCODE, 'ses_main', THREAD, 'session_id is not a valid host session ID'),
+    ):
+        base = tmp_path / hid
+        base.mkdir()
+        host = Host(base, host_id=hid)
+        host.open(session=main)
+        host.call('focus', session=main, node_id=None, role='planner', mode='auto')
+        host.call('workflow', session=main, action='run', fields={'state': 'running'})
+        node = host.call('propose', session=main, model_call=True, question='Q?',
+                         why_now='now', plan='measure', root_reason='first')
+        task = host.call('workflow', session=main, action='task', fields={'node_id': node['node_id']})
+        assert message in host.error(
+            'workflow', session=main, action='task_session',
+            fields={'task_id': task['task_id'], 'session_id': bad},
+        )
+        with NativeStore(host.root)._connection() as db:
+            stored = db.execute('SELECT session_id FROM exploration_tasks WHERE task_id=?',
+                                (task['task_id'],)).fetchone()[0]
+        assert stored == task['session_id'] and stored.startswith('ses_research_')
+
+
 def test_ledger_generated_codex_message_ids_pass_their_own_validator(tmp_path):
     host = Host(tmp_path, host_id='codex')
     host.open(session=THREAD)
@@ -123,18 +147,19 @@ def test_ledger_generated_codex_message_ids_pass_their_own_validator(tmp_path):
     store = NativeStore(host.root)
     node = host.call('propose', session=THREAD, model_call=True, question='Q?',
                      why_now='now', plan='measure', root_reason='first')
-    task = store.workflow('codex', THREAD, 'task', {'node_id': node['node_id']}, 'task')
+    task = host.call('workflow', session=THREAD, action='task', fields={'node_id': node['node_id']})
+    host.call('workflow', session=THREAD, action='task_session',
+              fields={'task_id': task['task_id'], 'session_id': CHILD})
+    host.call('open', session=CHILD, root=str(host.root), cwd=str(host.root),
+              session_role='node_core', node_id=node['node_id'], context={})
+    host.call('focus', session=CHILD, node_id=node['node_id'], role='core', mode='auto')
 
     launch = store.node_launch_claim('codex', THREAD, task['task_id'], 1, 'claim')
     assert valid_message_id(CODEX, launch['message_id']) and launch['message_id'].startswith('ari-cm-')
-    child = launch['session_id']
+    assert launch['session_id'] == CHILD and valid_session_id(CODEX, launch['session_id'])
     store.node_launch_phase('codex', THREAD, launch['intent_id'], 'created', 'created')
-    store.associate('codex', child, 'child-associate')
-    store.workflow('codex', child, 'register',
-                   {'role': 'node_core', 'cwd': str(host.root), 'node_id': node['node_id']}, 'child-role')
-    store.focus('codex', child, node['node_id'], 'core', 'auto', 'child-focus')
     store.node_launch_phase('codex', THREAD, launch['intent_id'], 'ready', 'ready')
-    assert store.runtime_reserve('codex', child, 'reserve', launch_intent_id=launch['intent_id'],
+    assert store.runtime_reserve('codex', CHILD, 'reserve', launch_intent_id=launch['intent_id'],
                                  message_id=launch['message_id'])['allowed']
 
     with store._connection() as db:

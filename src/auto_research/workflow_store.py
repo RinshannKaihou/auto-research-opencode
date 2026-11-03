@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .errors import ConflictError, ValidationError, NotFoundError, ResearchControlError
+from .host_ids import CODEX, valid_session_id
 
 
 def now():
@@ -502,6 +503,7 @@ class WorkflowStore:
                     return dict(prior)
                 task_id = "T-" + hashlib.sha256(operation_id.encode()).hexdigest()[:20]
                 context = {**node, "inputs": json.loads(node["inputs"])}
+                # Research task sessions are minted ses_ for every host; host-aware minting is P1.8.
                 sid = "ses_research_" + str(uuid4())
                 db.execute(
                     "INSERT INTO exploration_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -543,6 +545,12 @@ class WorkflowStore:
                 bound = fields.get("session_id")
                 if not isinstance(bound, str) or not bound:
                     raise ValidationError("session_id is required")
+                if not valid_session_id(host_id, bound):
+                    raise ValidationError(
+                        "session_id is not a valid codex session ID"
+                        if host_id == CODEX
+                        else "session_id is not a valid host session ID"
+                    )
                 if bound != task["session_id"]:
                     if db.execute(
                         "SELECT 1 FROM workflow_sessions WHERE session_id=?", (task["session_id"],)
