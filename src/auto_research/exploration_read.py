@@ -96,8 +96,8 @@ def inbox_groups(store, db, generation, scope_ids):
         return (f"node:{node_id}" if node_id else source_key), None, "unknown"
 
     groups = {}
-    for row in db.execute("SELECT result_id,scope_id,source_key,kind,source_ref,handled_by_decision,data "
-                          "FROM exploration_results WHERE scope_id IN (SELECT value FROM json_each(?)) "
+    for row in db.execute("SELECT result_id,scope_id,source_key,kind,source_ref,handled_by_decision,data,source_sequence "
+        "FROM exploration_results WHERE scope_id IN (SELECT value FROM json_each(?)) "
                           "ORDER BY result_id", (_encoded(list(scope_ids)),)):
         data = json.loads(row["data"])
         source_key = row["source_key"]
@@ -128,6 +128,9 @@ def inbox_groups(store, db, generation, scope_ids):
                 group["work_identity"] = {**identity, "unresolved": True}
                 group["identity_status"] = "unknown"
         group["members_full"].append(row["result_id"])
+        sequence = row['source_sequence']
+        previous = group['first_source_sequence']
+        group['first_source_sequence'] = sequence if previous is None else min(previous, sequence)
         group["kinds"].append(row["kind"])
         if row["handled_by_decision"] is None:
             group["pending_members"] += 1
@@ -165,13 +168,14 @@ def inbox_groups(store, db, generation, scope_ids):
             execution_state = "unknown"
         members = group["members_full"]
         ordered.append({**_render(group, execution_state, attempt_state, task_state)})
-    return ordered
+    return sorted(ordered, key=lambda group: (not group['pending'], group['first_source_sequence'], group['group_key']))
 
 
 def _empty_group(key, scope_id, source):
     return {"group_key": key, "scope_id": scope_id, "source": source, "members_full": [],
             "kinds": [], "pending_members": 0, "handled_members": 0, "handled_by": [],
-            "publication_refs": [], "work_identity": {}, "identity_status": "unknown"}
+            "publication_refs": [], "work_identity": {}, "identity_status": "unknown",
+            "first_source_sequence": None}
 
 
 def _render(group, execution_state, attempt_state=None, task_state=None):
@@ -183,6 +187,7 @@ def _render(group, execution_state, attempt_state=None, task_state=None):
             # these results; task_state is the work's current task (a retry may
             # be running under a different attempt).
             "attempt_state": attempt_state, "task_state": task_state,
+            "first_source_sequence": group['first_source_sequence'],
             "members_total": len(members), "pending_members": group["pending_members"],
             "handled_members": group["handled_members"], "handled_by": sorted(set(group["handled_by"])),
             "result_ids": members[:MEMBER_SAMPLE_CAP],

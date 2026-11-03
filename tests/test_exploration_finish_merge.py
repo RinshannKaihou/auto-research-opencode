@@ -33,6 +33,10 @@ def test_verbatim_confirmation_merges_and_keeps_the_snapshot_valid(tmp_path):
     chosen = decision(host, scope, routes, work_batch=[work(routes)])
     task = host.call('exploration_materialize', intent_id=chosen['intent_ids'][0])
     _node_session(host, task)
+    instructions = host.call('memory_context', session='ses_node', profile='opencode-auto',
+                             policy='memory-r1-v1')['text']
+    assert 'copy the last complete publication summary verbatim into research_finish.summary' in instructions
+    assert 'Publish new evidence' in instructions
     _publish(host, 'ses_node', 'Measured result')
     snapshot = host.call('query', collection='evidence', refs=[], scope_id=scope['scope_id'])
     pending_before = pending(host, scope)

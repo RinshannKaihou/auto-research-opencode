@@ -111,12 +111,12 @@ class E3Provider(E1E2Provider):
             return 'research_record', {'kind': 'claim', 'statement': 'The isolated fixture restored the single-route measurement after combination degradation',
                 'visibility': 'project', 'evidence_refs': [cls.result_ref(key)]}
         cls.finished_nodes.add(nid)
-        if key == 'slow':
-            # B2 host coverage: a verbatim mechanical confirmation of this
-            # attempt's last complete publication must merge instead of adding
-            # another pending exploration result.
-            return 'research_finish', {'state': 'finished', 'summary': 'Controlled fixture ' + key}
-        return 'research_finish', {'state': 'finished', 'summary': 'Controlled fixture complete: ' + key}
+        if key == 'combo':
+            # An intentionally non-confirming legacy summary keeps the negative
+            # path covered. The other nodes follow the shared finish guidance.
+            return 'research_finish', {'state': 'finished', 'summary': 'Controlled fixture complete: ' + key}
+        summary = cls.rows('SELECT summary FROM publications WHERE node_id=? ORDER BY rowid DESC LIMIT 1', (nid,))[0][0]
+        return 'research_finish', {'state': 'finished', 'summary': summary}
 
     @classmethod
     def stop(cls):

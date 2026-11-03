@@ -2,7 +2,9 @@
 
 import json
 
-from test_context_policy import sections
+from auto_research import context_policy
+
+from test_context_policy import completed, sections
 from test_opencode_host import Host
 from test_e3_multiroute import setup, decision, work, publish, current, pending
 from auto_research.native_store import NativeStore
@@ -248,3 +250,87 @@ def test_long_route_titles_never_displace_instructions_or_strategy(tmp_path):
         sampled = exploration['details']['route_sample']
         assert all(len(item['title']) <= 101 for item in sampled)
         assert any(item.get('title_truncated') for item in sampled)
+
+
+def test_investigating_route_without_results_outranks_parked_routes(tmp_path):
+    host = Host(tmp_path)
+    scope, routes = setup(host)
+    for index in range(3):
+        routes.append(host.call('exploration_route', model_call=True, fields={'scope_ref': scope['ref'],
+            'changes': {'title': f'Parked {index}', 'rationale': 'Candidate', 'critical_assumption': 'Unknown'}}))
+    selected = decision(host, scope, routes, next_work=work([routes[0]]), route_changes=[{
+        'route_ref': route['ref'], 'disposition': 'excluded', 'reason': 'Outside present constraints',
+        'reactivation_condition': 'New constraints'} for route in routes[1:]])
+    host.call('exploration_materialize', intent_id=selected['intent_id'])
+    view = sections(host.call('memory_context', policy='memory-r1-v1', max_chars=12000))['exploration']
+    assert view['pending_results_total'] == 0
+    first = view['details']['route_sample'][0]
+    assert first['ref'].split('@')[0] == routes[0]['ref'].split('@')[0]
+    assert 'investigating_route' in first['selection_reasons']
+
+
+def test_missing_expected_reason_uses_all_route_ids_across_revisions(tmp_path, monkeypatch):
+    host = Host(tmp_path)
+    scope, routes = setup(host)
+    for index in range(7):
+        routes.append(host.call('exploration_route', model_call=True, fields={'scope_ref': scope['ref'],
+            'changes': {'title': f'Alternative {index}', 'rationale': 'Candidate', 'critical_assumption': 'Unknown'}}))
+    chosen = decision(host, scope, routes, next_work=work([routes[-1]]))
+    routes = current(host, scope)
+    decision(host, scope, routes, expected_results=[chosen['intent_id']], provisional=True,
+        route_changes=[{'route_ref': routes[6]['ref'], 'disposition': 'investigating', 'reason': 'Consider this next'}])
+    monkeypatch.setattr(context_policy, 'ROUTE_SAMPLE_CAP', 12)
+    store = NativeStore(host.root)
+    with store._read() as db:
+        generation = db.execute('SELECT generation FROM workflow_project WHERE id=1').fetchone()[0]
+        overview = context_policy.exploration_overview(store, db, generation)
+    sampled = {route['ref'].split('@')[0]: route for route in overview['routes']}
+    seventh = sampled[routes[6]['ref'].split('@')[0]]
+    assert seventh['ref'] != routes[6]['ref']
+    assert 'missing_expected_result' in seventh['selection_reasons']
+    assert 'missing_expected_result' in sampled[routes[-1]['ref'].split('@')[0]]['selection_reasons']
+    assert len(overview['latest_decisions'][0]['considered_route_refs']) == 6
+
+
+def test_risk_index_survives_three_scopes_and_long_route_text(completed):
+    host, store, _, _, claim, _ = completed
+    host.call('exploration_policy', mode='on')
+    refs = []
+    for index in range(6):
+        value = store.record_knowledge({'kind': 'claim', 'statement': f'Critical measurement {index}',
+            'evidence_refs': claim['evidence_refs']}, f'critical-{index}')
+        refs.append(value['ref'])
+        # Immutable failing checks, using the same fixture boundary as R1 tests.
+        with store._connection() as db:
+            db.execute('INSERT INTO field_checks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (value['ref'], 0, '{}', 'pub/P-001#data', None, None, None, None,
+                 'fixture', 'inconsistent', 'value_mismatch', '2026-11-03', 0))
+            db.commit()
+    for index in range(3):
+        scope = host.call('exploration_scope', model_call=True, fields={'changes': {
+            'objective': f'Choice {index} ' + 'Q' * 100, 'task_kind': 'selection', 'baseline_refs': refs}})
+        for candidate in range(4):
+            host.call('exploration_route', model_call=True, fields={'scope_ref': scope['ref'], 'changes': {
+                'title': f'Candidate {candidate} ' + 'T' * 100, 'rationale': 'Candidate',
+                'critical_assumption': 'A' * 2000, 'next_probe': 'P' * 2000}})
+    response = host.call('memory_context', policy='memory-r1-v1', profile='opencode-auto',
+                         max_chars=12000, decision_refs=refs)
+    blocks = sections(response)
+    assert len(response['text']) <= 12000
+    assert 'control_instructions' in blocks and 'role_instructions' in blocks
+    indexed_checks = {item['target'] for item in blocks['critical_now']['risk_index']
+                      if item['kind'] == 'field_check'}
+    assert indexed_checks == set(refs)
+    assert blocks['exploration']['scopes_total'] == 3
+
+
+def test_revision_and_stale_results_are_visible_in_risk_sample(tmp_path):
+    host = Host(tmp_path)
+    scope, _ = setup(host)
+    store = NativeStore(host.root)
+    with store._connection() as db:
+        for kind in ('knowledge_changed', 'stale'):
+            store._exploration_result_in_scope(db, scope['scope_id'], f'fixture:{kind}', kind, None, {})
+        db.commit()
+    view = sections(host.call('memory_context', policy='memory-r1-v1', max_chars=12000))['exploration']
+    assert {item['kind'] for item in view['meta']['result_sample']} == {'knowledge_changed', 'stale'}

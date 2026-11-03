@@ -154,8 +154,10 @@ OPENCODE_AUTO_ROLES = {
         "research_delegate_batch; the call returns its report, which you judge on its evidence. "
         "Use context_mode blind with published file inputs when the reviewer must not see your "
         "reasoning or conclusions. When the node question is answered, or you "
-        "are blocked, call research_finish with state finished or stopped and a summary of evidence, "
-        "gaps and suggested next steps. Do not dispatch nodes. Messages starting with 【Research "
+        "are blocked, call research_finish with state finished or stopped. Publish new evidence, "
+        "limits and suggested next steps before finishing. For normal completion with no extra "
+        "information, copy the last complete publication summary verbatim into research_finish.summary; "
+        "a different summary remains valid and is treated as new information. Do not dispatch nodes. Messages starting with 【Research "
         "自动推进】 come from the research engine; other user messages are guidance: follow them."
     ),
     "specialist": (

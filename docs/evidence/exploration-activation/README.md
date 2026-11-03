@@ -26,6 +26,8 @@
 
 ## 当前 PR 验证
 
+最新评审修复、合并 main `98fe573` 后的验证及量化口径见 [review 处理记录](./review-response.md)。以下保留初次提交的验证时点，不能代替最新 head 的测试结果。
+
 在当前 macOS Agent 环境、Python 3.11、Bun 1.3.10、锁定 OpenCode SDK 2.2.5 上运行：
 
 - `PYTHONDONTWRITEBYTECODE=1 make test`：退出码 0；Python **840 passed, 1 skipped**（68.48 秒），Bun **224 pass / 0 fail**（1054 assertions，39.13 秒），TypeScript 检查通过。见 [完整日志](./make-test.log)。

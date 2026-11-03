@@ -30,9 +30,10 @@ EXPLORATION_STRATEGY = [
     "allowed.",
 ]
 EXPLORATION_STRATEGY_CODES = [rule.split(":", 1)[0] for rule in EXPLORATION_STRATEGY]
-# The brief is the always-deliverable strategy: one actionable sentence per
-# trigger that survives without the route samples. Bare codes are observability
-# only and are never the sole strategy a model receives.
+# The brief is the normal minimum strategy: actionable guidance that survives
+# without the route samples. Bare codes are primarily for observability;
+# only; budgets below the minimum brief may fall back to codes with an explicit
+# brief_omitted flag. Normal 900+ character contexts preserve actionable prose.
 EXPLORATION_STRATEGY_BRIEF = ("Probe decision-changing unknowns with a smaller step before large effort; "
                               "consider an alternative or state the single-path reason; judge each new "
                               "result against the current choice; before stopping check basis, untried "
@@ -377,12 +378,15 @@ def exploration_overview(store, db, generation):
     live_states = {'queued', 'starting', 'running', 'waiting', 'stopping', 'unverified'}
     live_work = sum(row['state'] == 'materialized' for row in intents)
     decisions = []
+    considered_ids_by_scope = {}
     reactivation_refs = set()
     for scope in ordered_scopes:
         row = db.execute('SELECT decision_id,data FROM exploration_decisions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1',
                          (scope['scope_id'],)).fetchone()
         if row:
             data = json.loads(row['data'])
+            considered_ids_by_scope[scope['scope_id']] = {
+                ref.split('@', 1)[0] for ref in data.get('considered_route_refs', [])}
             decisions.append({'scope_id': scope['scope_id'], 'decision_id': row['decision_id'],
                 'action': data.get('action'), 'provisional': data.get('provisional', False),
                 'expected_results_total': len(data.get('expected_results', [])),
@@ -410,7 +414,7 @@ def exploration_overview(store, db, generation):
         route_ids = set(data.get('route_ids') or []) | node_routes.get(data.get('node_id'), set())
         for route_id in route_ids:
             pending_by_route.setdefault(route_id, []).append(row['result_id'])
-        if row['kind'] in {'review_challenge', 'failed', 'cancelled', 'unverified', 'stopped'}:
+        if row['kind'] in {'review_challenge', 'knowledge_changed', 'stale', 'failed', 'cancelled', 'unverified', 'stopped'}:
             risk_results.append({'result_id': row['result_id'], 'scope_id': row['scope_id'],
                                  'kind': row['kind'], 'source_ref': row['source_ref'],
                                  'selection_reasons': ['registered_risk_pending']})
@@ -426,8 +430,10 @@ def exploration_overview(store, db, generation):
             reasons.append('pending_results_on_invested_route')
         if route.get('disposition') == 'adopted':
             reasons.append('current_choice')
+        if route.get('disposition') == 'investigating':
+            reasons.append('investigating_route')
         choice = latest_by_scope.get(route['scope_id'])
-        if (choice and route['ref'] in choice['considered_route_refs']
+        if (choice and route['ref'].split('@', 1)[0] in considered_ids_by_scope.get(route['scope_id'], set())
                 and choice.get('unacknowledged_missing_total')):
             reasons.append('missing_expected_result')
         if route.get('disposition') == 'untried':
@@ -438,7 +444,8 @@ def exploration_overview(store, db, generation):
         return reasons or ['scope_coverage']
 
     priority = {'pending_results_on_invested_route': 0, 'current_choice': 1, 'missing_expected_result': 2,
-                'untried_candidate': 3, 'reactivation_registered': 4, 'parked_route': 5, 'scope_coverage': 6}
+                'investigating_route': 3, 'untried_candidate': 4, 'reactivation_registered': 5,
+                'parked_route': 6, 'scope_coverage': 7}
 
     def route_rank(route):
         return (min(priority[reason] for reason in route_reasons(route)), route['route_id'])
@@ -683,25 +690,6 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
             views[key] = block_map[key]
             if len(body()) > max_chars:
                 del views[key]
-    if exploration_details is not None:
-        views['exploration']['details'] = exploration_details
-        views['exploration']['details_omitted'] = False
-        if len(body()) > max_chars:
-            del views['exploration']['details']
-            views['exploration']['details_omitted'] = True
-    # The full rules and projection metadata upgrade independently of whether
-    # the route samples fitted: dropped details must not silence the strategy.
-    if 'exploration' in views and 'brief' in views['exploration'].get('strategy', {}):
-        upgraded = {'version': EXPLORATION_STRATEGY_VERSION, 'rules': list(EXPLORATION_STRATEGY),
-                    'note': 'Prompts, not gates; execution-control instructions take precedence.'}
-        brief = views['exploration']['strategy']
-        views['exploration']['strategy'] = upgraded
-        if len(body()) > max_chars:
-            views['exploration']['strategy'] = brief
-    if exploration_meta is not None:
-        views['exploration']['meta'] = exploration_meta
-        if len(body()) > max_chars:
-            del views['exploration']['meta']
     remaining = max_chars - len(body())
     finding_budget = min(4000, remaining * 5 // 8) if model['critical_now'] else min(4000, remaining)
     risk_budget = min(2400, remaining - finding_budget) if model['findings'] else min(2400, remaining)
@@ -726,6 +714,30 @@ def render_context(store, db, blocks, node_id, max_chars, *, decision_refs=None,
             views[key]=block_map[key]
             if len(body())>max_chars:
                 del views[key]
+    # Risk identities and checkpoint recovery have first claim on the space;
+    # exploration samples/rules/meta use only what remains after them.
+    if exploration_details is not None:
+        views['exploration']['details'] = exploration_details
+        views['exploration']['details_omitted'] = False
+        if len(body()) > max_chars:
+            del views['exploration']['details']
+            views['exploration']['details_omitted'] = True
+    # The full rules and projection metadata upgrade independently of whether
+    # the route samples fitted: dropped details must not silence the strategy.
+    if 'exploration' in views and 'brief' in views['exploration'].get('strategy', {}):
+        upgraded = {'version': EXPLORATION_STRATEGY_VERSION, 'rules': list(EXPLORATION_STRATEGY),
+                    'note': 'Prompts, not gates; execution-control instructions take precedence.'}
+        brief = views['exploration']['strategy']
+        views['exploration']['strategy'] = upgraded
+        if len(body()) > max_chars:
+            views['exploration']['strategy'] = brief
+    if exploration_meta is not None:
+        views['exploration']['meta'] = exploration_meta
+        if len(body()) > max_chars:
+            del views['exploration']['meta']
+    remaining = max_chars - len(body())
+    finding_budget = min(4000, remaining * 5 // 8) if model['critical_now'] else min(4000, remaining)
+    risk_budget = min(2400, remaining - finding_budget) if model['findings'] else min(2400, remaining)
     findings = model['findings']
     groups = [
         [v for v in findings if 'explicit_input' in v['selection_reasons']],

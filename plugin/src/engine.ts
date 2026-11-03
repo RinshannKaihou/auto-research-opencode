@@ -869,6 +869,7 @@ export class Engine {
           ['scout','probe'].includes(context.purpose)
             ? "只回答这个会影响选择的问题。可返回支持、反例、混合或信息不足；发布最小可读结果及固定依据，说明条件、未知和建议。受阻不等于反证；完成或受阻时调用 research_finish。"
             : "完成条件：回答节点问题；用 research_publish 发布报告和数据，用 research_record 记录引用发布材料的结论，用 research_checkpoint 更新检查点；完成或受阻时调用 research_finish。",
+          "新增证据、限制和建议先发布。正常完成且没有补充信息时，research_finish.summary 原文复制本次执行最后一份完整发布的 summary；不同总结仍合法并作为新信息处理。受阻时使用 stopped，不把受阻当作反证。",
         ].join("\n"),
         true,
         `开始节点 ${task.node_id}`,

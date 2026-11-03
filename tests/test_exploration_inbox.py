@@ -283,3 +283,27 @@ def test_scope_state_changes_form_their_own_source_group_and_reads_do_not_write(
     unknown = 'Unknown exploration_inbox group' in host.error('query', collection='exploration_inbox',
                                                               ref='XG-doesnotexist')
     assert unknown
+
+
+def test_inbox_lists_pending_first_then_source_order(tmp_path):
+    host = Host(tmp_path)
+    scope, routes = setup(host)
+    selected = decision(host, scope, routes, work_batch=[work(routes, f'work-{i}') for i in range(3)])
+    tasks = [host.call('exploration_materialize', intent_id=ident) for ident in selected['intent_ids']]
+    for index in (2, 0, 1):
+        publish(host, tasks[index], f'ses_{index}', f'Result {index}')
+    groups = host.call('query', collection='exploration_inbox', scope_id=scope['scope_id'])['items']
+    assert [group['work_identity']['intent_id'] for group in groups] == [
+        selected['intent_ids'][index] for index in (2, 0, 1)]
+    decision(host, scope, current(host, scope), action='defer', result_ids=groups[0]['result_ids'])
+    page = host.call('query', collection='exploration_inbox', scope_id=scope['scope_id'], limit=1)
+    first = page['items'][0]
+    assert first['pending']
+    assert first['work_identity']['intent_id'] == selected['intent_ids'][0]
+    second = host.call('query', collection='exploration_inbox', scope_id=scope['scope_id'],
+                       limit=1, cursor=page['cursor'])
+    assert second['items'][0]['work_identity']['intent_id'] == selected['intent_ids'][1]
+    third = host.call('query', collection='exploration_inbox', scope_id=scope['scope_id'],
+                      limit=1, cursor=second['cursor'])
+    assert not third['items'][0]['pending']
+    assert third['items'][0]['work_identity']['intent_id'] == selected['intent_ids'][2]

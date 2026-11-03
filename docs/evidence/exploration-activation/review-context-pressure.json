@@ -1,0 +1,17 @@
+{
+  "budget_chars": 12000,
+  "scopes": 3,
+  "failing_checks": 6,
+  "actual_chars": 11787,
+  "critical_risks_total": 14,
+  "risk_index_entries": 14,
+  "failing_checks_in_index": 6,
+  "role_present": true,
+  "control_present": true,
+  "details_omitted": false,
+  "measured_before_fix": {
+    "risk_index_entries": 9,
+    "failing_checks_in_index": 3
+  },
+  "real_model_calls": false
+}
