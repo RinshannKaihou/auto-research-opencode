@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import sqlite3
 from typing import Any
+from uuid import uuid4
 
 from .errors import (ConflictError, NotFoundError, ValidationError,
                      CheckpointBaseRequired, CheckpointBaseMismatch, CheckpointConflict)
@@ -2105,26 +2106,31 @@ class MemoryStore:
         body = "\n".join(lines) + "\n"
         digest = hashlib.sha256(body.encode()).hexdigest()
         body = f"<!-- projection-sha256: {digest} -->\n" + body
-        temporary = root / "PROJECT.md.tmp"
-        if temporary.exists():
-            temporary.chmod(0o644)
-        temporary.write_text(body, encoding="utf-8")
-        temporary.chmod(0o444)
-        target = root / "PROJECT.md"
-        if target.exists():
-            previous = target.read_text(encoding="utf-8")
-            first, _, remainder = previous.partition("\n")
-            recorded = first.removeprefix("<!-- projection-sha256: ").removesuffix(" -->")
-            actual = hashlib.sha256(remainder.encode()).hexdigest()
-            if recorded != actual:
-                drafts = root / "drafts"
-                drafts.mkdir(exist_ok=True)
-                draft = drafts / f"PROJECT-{hashlib.sha256(previous.encode()).hexdigest()[:20]}.md"
-                if not draft.exists():
-                    draft.write_text(previous, encoding="utf-8")
-                    draft.chmod(0o444)
-            target.chmod(0o644)
-        temporary.replace(target)
+        # Each writer gets its own temp name. os.replace renames that name away,
+        # so a shared PROJECT.md.tmp disappears under the other writer.
+        temporary = root / f"PROJECT.md.{uuid4().hex}.tmp"
+        try:
+            temporary.write_text(body, encoding="utf-8")
+            temporary.chmod(0o444)
+            target = root / "PROJECT.md"
+            if target.exists():
+                previous = target.read_text(encoding="utf-8")
+                first, _, remainder = previous.partition("\n")
+                recorded = first.removeprefix("<!-- projection-sha256: ").removesuffix(" -->")
+                actual = hashlib.sha256(remainder.encode()).hexdigest()
+                if recorded != actual:
+                    drafts = root / "drafts"
+                    drafts.mkdir(exist_ok=True)
+                    draft = drafts / f"PROJECT-{hashlib.sha256(previous.encode()).hexdigest()[:20]}.md"
+                    if not draft.exists():
+                        draft.write_text(previous, encoding="utf-8")
+                        draft.chmod(0o444)
+                target.chmod(0o644)
+            temporary.replace(target)
+        finally:
+            if temporary.exists():
+                temporary.chmod(0o644)
+                temporary.unlink()
 
     def specialist_create(self, fields: dict, request_id: str, *, control_actor=None) -> dict:
         payload = {
