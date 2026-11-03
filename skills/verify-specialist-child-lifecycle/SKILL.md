@@ -13,7 +13,7 @@ Harm: the node can treat a live child as finished, or can store an opening progr
 
 ## When to run
 
-Run `make verify-specialist-lifecycle` after any edit under the fingerprinted functions below. Skip it when the diff does not touch those functions.
+Run `make verify-specialist-lifecycle` after any edit under the fingerprinted functions below, including `host.wait`, `host.messages`, and the `run` slice from `finished` through the `finishChild` call that receives `exited`. Skip it when the diff does not touch those regions.
 
 ## Run
 
@@ -72,7 +72,7 @@ A pass prints `Checked invariant Safe` for the code on disk. If that sentence is
 
 Sync commit: `fb1b19b9d33723f9a35cb87f23a2e198595a060b`
 
-Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. The product files are unchanged, so the sync commit stays on this product snapshot. This verification does not change those files. The script hashes each function's signature and body (not the comment above it) and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
+Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. `host.wait`, `host.messages`, and the slice of `run` from `this.finished(` through the `finishChild` call that receives `exited` are fingerprinted from that same commit. The rest of `run` is not. The product files are unchanged, so the sync commit stays on this product snapshot. This verification does not change those files. The script hashes each function's signature and body (not the comment above it), and that one slice, and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
 
 | Code | What the model includes |
 |---|---|
@@ -83,11 +83,14 @@ Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and
 | `Specialists.noteBusy` `256-265`, called from `observeSpecialist` `434-437` | Writes the event-derived busy bit. Idle and deleted clear it. `busy` or `retry` sets it only when this process already has the session in `tools` or `progressAt`. |
 | `Specialists.appearsBusy` `268-270` | The bit `noteBusy` stored. False when this process has not stored a busy status. |
 | `Specialists.armLimits` `456-488` | Stall only after a quiet window. Cap fires even when progress continues. A parent abort already aborted the work controller, so the current cap does not mark. |
+| `Specialists.run` slice `417-421` | From `this.finished(` through the `this.finishChild(` call that passes `exited`. The rest of `run` is not hashed. Coercing that result to true changes this slice. |
 | `Specialists.finished` `491-502` | Race of `host.wait` against the abort. Idle returns true. Abort calls `stop` with the same wait. |
 | `Specialists.stop` `504-514` | Interrupt, then race the wait against the grace. Grace means not verified. |
 | `Specialists.finishChild` `600-676` | Limit plus a non-success outcome calls `summarize` unless the parent already aborted. Otherwise `exit_verified` is the `finished`/`stop` result, and an unverified exit does not archive the opening line. A non-empty `summary.text` is archived. |
 | `Specialists.summarize` `521-597` | Send versus summary grace. Unsettled send: stop, then the message read, then the busy check at `574`. Settled send: `finished` on the summary controller, then `textSince` at `586` and `590`. A rejected send calls `stop` and cannot land afterwards. |
 | `Specialists.childBusy` `273-283` | Calls `host.busy` when that method exists, otherwise `appearsBusy`. Hang, timeout, or throw counts as busy. |
+| `plugin/index.ts:266-270` `host.wait` | Controller checks, then `await ctx.session.wait`. `finished` and `stop` race this promise. Dropping the `await` changes this body. |
+| `plugin/index.ts:271-275` `host.messages` | Controller checks, then the transcript from `ctx.session.context`. `finishChild` and `summarize` read it. Reversing that array changes this body. |
 | `plugin/index.ts:276-286` `host.busy` and `within` `30-34` | Calls `ctx.session.busy` when that probe is a function. A probe that does not return is not proof of idle (`undefined` becomes true). When `ctx.session.busy` is missing, this method returns `appearsBusy`. |
 | `Specialists.settle` `706-711` | The ledger write of `exit_verified`. |
 | pre-#28 `plugin/src/specialists.ts` at `8a2c6c9:252-255`, `294-318`, `351-373` | Absolute timer only. It sets `timedOut` and aborts with no `signal.aborted` check, so a parent abort does not stop it. `sessionResult` text (`113-126`) is archived, including the opening line, with `exit_verified` from `stop`/`finished`. No summary and no busy check. |
@@ -112,17 +115,20 @@ Checked state space on the sync commit, current variant: 902 distinct states, de
 
 - `delegate`, `reserve`, launch phases, `host.create`, bind, and kickoff.
 - `delegateBatch` and a second child.
-- The `run` catch path (`plugin/src/specialists.ts:422-445`) that stops a child after a create, bind, or archive failure.
-- `recover`, `recoverWarm`, `watchRecovered`, and `interruptUnverified`.
+- The `run` catch path (`plugin/src/specialists.ts:422-445`) that stops a child after a create, bind, or archive failure. The fingerprint covers only the success-path slice from `finished` to `finishChild` (`417-421`), not this catch.
+- `recover`, `recoverWarm`, `watchRecovered`, and `interruptUnverified`. `watchRecovered` has its own `finished` / `finishChild` pair (`766-781`). That pair is not the `run` slice.
 - A parent abort that is not a stall or a cap archiving the turn's own text. Property 2 is only the stall/cap archive.
 - A succeeded turn that is also past the cap keeping its own report text. That text is the turn's report, not a timeout summary.
 - A busy probe that returns false while the turn is running. `childBusy` hard-coded to return false, `appearsBusy` hard-coded to return false, `noteBusy` never storing busy, an early `return` before the busy check, and dropping the `await` on `stopped()` are not separate TLC variants. They change a fingerprinted body, so the command exits 3. They become a counterexample only after the model is updated to describe them.
-- `queueEvent` (`plugin/index.ts:83-129`) dropping `observeSpecialist?.(event)`. The fingerprint covers `observeSpecialist`'s body, not that call. Without it, `noteBusy` is never fed and `appearsBusy` stays false. The model still assumes a completed probe reports `running`.
-- The `sessionBusy` field initializer at `plugin/src/specialists.ts:230`. The fingerprint covers `noteBusy` and `appearsBusy`, not that declaration.
+- `queueEvent` (`plugin/index.ts:83-129`) dropping `observeSpecialist?.(event)` at line 84. The fingerprint covers the arrow function assigned at `plugin/index.ts:429-438`, not this call. Without the call, `noteBusy` is never fed and `appearsBusy` stays false.
+- The `sessionBusy` field initializer at `plugin/src/specialists.ts:230`. The fingerprint covers `noteBusy` and `appearsBusy`, not that declaration. Replacing the map does not change those two bodies.
+- A later reassignment `observeSpecialist = undefined` after the arrow function at `plugin/index.ts:429-438`. The extractor skips an assignment it cannot parse, because `undefined` has no parameter list, and the fingerprinted arrow function still matches. The hash does not change. Replacing the arrow function itself with `undefined` does fail extraction, and that exits 3.
+- Those three matter mostly on the fallback path when `ctx.session.busy` is missing. `host.busy` (`plugin/index.ts:276-278`) then returns `appearsBusy()`. The model still assumes a completed probe reports `running`.
+- A covered name inside a comment can trigger a false `DRIFT`. The extractor searches the raw file, comments included, and keeps a match it can parse. A comment such as `// noteBusy(sessionID)` above the method is a second definition, the worktree no longer extracts, and the command exits 3 even though the executable body is unchanged. That is fail-safe noise. A mention that does not parse, such as `// see noteBusy`, is ignored. The comment above a function is not part of the hash when the match starts at the function itself.
 - An interrupted summary turn that still wrote assistant text. The model treats that turn as adding none, so `textSinceAll` archives the opening line.
-- The comment above a fingerprinted function, and any edit outside the fingerprinted functions. Those are not drift and are not checked.
+- An edit outside the fingerprinted regions. That includes the rest of `run` apart from the finished-to-finishChild slice. Those edits are not drift and are not checked.
 - Tool permissions, the ledger's other fields, and real OpenCode process exit beyond `running`.
 
 ## Not in CI
 
-`.github/workflows/ci.yml` runs `make test` only. This target is not part of `make test`: the workflow does not install the pinned TLC jar, and a model failure is a different check from pytest, bun, and tsc. Run this command when a change touches a fingerprinted function. It is short enough to run on each of those changes. `tests/test_verify_specialist_lifecycle.py` checks that the fingerprint extractor sees a body edit; it does not run TLC.
+`.github/workflows/ci.yml` runs `make test` only. This target is not part of `make test`: the workflow does not install the pinned TLC jar, and a model failure is a different check from pytest, bun, and tsc. Run this command when a change touches a fingerprinted function or the `run` slice. It is short enough to run on each of those changes. `tests/test_verify_specialist_lifecycle.py` checks that the fingerprint extractor sees a body edit; it does not run TLC.

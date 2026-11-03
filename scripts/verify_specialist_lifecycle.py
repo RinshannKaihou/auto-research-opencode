@@ -9,9 +9,11 @@ Exit codes (GNU make prints this number as ``Error N`` and then exits 2 itself):
    trace is a product bug. Do not weaken Safe.
 2  Model or tool failure. The spec, a config, or TLC failed, or a known break
    stopped failing. Not a product-bug verdict.
-3  Drift. A covered function body differs from the sync commit recorded in
-   skills/verify-specialist-child-lifecycle/SKILL.md. Re-sync the model before
-   trusting a pass. A same-meaning rewrite is drift, not a counterexample.
+3  Drift. A covered function body, or the run() slice from finished() through
+   the finishChild() call that receives exited, differs from the sync commit
+   recorded in skills/verify-specialist-child-lifecycle/SKILL.md. Re-sync the
+   model before trusting a pass. A same-meaning rewrite is drift, not a
+   counterexample.
 4  Setup. git or java is missing, a required commit is not in this clone, or
    the TLC jar could not be downloaded or is not the pinned release.
 """
@@ -68,6 +70,8 @@ COVERED = (
     ("plugin/src/specialists.ts", "finishChild", "method"),
     ("plugin/src/specialists.ts", "settle", "method"),
     ("plugin/index.ts", "within", "function"),
+    ("plugin/index.ts", "wait", "prop"),
+    ("plugin/index.ts", "messages", "prop"),
     ("plugin/index.ts", "busy", "prop"),
     ("plugin/index.ts", "observeSpecialist", "assign"),
 )
@@ -273,6 +277,46 @@ def _body_open(source: str, paren_close: int) -> int:
     raise ExtractError("no function body")
 
 
+def _code_find_all(source: str, needle: str) -> list[int]:
+    """Indexes of needle outside comments and strings."""
+    found: list[int] = []
+    index = 0
+    while index < len(source):
+        if source.startswith("//", index) or source.startswith("/*", index):
+            index = _skip_comment(source, index)
+            continue
+        nxt = _skip_string(source, index)
+        if nxt != index:
+            index = nxt
+            continue
+        if source.startswith(needle, index):
+            found.append(index)
+            index += len(needle)
+            continue
+        index += 1
+    return found
+
+
+def extract_run_exited_span(source: str) -> str:
+    """The run() slice from this.finished( through the finishChild call that receives exited.
+
+    The rest of run(), including launch and the catch path, is not part of the slice.
+    """
+    run = extract_function(source, "run", "method")
+    starts = _code_find_all(run, "this.finished(")
+    if len(starts) != 1:
+        raise ExtractError(f"{len(starts)} this.finished( calls in run()")
+    calls = [at for at in _code_find_all(run, "this.finishChild(") if at > starts[0]]
+    if len(calls) != 1:
+        raise ExtractError(f"{len(calls)} this.finishChild( calls after finished() in run()")
+    open_paren = calls[0] + len("this.finishChild(") - 1
+    close = _match_delim(run, open_paren, "(", ")")
+    arguments = run[open_paren + 1 : close]
+    if re.search(r"(?<![\w.])exited\b", arguments) is None:
+        raise ExtractError("finishChild in run() does not receive exited")
+    return run[starts[0] : close + 1]
+
+
 def extract_function(source: str, name: str, kind: str) -> str:
     pattern = _PATTERNS[kind].format(name=re.escape(name))
     found: list[str] = []
@@ -323,32 +367,56 @@ def git_show(commit: str, relative: str) -> str:
     raise AssertionError("unreachable")
 
 
+# Not a whole function. The callable receives the worktree or sync-commit file text.
+SLICES = (
+    ("plugin/src/specialists.ts", "run:finished-to-finishChild", extract_run_exited_span),
+)
+
+
+def _compare_region(commit: str, relative: str, label: str, extract) -> str | None:
+    """None when the region matches commit. A string when the worktree differs.
+
+    A region the sync commit itself cannot extract is a coverage-record error, not drift.
+    """
+    try:
+        current_text = (ROOT / relative).read_text(encoding="utf-8")
+    except OSError as error:
+        return f"{relative} {label}: cannot read the worktree file ({error})"
+    recorded_text = git_show(commit, relative)
+    try:
+        recorded = extract(recorded_text)
+    except ExtractError as error:
+        fail(
+            f"Sync commit {commit} has no fingerprinted {relative} {label} ({error}). "
+            "The coverage record does not describe that commit. Fix the skill or the extractor. "
+            "This is not a product-bug verdict.",
+            EXIT_MODEL,
+        )
+    try:
+        current = extract(current_text)
+    except ExtractError as error:
+        return f"{relative} {label}: the covered function no longer extracts ({error})"
+    if sha256_text(current) != sha256_text(recorded):
+        return f"{relative} {label}"
+    return None
+
+
 def drift_problems(commit: str) -> list[str]:
-    """Functions whose signature or body differ from commit. Empty means in sync."""
+    """Fingerprinted regions that differ from commit. Empty means in sync."""
     problems: list[str] = []
     for relative, name, kind in COVERED:
-        try:
-            current_text = (ROOT / relative).read_text(encoding="utf-8")
-        except OSError as error:
-            problems.append(f"{relative} {name}: cannot read the worktree file ({error})")
-            continue
-        recorded_text = git_show(commit, relative)
-        try:
-            recorded = extract_function(recorded_text, name, kind)
-        except ExtractError as error:
-            fail(
-                f"Sync commit {commit} has no fingerprinted {relative} {name} ({error}). "
-                "The coverage record does not describe that commit. Fix the skill or the extractor. "
-                "This is not a product-bug verdict.",
-                EXIT_MODEL,
-            )
-        try:
-            current = extract_function(current_text, name, kind)
-        except ExtractError as error:
-            problems.append(f"{relative} {name}: the covered function no longer extracts ({error})")
-            continue
-        if sha256_text(current) != sha256_text(recorded):
-            problems.append(f"{relative} {name}")
+        problem = _compare_region(
+            commit,
+            relative,
+            name,
+            lambda text, name=name, kind=kind: extract_function(text, name, kind),
+        )
+        if problem:
+            problems.append(problem)
+    for relative, label, extract in SLICES:
+        problem = _compare_region(commit, relative, label, extract)
+        if problem:
+            problems.append(problem)
     return problems
 
 

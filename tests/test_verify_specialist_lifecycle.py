@@ -15,7 +15,16 @@ verify = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verify)
 
 SPECIALISTS = ROOT / "plugin" / "src" / "specialists.ts"
+INDEX = ROOT / "plugin" / "index.ts"
 BUSY = 'if (exited && await this.childBusy(child)) return { text: "", exited: false }'
+RUN_EXITED = (
+    "const exited = await this.finished(child, controller.signal)\n"
+    "      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified'"
+)
+RUN_FORCED = (
+    "const exited = (await this.finished(child, controller.signal)) || true\n"
+    "      if (!this.current()) return { task_id: reserved.task_id, state: 'unverified'"
+)
 
 
 def body(source: str, name: str, kind: str) -> str:
@@ -50,6 +59,66 @@ def test_event_derived_busy_functions_are_covered():
     covered = {(relative, name) for relative, name, _kind in verify.COVERED}
     assert ("plugin/src/specialists.ts", "noteBusy") in covered
     assert ("plugin/src/specialists.ts", "appearsBusy") in covered
+
+
+def test_wait_messages_and_the_run_slice_are_fingerprinted():
+    covered = {(relative, name) for relative, name, _kind in verify.COVERED}
+    assert ("plugin/index.ts", "wait") in covered
+    assert ("plugin/index.ts", "messages") in covered
+    assert ("plugin/src/specialists.ts", "run") not in covered
+    slices = {(relative, label) for relative, label, _extract in verify.SLICES}
+    assert slices == {("plugin/src/specialists.ts", "run:finished-to-finishChild")}
+
+
+def _run_span(source: str) -> str:
+    extractors = [fn for _rel, label, fn in verify.SLICES if label == "run:finished-to-finishChild"]
+    assert len(extractors) == 1
+    return extractors[0](source)
+
+
+def test_forcing_finished_true_changes_only_the_run_slice():
+    source = SPECIALISTS.read_text(encoding="utf-8")
+    assert source.count(RUN_EXITED) == 1
+    span = _run_span(source)
+    assert span.startswith("this.finished(")
+    assert "this.finishChild(" in span
+    assert "exited" in span
+    assert "this.stop(child)" not in span
+    assert "专家任务" not in span
+    assert span.count("{") == span.count("}")
+
+    forced = source.replace(RUN_EXITED, RUN_FORCED, 1)
+    forced_span = _run_span(forced)
+    assert "|| true" in forced_span
+    assert forced_span != span
+
+    # An edit elsewhere in run(), including the catch path, is not this slice.
+    kickoff = source.replace("`专家任务 ${reserved.task_id}`", "`专家任务改 ${reserved.task_id}`", 1)
+    assert _run_span(kickoff) == span
+    assert body(kickoff, "run", "method") != body(source, "run", "method")
+    caught = source.replace(
+        "const exited = child ? await this.stop(child).catch(() => false) : false",
+        "const exited = true",
+        1,
+    )
+    assert source.count("const exited = child ? await this.stop(child).catch(() => false) : false") == 1
+    assert _run_span(caught) == span
+
+
+def test_dropping_the_wait_await_changes_its_body():
+    source = INDEX.read_text(encoding="utf-8")
+    original = "await ctx.session.wait({ sessionID })"
+    assert source.count(original) == 1
+    broken = source.replace(original, "void ctx.session.wait({ sessionID })", 1)
+    assert body(broken, "wait", "prop") != body(source, "wait", "prop")
+
+
+def test_reversing_the_transcript_changes_messages():
+    source = INDEX.read_text(encoding="utf-8")
+    original = "return (await ctx.session.context({ sessionID })) as any[]"
+    assert source.count(original) == 1
+    broken = source.replace(original, "return ((await ctx.session.context({ sessionID })) as any[]).reverse()", 1)
+    assert body(broken, "messages", "prop") != body(source, "messages", "prop")
 
 
 def test_appears_busy_always_false_changes_its_body():
