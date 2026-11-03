@@ -3,9 +3,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex-host]
   pull_request:
-    branches: [main]
+    branches: [main, codex-host]
 
 permissions:
   contents: read
