@@ -15,7 +15,7 @@ import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
 import { Research, findProjectRoot, guidanceNote, type CommandResult } from "./src/research"
 import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
-import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
+import { BLIND_SYSTEM, Specialists, STOP_GRACE_MS, SUMMARY_GRACE_MS, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { COORDINATOR_NATIVE_READS, controlInstructions } from "./src/coordinator-boundary"
 import { parameters, validateArgs } from "./src/schema"
@@ -51,6 +51,10 @@ export default Plugin.define({
       concurrency?: number
       specialistFanout?: number
       specialistTimeoutMs?: number
+      /** Test-only shortening of the post-interrupt stop wait. Omitted means `STOP_GRACE_MS`. */
+      specialistStopGraceMs?: number
+      /** Test-only shortening of the timeout-summary wait. Omitted means `SUMMARY_GRACE_MS`. */
+      specialistSummaryGraceMs?: number
     }
     const observations = new Observations()
     const workspaceProbe = new WorkspaceProbe()
@@ -406,6 +410,8 @@ export default Plugin.define({
       count(options.specialistTimeoutMs, 600_000),
       lifecycle.state,
       lifecycle.current,
+      count(options.specialistStopGraceMs, STOP_GRACE_MS),
+      count(options.specialistSummaryGraceMs, SUMMARY_GRACE_MS),
     )
     const controllers = new Map<string, Promise<void>>()
     ensureController = (root, main) => {

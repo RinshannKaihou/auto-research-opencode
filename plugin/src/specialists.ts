@@ -39,9 +39,9 @@ const FINAL_REPORT =
 /** Report text handed back to the node; the full report stays in the ledger. */
 const PREVIEW_CHARS = 1600
 /** How long an interrupted specialist may take to stop before its exit counts as unverified. */
-const STOP_GRACE_MS = 60_000
+export const STOP_GRACE_MS = 60_000
 /** One tool-free follow-up after a timeout. Long enough for a single reply, not another full shift. */
-const SUMMARY_GRACE_MS = 30_000
+export const SUMMARY_GRACE_MS = 30_000
 const PARTIAL_REPORT = "达到专家时间上限，已收回部分报告"
 const NO_USABLE_REPORT = "达到专家时间上限，没有可用报告"
 const UNVERIFIED_MARK = "【未完成·未核实】"
@@ -181,6 +181,10 @@ export class Specialists {
     private readonly timeoutMs = 600_000,
     runtime?: { specialistTools: Map<string, readonly string[]>; specialistResearch: Set<string> },
     private readonly current: () => boolean = () => true,
+    /** Tests pass a shorter wait. Production keeps `STOP_GRACE_MS`. */
+    private readonly stopGraceMs = STOP_GRACE_MS,
+    /** Tests pass a shorter wait. Production keeps `SUMMARY_GRACE_MS`. */
+    private readonly summaryGraceMs = SUMMARY_GRACE_MS,
   ) {
     this.tools = runtime?.specialistTools ?? new Map()
     this.researchMode = runtime?.specialistResearch ?? new Set()
@@ -369,7 +373,7 @@ export class Specialists {
     const exited = idle.then(() => true, () => false)
     await this.host.interrupt(child).catch(() => {})
     let timer: ReturnType<typeof setTimeout> | undefined
-    const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), STOP_GRACE_MS)))
+    const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), this.stopGraceMs)))
     try {
       return await Promise.race([exited, late])
     } finally {
@@ -377,7 +381,11 @@ export class Specialists {
     }
   }
 
-  /** One tool-free follow-up after a timeout. Host calls share the summary grace; exited is false when the child is still running. */
+  /**
+   * One tool-free follow-up after a timeout. Host calls share the summary grace.
+   * `exited` is false when the child cannot be confirmed stopped. A summary send
+   * that has not been accepted yet is in that group: it can still start a turn.
+   */
   private async summarize(child: string, signal?: AbortSignal): Promise<{ text: string; exited: boolean }> {
     if (signal?.aborted || !this.current()) return { text: "", exited: true }
     this.tools.set(child, [])
@@ -385,12 +393,17 @@ export class Specialists {
     const controller = new AbortController()
     let resolveDeadline!: (value: "deadline") => void
     const deadline = new Promise<"deadline">((resolve) => { resolveDeadline = resolve })
+    let fromAbort = false
     const onAbort = () => {
       controller.abort()
       resolveDeadline("deadline")
     }
-    signal?.addEventListener("abort", onAbort, { once: true })
-    const timer = setTimeout(onAbort, SUMMARY_GRACE_MS)
+    const onSignal = () => {
+      fromAbort = true
+      onAbort()
+    }
+    signal?.addEventListener("abort", onSignal, { once: true })
+    const timer = setTimeout(onAbort, this.summaryGraceMs)
     // A host call that never settles must not keep the delegating tool waiting past the grace.
     const bounded = async <T>(work: Promise<T>): Promise<T | "deadline"> => {
       const settled = work.then(
@@ -403,9 +416,35 @@ export class Specialists {
       return winner.value
     }
     const stopped = () => this.stop(child).catch(() => false)
+    // Once the delegating call has moved on, a late send must not leave a turn running.
+    const stopLateSend = (send: Promise<unknown>) => {
+      void send.then(
+        () => this.stop(child),
+        () => this.stop(child),
+      ).catch(() => {})
+    }
     try {
-      const sent = await bounded(this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID))
-      if (sent === "deadline") return { text: "", exited: await stopped() }
+      const send = this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID)
+      const sent = await bounded(send)
+      if (sent === "deadline") {
+        // `send` has not settled. A parent abort can still stop a turn that already
+        // accepted the summary; the grace timer cannot spend another grace waiting
+        // to discover that. An idle child is not a verified exit: the send can
+        // still start a turn, and that turn is stopped if the send later lands.
+        const aborted = fromAbort
+        const reading = this.host.messages(child).catch(() => [] as any[])
+        const exited = await stopped()
+        const messages = await Promise.race([
+          reading,
+          new Promise<any[]>((resolve) => {
+            const probe = setTimeout(() => resolve([]), aborted ? this.summaryGraceMs : 0)
+            void reading.then(() => clearTimeout(probe), () => clearTimeout(probe))
+          }),
+        ])
+        if (messages.some((item) => messageID(item) === summaryMessageID)) return { text: "", exited }
+        stopLateSend(send)
+        return { text: "", exited: false }
+      }
       const exited = await this.finished(child, controller.signal)
       if (!exited) return { text: "", exited: false }
       if (controller.signal.aborted) return { text: "", exited: true }
@@ -416,7 +455,7 @@ export class Specialists {
       return { text: "", exited: await stopped() }
     } finally {
       clearTimeout(timer)
-      signal?.removeEventListener("abort", onAbort)
+      signal?.removeEventListener("abort", onSignal)
     }
   }
 
@@ -476,9 +515,11 @@ export class Specialists {
       }, `${operationID}:finish`)
     }
     const { state, error } = verdict(exited, found.outcome, found.text, timedOut)
+    // An unverified exit must not freeze an earlier progress line as the report.
+    const report = exited ? found.text : ""
     let archiveError: string | undefined
-    const artifact = found.text
-      ? await this.archive(root, parent, taskID, found.outcome, found.text, operationID).catch((failure) => {
+    const artifact = report
+      ? await this.archive(root, parent, taskID, found.outcome, report, operationID).catch((failure) => {
           archiveError = message(failure)
           return null
         })
@@ -490,7 +531,7 @@ export class Specialists {
       result: {
         stop_reason: found.outcome,
         session_id: child,
-        preview: found.text.slice(0, PREVIEW_CHARS),
+        preview: report.slice(0, PREVIEW_CHARS),
         ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
         ...(archiveError ? { archive_error: archiveError } : {}),
       },

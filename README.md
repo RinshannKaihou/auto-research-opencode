@@ -170,7 +170,7 @@ opencode --auto
 |---|---|---|
 | `concurrency` | 1 | 同时运行的节点数。大于 1 还没有充分测试 |
 | `specialistFanout` | 2 | 每个节点同时最多几位专家 |
-| `specialistTimeoutMs` | 600000 | 每位专家的时间上限（毫秒）。超时后补问一次，收回标明未核实的摘要；没有可用文字时另行记录，并保留子会话 |
+| `specialistTimeoutMs` | 600000 | 每位专家的时间上限（毫秒）。超时后补问一次，收回标明未核实的摘要；没有可用文字时另行记录，并保留子会话。无法确认退出时记为未核实，不用更早的进度句当报告 |
 | `python` | `python3` | 管理研究记录所用的 Python（3.11 或更高） |
 | `registryPath` | `~/.local/share/auto-research-opencode/registry.sqlite3` | 记录"哪个会话属于哪个项目"的登记表 |
 
