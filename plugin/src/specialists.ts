@@ -8,7 +8,7 @@
  * assigned inputs: no workspace, no research records, none of OpenCode's prompt.
  */
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { wasNotSent } from './host-submission'
 import { oneLine, type ModelRef, type PermissionRule, type SessionHost } from "./engine"
@@ -39,7 +39,55 @@ const FINAL_REPORT =
 /** Report text handed back to the node; the full report stays in the ledger. */
 const PREVIEW_CHARS = 1600
 /** How long an interrupted specialist may take to stop before its exit counts as unverified. */
-const STOP_GRACE_MS = 60_000
+export const STOP_GRACE_MS = 60_000
+/**
+ * One tool-free follow-up after a stall or the absolute cap.
+ * Long enough for a reasoning reply. The summary turn does not turn reasoning down.
+ */
+export const SUMMARY_GRACE_MS = 60_000
+/** One host read or busy probe after the summary grace. Not a plugin option. */
+const HOST_PROBE_MS = 2_000
+/** Silence that stops a specialist. Any new reasoning, text, or tool activity resets it. */
+export const SPECIALIST_STALL_MS = 300_000
+/** Absolute backstop for a specialist that never goes quiet. */
+export const SPECIALIST_TIMEOUT_MS = 3_600_000
+/** Not a plugin option. Tests set this before plugin setup so they do not wait out the production grace. */
+export const specialistGraceForTest: { stopMs?: number; summaryMs?: number } = {}
+
+const PROGRESS_EVENTS = new Set([
+  "session.reasoning.started",
+  "session.reasoning.delta",
+  "session.reasoning.ended",
+  "session.text.started",
+  "session.text.delta",
+  "session.text.ended",
+  "session.tool.input.started",
+  "session.tool.input.delta",
+  "session.tool.input.ended",
+  "session.tool.called",
+  "session.tool.progress",
+  "session.tool.success",
+  "session.tool.failed",
+  "session.step.started",
+  "session.step.streamed",
+  "session.message.content.updated",
+])
+
+/** Streamed reasoning, text, or tool activity in a child session. Status heartbeats are not progress. */
+export function specialistProgressEvent(type: unknown): boolean {
+  return typeof type === "string" && PROGRESS_EVENTS.has(type)
+}
+const PARTIAL_REPORT = "达到专家时间上限，已收回部分报告"
+const NO_USABLE_REPORT = "达到专家时间上限，没有可用报告"
+const STALL_PARTIAL = "专家一段时间没有新的推进，已收回部分报告"
+const STALL_NONE = "专家一段时间没有新的推进，没有可用报告"
+type LimitKind = "stall" | "cap"
+const UNVERIFIED_MARK = "【未完成·未核实】"
+const SUMMARY_PROMPT = [
+  "时间已到。不要使用任何工具。",
+  "请只根据本会话里已经出现的文字、推理和工具结果，写一份报告：列出已看到的发现和依据，并写明仍不确定、尚未核实的地方。",
+  "不要把开场的进度说明当作结论。",
+].join("\n")
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -109,6 +157,14 @@ function kickoff(task: any, workspace: string, tools: readonly string[]): string
   ].join("\n")
 }
 
+function assistantText(message: any): string {
+  return (message?.content ?? [])
+    .filter((part: any) => part?.type === "text")
+    .map((part: any) => String(part.text ?? ""))
+    .join("\n")
+    .trim()
+}
+
 /** How a specialist session's turn ended and the last text it wrote. */
 export function sessionResult(messages: any[]): { outcome: string | null; text: string } {
   const last = messages.at(-1)
@@ -116,24 +172,49 @@ export function sessionResult(messages: any[]): { outcome: string | null; text: 
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index]
     if (item?.type !== "assistant") continue
-    const text = (item.content ?? [])
-      .filter((part: any) => part?.type === "text")
-      .map((part: any) => String(part.text ?? ""))
-      .join("\n")
-      .trim()
+    const text = assistantText(item)
     if (text) return { outcome, text }
   }
   return { outcome, text: "" }
 }
 
-function verdict(exited: boolean, outcome: string | null, text: string, timedOut: boolean) {
+function messageID(item: any): string {
+  return String(item?.id ?? item?.info?.id ?? "")
+}
+
+/** A host call that must return. `fallback` is used when it outlives `ms`. */
+function probeWithin<T>(work: Promise<T>, fallback: T, ms = HOST_PROBE_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms) }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/** Text written after the summary prompt. Earlier progress lines are not part of it. */
+function textSince(messages: any[], id: string): string {
+  const start = messages.findIndex((item) => messageID(item) === id)
+  if (start < 0) return ""
+  return sessionResult(messages.slice(start + 1)).text
+}
+
+function markUnverified(text: string): string {
+  return `${UNVERIFIED_MARK}\n${text.trim()}`
+}
+
+function limitCopy(limit: LimitKind, usable: boolean): string {
+  if (limit === "stall") return usable ? STALL_PARTIAL : STALL_NONE
+  return usable ? PARTIAL_REPORT : NO_USABLE_REPORT
+}
+
+function verdict(exited: boolean, outcome: string | null, text: string, limit: LimitKind | null) {
   if (!exited) return { state: "unverified", error: "专家会话被中断后没有按时停下，退出未核实" }
   if (outcome === "succeeded") {
     return text ? { state: "completed", error: null } : { state: "incomplete", error: "专家没有给出文字报告" }
   }
   if (outcome === "interrupted") {
-    return timedOut
-      ? { state: "incomplete", error: "达到专家时间上限，已收回部分报告" }
+    return limit
+      ? { state: "incomplete", error: limitCopy(limit, true) }
       : { state: "cancelled", error: "专家这一轮被中断" }
   }
   return { state: "incomplete", error: `专家会话以「${outcome ?? "未知"}」结束` }
@@ -143,18 +224,62 @@ export class Specialists {
   /** Tools of each specialist session this process started, for the per-request filter. */
   private tools: Map<string, readonly string[]>
   private researchMode: Set<string>
+  /** Last streamed activity for a specialist this process is watching. Missing means it is not watched. */
+  private progressAt = new Map<string, number>()
+  /** Specialist children currently busy. Idle and deleted sessions are removed. */
+  private sessionBusy = new Map<string, boolean>()
 
   constructor(
     private readonly research: Research,
     private readonly host: SessionHost,
     private readonly modelFor: (root: string) => ModelRef | undefined,
     private readonly fanout = 2,
-    private readonly timeoutMs = 600_000,
+    private readonly timeoutMs = SPECIALIST_TIMEOUT_MS,
+    private readonly stallMs = SPECIALIST_STALL_MS,
     runtime?: { specialistTools: Map<string, readonly string[]>; specialistResearch: Set<string> },
     private readonly current: () => boolean = () => true,
+    /** Tests pass a shorter wait. Production keeps `STOP_GRACE_MS`. */
+    private readonly stopGraceMs = STOP_GRACE_MS,
+    /** Tests pass a shorter wait. Production keeps `SUMMARY_GRACE_MS`. */
+    private readonly summaryGraceMs = SUMMARY_GRACE_MS,
   ) {
     this.tools = runtime?.specialistTools ?? new Map()
     this.researchMode = runtime?.specialistResearch ?? new Set()
+  }
+
+  /** Resets the stall window. Events for a session that is not being watched are ignored. */
+  noteProgress(sessionID: string): void {
+    if (sessionID && this.progressAt.has(sessionID)) this.progressAt.set(sessionID, Date.now())
+  }
+
+  /** Remembers a busy specialist so a late stop can refuse a verified exit. */
+  noteBusy(sessionID: string, status: unknown): void {
+    if (!sessionID) return
+    if (status === "idle" || status === "deleted") {
+      this.sessionBusy.delete(sessionID)
+      return
+    }
+    if ((status === "busy" || status === "retry") && (this.tools.has(sessionID) || this.progressAt.has(sessionID))) {
+      this.sessionBusy.set(sessionID, true)
+    }
+  }
+
+  /** False when this process has not seen a busy status for the session. */
+  appearsBusy(sessionID: string): boolean {
+    return this.sessionBusy.get(sessionID) === true
+  }
+
+  /** Prefer the host's own busy bit. A missing, failed, or slow probe is not proof the child went idle. */
+  private childBusy(child: string): Promise<boolean> {
+    const probe = (async (): Promise<boolean> => {
+      try {
+        if (this.host.busy) return (await this.host.busy(child)) === true
+        return this.appearsBusy(child)
+      } catch {
+        return true
+      }
+    })()
+    return probeWithin(probe, true)
   }
 
   /** None for a specialist from before a restart; its session's permission rules still hold. */
@@ -248,11 +373,11 @@ export class Specialists {
     if (!claimed.claimed) return withoutPrompt(await this.research.call('specialist_get', parent, { task_id: reserved.task_id }))
     const tools: readonly string[] = launch.tools
     const controller = new AbortController()
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, Math.max(0, launch.deadline_at - Date.now()))
+    let limit: LimitKind | null = null
+    const disarm = this.armLimits(String(launch.session_id), launch.deadline_at, controller, (kind) => {
+      if (controller.signal.aborted || limit) return
+      limit = kind
+    })
     const cancel = () => controller.abort()
     signal?.addEventListener("abort", cancel, { once: true })
     if (signal?.aborted) controller.abort()
@@ -291,32 +416,9 @@ export class Specialists {
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'submitted' }, `${operationID}:submitted`)
       const exited = await this.finished(child, controller.signal)
       if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
-      const { outcome, text } = sessionResult(await this.host.messages(child).catch(() => []))
-      const { state, error } = verdict(exited, outcome, text, timedOut)
-      let archiveError: string | undefined
-      const artifact = text
-        ? await this.archive(root, parent, reserved.task_id, outcome, text, operationID).catch((failure) => {
-            archiveError = message(failure)
-            return null
-          })
-        : null
-      return await this.settle(
-        parent,
-        reserved.task_id,
-        {
-          state,
-          error,
-          exit_verified: exited,
-          result: {
-            stop_reason: outcome,
-            session_id: child,
-            preview: text.slice(0, PREVIEW_CHARS),
-            ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
-            ...(archiveError ? { archive_error: archiveError } : {}),
-          },
-        },
-        `${operationID}:finish`,
-      )
+      const reason = limit
+      disarm()
+      return await this.finishChild(root, parent, reserved.task_id, child, exited, reason, operationID, signal)
     } catch (error) {
       if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
       const stage = !child && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
@@ -342,8 +444,46 @@ export class Specialists {
         `${operationID}:error`,
       )
     } finally {
-      clearTimeout(timer)
+      disarm()
       signal?.removeEventListener("abort", cancel)
+    }
+  }
+
+  /**
+   * Stops the specialist after `stallMs` without streamed activity, or at `deadlineAt`
+   * even when activity keeps arriving. The callback runs before the abort.
+   */
+  private armLimits(
+    sessionID: string,
+    deadlineAt: number,
+    controller: AbortController,
+    mark: (kind: LimitKind) => void,
+  ): () => void {
+    this.progressAt.set(sessionID, Date.now())
+    let armed = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = () => {
+      if (!armed || controller.signal.aborted) return
+      const now = Date.now()
+      const quiet = now - (this.progressAt.get(sessionID) ?? now)
+      if (!armed) return
+      if (now >= deadlineAt) {
+        mark("cap")
+        controller.abort()
+        return
+      }
+      if (quiet >= this.stallMs) {
+        mark("stall")
+        controller.abort()
+        return
+      }
+      timer = setTimeout(tick, Math.max(0, Math.min(deadlineAt - now, this.stallMs - quiet)))
+    }
+    timer = setTimeout(tick, Math.max(0, Math.min(deadlineAt - Date.now(), this.stallMs)))
+    return () => {
+      armed = false
+      clearTimeout(timer)
+      this.progressAt.delete(sessionID)
     }
   }
 
@@ -365,12 +505,174 @@ export class Specialists {
     const exited = idle.then(() => true, () => false)
     await this.host.interrupt(child).catch(() => {})
     let timer: ReturnType<typeof setTimeout> | undefined
-    const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), STOP_GRACE_MS)))
+    const late = new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), this.stopGraceMs)))
     try {
       return await Promise.race([exited, late])
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  /**
+   * One tool-free follow-up after a timeout. Host calls share the summary grace.
+   * `exited` is false when the child cannot be confirmed stopped. A summary send
+   * that has not been accepted yet is in that group: it can still start a turn.
+   */
+  private async summarize(child: string, signal?: AbortSignal): Promise<{ text: string; exited: boolean }> {
+    if (signal?.aborted || !this.current()) return { text: "", exited: true }
+    this.tools.set(child, [])
+    const summaryMessageID = `msg_research_${randomUUID().replaceAll("-", "")}`
+    const controller = new AbortController()
+    let resolveDeadline!: (value: "deadline") => void
+    const deadline = new Promise<"deadline">((resolve) => { resolveDeadline = resolve })
+    let fromAbort = false
+    const onAbort = () => {
+      controller.abort()
+      resolveDeadline("deadline")
+    }
+    const onSignal = () => {
+      fromAbort = true
+      onAbort()
+    }
+    signal?.addEventListener("abort", onSignal, { once: true })
+    const timer = setTimeout(onAbort, this.summaryGraceMs)
+    // A host call that never settles must not keep the delegating tool waiting past the grace.
+    const bounded = async <T>(work: Promise<T>): Promise<T | "deadline"> => {
+      const settled = work.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      const winner = await Promise.race([settled, deadline])
+      if (winner === "deadline") return "deadline"
+      if (!winner.ok) throw winner.error
+      return winner.value
+    }
+    const stopped = () => this.stop(child).catch(() => false)
+    // Once the delegating call has moved on, a late send must not leave a turn running.
+    const stopLateSend = (send: Promise<unknown>) => {
+      void send.then(() => this.stop(child).catch(() => {}), () => this.stop(child).catch(() => {}))
+    }
+    try {
+      const send = this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID)
+      const sent = await bounded(send)
+      if (sent === "deadline") {
+        // `send` has not settled. A parent abort can still stop a turn that already
+        // accepted the summary; the grace timer cannot spend another grace waiting
+        // to discover that. An idle child is not a verified exit: the send can
+        // still start a turn, and that turn is stopped if the send later lands.
+        const aborted = fromAbort
+        const reading = this.host.messages(child).catch(() => [] as any[])
+        const exited = await stopped()
+        const messages = await Promise.race([
+          reading,
+          new Promise<any[]>((resolve) => {
+            const probe = setTimeout(() => resolve([]), aborted ? this.summaryGraceMs : 0)
+            void reading.then(() => clearTimeout(probe), () => clearTimeout(probe))
+          }),
+        ])
+        if (messages.some((item) => messageID(item) === summaryMessageID)) {
+          if (exited && await this.childBusy(child)) return { text: "", exited: false }
+          return { text: "", exited }
+        }
+        stopLateSend(send)
+        return { text: "", exited: false }
+      }
+      const exited = await this.finished(child, controller.signal)
+      if (!exited) return { text: "", exited: false }
+      if (controller.signal.aborted) {
+        if (fromAbort) return { text: "", exited: true }
+        // The grace already fired, so the shared deadline cannot bound this read.
+        const messages = await probeWithin(this.host.messages(child).catch(() => [] as any[]), [] as any[])
+        return { text: textSince(messages, summaryMessageID), exited: true }
+      }
+      const messages = await bounded(this.host.messages(child).catch(() => []))
+      if (messages === "deadline" || controller.signal.aborted) return { text: "", exited: true }
+      return { text: textSince(messages, summaryMessageID), exited: true }
+    } catch {
+      return { text: "", exited: await stopped() }
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", onSignal)
+    }
+  }
+
+  /** Records the specialist's report. A stall or the absolute cap is summarized instead of replaying an earlier progress line. */
+  private async finishChild(
+    root: string,
+    parent: string,
+    taskID: string,
+    child: string,
+    exited: boolean,
+    limit: LimitKind | null,
+    operationID: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
+    const found = sessionResult(await this.host.messages(child).catch(() => []))
+    if (limit && exited && found.outcome !== "succeeded") {
+      const summary = signal?.aborted ? { text: "", exited: true } : await this.summarize(child, signal)
+      if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
+      const stopReason = found.outcome ?? "interrupted"
+      if (!summary.exited) {
+        const failed = verdict(false, stopReason, "", null)
+        return this.settle(parent, taskID, {
+          state: failed.state,
+          error: failed.error,
+          exit_verified: false,
+          result: { stop_reason: stopReason, session_id: child, preview: "" },
+        }, `${operationID}:finish`)
+      }
+      if (summary.text) {
+        const text = markUnverified(summary.text)
+        let archiveError: string | undefined
+        const artifact = await this.archive(root, parent, taskID, stopReason, text, operationID, true).catch((failure) => {
+          archiveError = message(failure)
+          return null
+        })
+        return this.settle(parent, taskID, {
+          state: "incomplete",
+          error: limitCopy(limit, true),
+          exit_verified: true,
+          result: {
+            stop_reason: stopReason,
+            session_id: child,
+            preview: text.slice(0, PREVIEW_CHARS),
+            incomplete: true,
+            unverified: true,
+            ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
+            ...(archiveError ? { archive_error: archiveError } : {}),
+          },
+        }, `${operationID}:finish`)
+      }
+      return this.settle(parent, taskID, {
+        state: "incomplete",
+        error: limitCopy(limit, false),
+        exit_verified: true,
+        result: { stop_reason: stopReason, session_id: child, preview: "" },
+      }, `${operationID}:finish`)
+    }
+    const { state, error } = verdict(exited, found.outcome, found.text, limit)
+    // An unverified exit must not freeze an earlier progress line as the report.
+    const report = exited ? found.text : ""
+    let archiveError: string | undefined
+    const artifact = report
+      ? await this.archive(root, parent, taskID, found.outcome, report, operationID).catch((failure) => {
+          archiveError = message(failure)
+          return null
+        })
+      : null
+    return this.settle(parent, taskID, {
+      state,
+      error,
+      exit_verified: exited,
+      result: {
+        stop_reason: found.outcome,
+        session_id: child,
+        preview: report.slice(0, PREVIEW_CHARS),
+        ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
+        ...(archiveError ? { archive_error: archiveError } : {}),
+      },
+    }, `${operationID}:finish`)
   }
 
   /** Freezes the report into the ledger's objects, the same file format as the DSH plugin. */
@@ -381,11 +683,17 @@ export class Specialists {
     outcome: string | null,
     text: string,
     operationID: string,
+    partial = false,
   ): Promise<{ path: string; version: string; kind: string }> {
     const directory = join(root, ".research", "specialist-results")
     mkdirSync(directory, { recursive: true })
     const path = join(directory, `${taskID}.json`)
-    writeFileSync(path, JSON.stringify({ stop_reason: outcome, output: [{ type: "text", text }] }), { mode: 0o600 })
+    const body = {
+      stop_reason: outcome,
+      ...(partial ? { incomplete: true, unverified: true } : {}),
+      output: [{ type: "text", text }],
+    }
+    writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
     try {
       return await this.research.call("specialist_result_import", parent, { task_id: taskID }, `${operationID}:result`)
     } finally {
@@ -449,8 +757,11 @@ export class Specialists {
 
   private async watchRecovered(root: string, task: any, launch: any): Promise<void> {
     const controller = new AbortController()
-    let timedOut = false
-    const timer = setTimeout(() => { timedOut = true; controller.abort() }, Math.max(0, launch.deadline_at - Date.now()))
+    let limit: LimitKind | null = null
+    const disarm = this.armLimits(String(launch.session_id), launch.deadline_at, controller, (kind) => {
+      if (controller.signal.aborted || limit) return
+      limit = kind
+    })
     try {
       const exited = await this.finished(launch.session_id, controller.signal)
       if (!this.current()) return
@@ -458,23 +769,21 @@ export class Specialists {
       const start = messages.findIndex(item => item?.id === launch.message_id || item?.info?.id === launch.message_id)
       const subsequent = start >= 0 ? messages.slice(start + 1) : []
       const correlated = start >= 0 && !subsequent.some(item => item?.type === 'user' || item?.type === 'synthetic')
-      const { outcome, text } = sessionResult(messages)
+      const { outcome } = sessionResult(messages)
       if (!correlated || !outcome) {
         await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
           exit_verified: false, error: '无法把专家终态与原启动消息对应；需人工核对。' }, `${task.task_id}:warm-unknown`)
         return
       }
-      const { state, error } = verdict(exited, outcome, text, timedOut)
-      const operationID = `${task.task_id}:warm-result`
-      const artifact = text ? await this.archive(root, task.parent_session_id, task.task_id, outcome, text, operationID).catch(() => null) : null
-      await this.settle(task.parent_session_id, task.task_id, { state, error, exit_verified: exited,
-        result: { stop_reason: outcome, session_id: launch.session_id, preview: text.slice(0, PREVIEW_CHARS),
-          ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}) } }, `${operationID}:finish`)
+      const reason = limit
+      disarm()
+      await this.finishChild(root, task.parent_session_id, task.task_id, launch.session_id, exited, reason,
+        `${task.task_id}:warm-result`)
     } catch {
       if (this.current()) await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
         exit_verified: false, error: '专家恢复核对失败；需人工核对。' }, `${task.task_id}:warm-error`).catch(() => {})
     } finally {
-      clearTimeout(timer)
+      disarm()
     }
   }
 

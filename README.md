@@ -143,7 +143,7 @@ opencode --auto
 
 - 专家能读节点工作目录和研究记录，不能运行命令、改文件或写研究记录，也不能再叫别人。
 - 盲评专家只看得到分配给它的材料，看不到材料来源、项目目标和节点结论。
-- 每个节点同时最多 2 位专家，每位最多 10 分钟。
+- 每个节点同时最多 2 位专家。专家连续 5 分钟没有新的推进会停下；一直有推进时，最长工作 60 分钟。
 - 专家的完整报告存进研究记录，节点自己判断采不采用。
 
 详见 [plugin/README.md](plugin/README.md#节点内专家)。
@@ -159,7 +159,8 @@ opencode --auto
     "options": {
       "concurrency": 1,
       "specialistFanout": 2,
-      "specialistTimeoutMs": 600000,
+      "specialistStallMs": 300000,
+      "specialistTimeoutMs": 3600000,
       "python": "/path/to/python3"
     }
   }
@@ -170,7 +171,8 @@ opencode --auto
 |---|---|---|
 | `concurrency` | 1 | 同时运行的节点数。大于 1 还没有充分测试 |
 | `specialistFanout` | 2 | 每个节点同时最多几位专家 |
-| `specialistTimeoutMs` | 600000 | 每位专家的时间上限（毫秒），超时后收回已写的部分，记为"未完成" |
+| `specialistStallMs` | 300000 | 专家多久没有新的推进就停下（毫秒）。推进包括流式推理、文字、工具调用开始或结束，以及工具输出。停下后补问一次，收回标明未核实的摘要；没有可用文字时记为没有新的推进、没有可用报告，并保留子会话。无法确认退出时记为未核实，不用更早的进度句当报告 |
+| `specialistTimeoutMs` | 3600000 | 专家连续工作的绝对时间上限（毫秒）。即使一直有推进，到点也会停下。补问和记录方式与停滞相同，原因记为达到时间上限 |
 | `python` | `python3` | 管理研究记录所用的 Python（3.11 或更高） |
 | `registryPath` | `~/.local/share/auto-research-opencode/registry.sqlite3` | 记录"哪个会话属于哪个项目"的登记表 |
 

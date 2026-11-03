@@ -15,7 +15,7 @@ import { ResearchRpc } from "./rpc"
 import { StorageClient } from "./src/storage"
 import { Research, findProjectRoot, guidanceNote, type CommandResult } from "./src/research"
 import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
-import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
+import { BLIND_SYSTEM, Specialists, SPECIALIST_STALL_MS, SPECIALIST_TIMEOUT_MS, STOP_GRACE_MS, SUMMARY_GRACE_MS, specialistGraceForTest, specialistProgressEvent, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { COORDINATOR_NATIVE_READS, controlInstructions } from "./src/coordinator-boundary"
 import { parameters, validateArgs } from "./src/schema"
@@ -50,7 +50,10 @@ export default Plugin.define({
       registryPath?: string
       concurrency?: number
       specialistFanout?: number
+      /** Absolute backstop for one specialist. Omitted means `SPECIALIST_TIMEOUT_MS`. */
       specialistTimeoutMs?: number
+      /** Silence that stops one specialist. Omitted means `SPECIALIST_STALL_MS`. */
+      specialistStallMs?: number
     }
     const observations = new Observations()
     const workspaceProbe = new WorkspaceProbe()
@@ -76,7 +79,9 @@ export default Plugin.define({
     let notifyEventState = () => {}
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
+    let observeSpecialist: ((event: any) => void) | undefined
     const queueEvent = (event: any) => {
+      observeSpecialist?.(event)
       if (event?.type === 'session.tool.failed' && !shellCalls.has(`${event.data?.sessionID}:${event.data?.id}`)) {
         telemetryHandler?.(event); return
       }
@@ -268,6 +273,17 @@ export default Plugin.define({
         await verifyController(sessionID, true)
         return (await ctx.session.context({ sessionID })) as any[]
       },
+      busy: async (sessionID) => {
+        const probe = (ctx.session as { busy?: (input: { sessionID: string }) => boolean | Promise<boolean> }).busy
+        if (typeof probe !== "function") return specialists.appearsBusy(sessionID)
+        try {
+          const result = await within(Promise.resolve(probe({ sessionID })), 2_000)
+          // A probe that never returns is not proof the session went idle.
+          return result === undefined ? true : !!result
+        } catch {
+          return true
+        }
+      },
       eventsPending: (sessionID) => eventGap || eventChains.has(sessionID) || failedEvents.has(sessionID),
       recoveryMessages: async (sessionID) => {
         requireCurrent()
@@ -403,10 +419,23 @@ export default Plugin.define({
       host,
       (root) => engine.modelFor(root),
       count(options.specialistFanout, 2),
-      count(options.specialistTimeoutMs, 600_000),
+      count(options.specialistTimeoutMs, SPECIALIST_TIMEOUT_MS),
+      count(options.specialistStallMs, SPECIALIST_STALL_MS),
       lifecycle.state,
       lifecycle.current,
+      specialistGraceForTest.stopMs ?? STOP_GRACE_MS,
+      specialistGraceForTest.summaryMs ?? SUMMARY_GRACE_MS,
     )
+    observeSpecialist = (event) => {
+      const sessionID = event?.data?.sessionID
+      if (typeof sessionID !== "string" || !sessionID) return
+      if (specialistProgressEvent(event.type)) specialists.noteProgress(sessionID)
+      const type = event.type
+      if (type === "session.deleted") specialists.noteBusy(sessionID, "deleted")
+      else if (type === "session.status") specialists.noteBusy(sessionID, event.data?.status?.type)
+      else if (type === "session.idle" || type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted") specialists.noteBusy(sessionID, "idle")
+      else if (type === "session.execution.started") specialists.noteBusy(sessionID, "busy")
+    }
     const controllers = new Map<string, Promise<void>>()
     ensureController = (root, main) => {
       let existing = controllers.get(root)
