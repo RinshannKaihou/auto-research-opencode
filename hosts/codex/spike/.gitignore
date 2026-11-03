@@ -1,9 +1,0 @@
-# Re-run output. home/config.toml stays tracked (key-free; no API key).
-npm/
-home/*
-!home/config.toml
-home_hooks/
-home_nohdr/
-work/
-logs/
-schema/
