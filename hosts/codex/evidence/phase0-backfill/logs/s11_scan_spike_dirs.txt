@@ -1,0 +1,30 @@
+# root /workspace/codex-spike/home
+  other            files=   44 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  scripts          files=   11 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sessions         files=   33 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  shell_snapshots  files=    2 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sqlite           files=    9 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none
+# root /workspace/codex-spike/home_hooks
+  other            files=   43 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  scripts          files=   11 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sessions         files=    1 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sqlite           files=   17 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none
+# root /workspace/codex-spike/home_hooks_untrusted
+  other            files=   42 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  scripts          files=   11 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sessions         files=    2 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sqlite           files=   14 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none
+# root /workspace/codex-spike/home_nohdr
+  other            files=   42 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  scripts          files=   11 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sessions         files=    2 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sqlite           files=   15 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none
+# root /workspace/codex-spike/logs
+  logs             files=   49 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none
+# root /workspace/codex-spike/work
+  files with hits: none

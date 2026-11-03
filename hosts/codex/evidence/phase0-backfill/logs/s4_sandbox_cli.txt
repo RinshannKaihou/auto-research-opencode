@@ -1,0 +1,19 @@
+== -c default_permissions="ro_env": cat .env
+cat: .env: Permission denied
+exit=1
+== -c default_permissions="ro_env": cat readme.txt
+hello
+exit=0
+== -c default_permissions="ro_env": touch shell_write.txt
+touch: cannot touch 'shell_write.txt': Read-only file system
+exit=1
+== -c default_permissions="ro_env": echo x > shell_write2.txt
+sh: 1: cannot create shell_write2.txt: Read-only file system
+exit=2
+== control: -c sandbox_mode="read-only" (no deny rule): cat .env
+BF_CANARY=<CANARY-READ>
+exit=0
+.
+..
+.env
+readme.txt

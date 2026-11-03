@@ -1,0 +1,10 @@
+# root /workspace/codex-spike/backfill
+  logs             files=   17 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  other            files=   42 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  run              files=    1 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  scripts          files=   24 key_raw_hits=0 key_b64_hits=0 redacted_markers=2
+  sessions         files=    6 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  shell_snapshots  files=    3 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  sqlite           files=   16 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  work             files=    2 key_raw_hits=0 key_b64_hits=0 redacted_markers=0
+  files with hits: none

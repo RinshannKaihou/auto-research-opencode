@@ -1,0 +1,8 @@
+{"t": 1793677351.0, "event": "start", "pid": 944696, "ppid": 944644, "token_present": true, "token_sha8": "ba1bfaec", "opencode_vars": 0}
+{"t": 1793677351.02, "event": "start", "pid": 944718, "ppid": 944644, "token_present": true, "token_sha8": "3efc6d33", "opencode_vars": 0}
+{"t": 1793677351.04, "event": "start", "pid": 944742, "ppid": 944644, "token_present": false, "token_sha8": null, "opencode_vars": 0}
+{"t": 1793677353.63, "event": "call", "pid": 944696, "ppid": 944644, "token_present": true, "token_sha8": "ba1bfaec", "opencode_vars": 0}
+{"t": 1793677358.46, "event": "call", "pid": 944718, "ppid": 944644, "token_present": true, "token_sha8": "3efc6d33", "opencode_vars": 0}
+{"t": 1793677361.36, "event": "start", "pid": 945112, "ppid": 944644, "token_present": false, "token_sha8": null, "opencode_vars": 0}
+{"t": 1793677383.33, "event": "start", "pid": 945482, "ppid": 944644, "token_present": false, "token_sha8": null, "opencode_vars": 0}
+{"t": 1793677420.91, "event": "start", "pid": 945991, "ppid": 945932, "token_present": false, "token_sha8": null, "opencode_vars": 0}

@@ -1,0 +1,49 @@
+=== run 2026-11-03 11:42:30 +0800 userAgent: spike/0.166.0 (Debian 13.0.0; x86_64) dumb (spike; 0.1)
+S2 threads: A(coordinator-like)= 01a19f80-5835-7823-a077-1edebb48e053 B(node-like)= 01a19f80-584c-72d0-a929-4d575039eb0f W(web on)= 01a19f80-585d-7b01-813c-9f47929a353b
+
+## S2-A shell/subagent/web OFF, token A thread=01a19f80-5835-7823-a077-1edebb48e053 turn=01a19f80-586f-7da2-a0b5-e608949c759c status=completed model_calls=2 http=[200, 200]
+  tools sent to model: ['list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'read_mcp_resource', 'request_user_input', 'view_image']
+  item types: {'userMessage': 1, 'reasoning': 2, 'mcpToolCall': 1, 'agentMessage': 1}
+  mcp: tokstub whoami completed {"content": [{"type": "text", "text": "{\"token_present\": true, \"token_sha8\": \"ba1bfaec\"}"}], "structuredContent": null, "_meta": null}
+  final: "STEP 1: UNAVAILABLE\nSTEP 2: UNAVAILABLE\nSTEP 3: UNAVAILABLE\nSTEP 4: DONE token present, sha ba1bfaec"
+
+## S2-B shell/subagent ON, web OFF, token B thread=01a19f80-584c-72d0-a929-4d575039eb0f turn=01a19f80-67b7-7091-b68e-059fc9ad4a72 status=completed model_calls=4 http=[200, 200, 200, 200]
+  tools sent to model: ['exec_command', 'list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'multi_agent_v1', 'read_mcp_resource', 'request_user_input', 'view_image', 'write_stdin']
+  item types: {'userMessage': 1, 'agentMessage': 2, 'commandExecution': 2, 'reasoning': 1, 'mcpToolCall': 1}
+  cmd: "/bin/bash -lc env" exit= 0 status= completed out= "SHELL=/bin/bash\nCOLORTERM=\nCODEX_VERSION=0.166.0\nGH_PAGER=cat\nPWD=/workspace/codex-spike/backfill/work/s2\nLOGNAME=root\nHOME=/home/box\nCODEX_SESSION_ID=01a19f80-"
+  cmd: "/bin/bash -lc 'env | grep -c OPENCODE'" exit= 1 status= failed out= "0\n"
+  mcp: tokstub whoami completed {"content": [{"type": "text", "text": "{\"token_present\": true, \"token_sha8\": \"3efc6d33\"}"}], "structuredContent": null, "_meta": null}
+  final: "`env` ran; `env | grep -c OPENCODE` returned `0`.\nTokstub `whoami`: token present, hash `3efc6d33`.\nA tool named `spawn_agent` is available; I did not use it."
+
+## S2-W web_search live thread=01a19f80-585d-7b01-813c-9f47929a353b turn=01a19f80-7a51-7071-96ff-9b93690c7eaf status=completed model_calls=1 http=[200]
+  tools sent to model: ['exec_command', 'list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'read_mcp_resource', 'request_user_input', 'view_image', 'web_search', 'write_stdin']
+  item types: {'userMessage': 1, 'reasoning': 1, 'agentMessage': 1}
+  final: "NO_WEB_TOOL"
+
+## S4-D default_permissions=ro_env, approval never thread=01a19f80-803f-7110-b12d-049e3173b880 turn=01a19f80-80c3-7a91-bee3-fdd3c9425cbb status=completed model_calls=5 http=[200, 200, 200, 200, 200]
+  tools sent to model: ['exec_command', 'list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'multi_agent_v1', 'read_mcp_resource', 'request_user_input', 'view_image', 'write_stdin']
+  item types: {'userMessage': 1, 'reasoning': 5, 'agentMessage': 2, 'commandExecution': 1}
+  cmd: "/bin/bash -c 'cat readme.txt'" exit= 0 status= completed out= "hello\n"
+  final: "1. Exit code: `1` \u2014 `cat: .env: Permission denied`\n2. Exit code: `1` \u2014 `/bin/bash: line 1: shell_write.txt: Read-only file system`\n3. Exit code: `1` \u2014 `patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings`\n4. Exit code: `0` \u2014 `hello`"
+S4 fs after: shell_write.txt exists= False patched.txt exists= False
+
+## S3-C turn with clientUserMessageId thread=01a19f80-d682-75c2-ad81-7adca04253be turn=01a19f80-d693-7081-a6f0-f285dd99665a status=completed model_calls=1 http=[200]
+  tools sent to model: ['exec_command', 'list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'multi_agent_v1', 'read_mcp_resource', 'request_user_input', 'view_image', 'write_stdin']
+  item types: {'userMessage': 1, 'agentMessage': 1}
+  final: "S3-ACK"
+S3 before kill: clientIds in thread/read: ['bf-s3-57fd835c40ce']
+raw key hits in app-server stdout msgs (phase1): 0
+S3: app-server pid 944644 SIGKILLed, returncode -9
+
+## S3 after restart: new pid 945735
+thread/read userMessages: [('01a19f80-d693-7081-a6f0-f285dd99665a', 'completed', 'bf-s3-57fd835c40ce', ['Reply with exactly: S3-ACK'])]
+S3 MATCH (thread/read): True expected bf-s3-57fd835c40ce
+thread/turns/list clientIds: ['bf-s3-57fd835c40ce']
+raw key hits in app-server stdout msgs (phase2): 0
+
+## S2-W2 web_search live (retry, explicit) thread=01a19f81-694f-7470-84e4-b416fcb15acf status=completed model_calls=1
+  tools sent: [['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'request_user_input', 'view_image', 'mcp__tokstub', 'web_search']]
+  provider out_types: [['reasoning', 'message']]
+  item types: ['userMessage', 'reasoning', 'agentMessage']
+  final: "NO_WEB_TOOL"
+  raw key hits: 0

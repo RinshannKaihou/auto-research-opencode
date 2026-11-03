@@ -1,0 +1,5 @@
+calibration (positive control) rows: 14 [('dns', 'api.openai.com'), ('dns', 'chatgpt.com'), ('sink443', 'api.openai.com'), ('sink80', 'chatgpt.com'), ('sniff', '1.2.3.4:8443'), ('sniff', '10.0.0.2:53'), ('sniff', '127.0.0.1:443'), ('sniff', '127.0.0.1:80'), ('sniff', '9.9.9.9:5555')]
+run window: t >= 1793677318 rows: 14
+  ('sniff-tcp-syn', '127.0.0.1:18080') 14
+OpenAI/ChatGPT host hits in run window: 0 []
+connect attempts to anything other than the provider bridge 127.0.0.1:18080: 0 []
