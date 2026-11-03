@@ -32,6 +32,8 @@ class AppServer:
                 with self.cv: self.notes.append(m); self.cv.notify_all()
         with self.cv: self.cv.notify_all()
     def _default_srv(self, m):
+        # SPIKE ONLY — unsafe. Auto-accepts every approval and elicitation.
+        # Do not copy this into daily or production use.
         meth = m["method"]
         if "pproval" in meth: return {"decision": "accept"}
         if "elicitation" in meth.lower(): return {"action": "accept", "content": {}}

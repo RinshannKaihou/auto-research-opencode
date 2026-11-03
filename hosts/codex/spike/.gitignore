@@ -3,6 +3,7 @@ npm/
 home/*
 !home/config.toml
 home_hooks/
+home_nohdr/
 work/
 logs/
 schema/

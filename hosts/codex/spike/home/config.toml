@@ -2,6 +2,8 @@ model = "deepseek-v4.1-flash"
 model_provider = "opencode_go"
 model_context_window = 128000
 model_reasoning_summary = "none"
+# SPIKE ONLY — unsafe. approval_policy "never" and sandbox_mode "danger-full-access".
+# Do not copy this config into daily or production use.
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false
