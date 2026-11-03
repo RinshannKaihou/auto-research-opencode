@@ -1,6 +1,6 @@
 {"dir": ">", "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "spike", "version": "0.1"}, "capabilities": {"experimentalApi": true}}}
 {"dir": "<", "id": 1, "result": {"userAgent": "spike/0.166.0 (Debian 13.0.0; x86_64) dumb (spike; 0.1)", "codexHome": "/workspace/codex-spike/backfill/home", "platformFamily": "unix", "platformOs": "linux"}}
-{"dir": "<", "method": "remoteControl/status/changed", "params": {"status": "disabled", "serverName": "grok-bot-vm-514465606", "installationId": "c2325c40-6a5a-4f71-9a24-98eccf5b9104", "environmentId": null}, "emittedAtMs": 1793677404630}
+{"dir": "<", "method": "remoteControl/status/changed", "params": {"status": "disabled", "serverName": "<HOST>", "installationId": "<INSTALLATION_ID>", "environmentId": null}, "emittedAtMs": 1793677404630}
 {"dir": ">", "jsonrpc": "2.0", "method": "initialized", "params": {}}
 {"dir": ">", "jsonrpc": "2.0", "id": 2, "method": "thread/read", "params": {"threadId": "01a19f80-d682-75c2-ad81-7adca04253be", "includeTurns": true}}
 {"dir": "<", "method": "deprecationNotice", "params": {"summary": "Full-history hydration is deprecated for paginated threads; omit `includeTurns` or set it to `false`, then page with `thread/turns/list` and `thread/items/list`.", "details": null}, "emittedAtMs": 1793677404637}

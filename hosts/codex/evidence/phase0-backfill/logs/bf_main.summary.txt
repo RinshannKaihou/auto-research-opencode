@@ -10,7 +10,7 @@ S2 threads: A(coordinator-like)= 01a19f80-5835-7823-a077-1edebb48e053 B(node-lik
 ## S2-B shell/subagent ON, web OFF, token B thread=01a19f80-584c-72d0-a929-4d575039eb0f turn=01a19f80-67b7-7091-b68e-059fc9ad4a72 status=completed model_calls=4 http=[200, 200, 200, 200]
   tools sent to model: ['exec_command', 'list_mcp_resource_templates', 'list_mcp_resources', 'mcp__tokstub', 'multi_agent_v1', 'read_mcp_resource', 'request_user_input', 'view_image', 'write_stdin']
   item types: {'userMessage': 1, 'agentMessage': 2, 'commandExecution': 2, 'reasoning': 1, 'mcpToolCall': 1}
-  cmd: "/bin/bash -lc env" exit= 0 status= completed out= "SHELL=/bin/bash\nCOLORTERM=\nCODEX_VERSION=0.166.0\nGH_PAGER=cat\nPWD=/workspace/codex-spike/backfill/work/s2\nLOGNAME=root\nHOME=/home/box\nCODEX_SESSION_ID=01a19f80-"
+  cmd: "/bin/bash -lc env" exit= 0 status= completed out= "SHELL=/bin/bash\nCOLORTERM=\nCODEX_VERSION=0.166.0\nGH_PAGER=cat\nPWD=/workspace/codex-spike/backfill/work/s2\nLOGNAME=<USER>\nHOME=<HOME>\nCODEX_SESSION_ID=01a19f80-"
   cmd: "/bin/bash -lc 'env | grep -c OPENCODE'" exit= 1 status= failed out= "0\n"
   mcp: tokstub whoami completed {"content": [{"type": "text", "text": "{\"token_present\": true, \"token_sha8\": \"3efc6d33\"}"}], "structuredContent": null, "_meta": null}
   final: "`env` ran; `env | grep -c OPENCODE` returned `0`.\nTokstub `whoami`: token present, hash `3efc6d33`.\nA tool named `spawn_agent` is available; I did not use it."

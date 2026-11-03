@@ -11,7 +11,7 @@
 
 | # | 结论 | 一句话证据 |
 |---|---|---|
-| **S2（硬门槛）** | **PASS**（web 子项 PARTIAL） | 每 thread `config` 关掉 shell/subagent 后，发给模型的工具列表里没有 `exec_command`/`multi_agent_v1`，模型尝试后回答 `UNAVAILABLE`；MCP stub 在 A/B 两个 thread 各收到不同的 `RESEARCH_TOKEN`（sha8 `ba1bfaec` / `3efc6d33`，与本地计算一致）；`web_search` 能按 thread 开或关，但 OpenCode Go 不执行 hosted web search |
+| **S2（硬门槛）** | **PASS**（web 子项 PARTIAL） | 每 thread `config` 关掉 shell/subagent 后，发给模型的工具列表里不存在 `exec_command`/`multi_agent_v1`，模型没有发起调用，直接回答 `UNAVAILABLE`；MCP stub 在 A/B 两个 thread 各收到不同的 `RESEARCH_TOKEN`（sha8 `ba1bfaec` / `3efc6d33`，与本地计算一致）；`web_search` 能按 thread 开或关，但 OpenCode Go 不执行 hosted web search |
 | **S3（硬门槛）** | **PASS** | 带 `clientUserMessageId=bf-s3-57fd835c40ce` 的 turn 完成 → `SIGKILL` app-server → 新进程直接 `thread/read`（不 resume）和 `thread/turns/list` 都返回 `clientId=bf-s3-57fd835c40ce` |
 | S4 | **PASS**（仅 Linux） | `default_permissions="ro_env"` 的 thread：`cat .env` → `Permission denied`，`echo x > …` → `Read-only file system`，shell 里的 `apply_patch` → `patch rejected: writing is blocked by read-only sandbox`，文件都没有被创建 |
 | S11 | **PASS**（hook 泄漏已复现，`env -u` 能修） | backfill 全部文件（rollout、sqlite、日志、work、node shell 的 `env` 输出）key 命中 0；app-server stdout 在脱敏前统计 key 命中 0；hook：裸跑 6/6 带 key，`env -u OPENCODE_API_KEY` 包装后 0/6 |
