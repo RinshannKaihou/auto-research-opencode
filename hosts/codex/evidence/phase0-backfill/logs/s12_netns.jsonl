@@ -1,0 +1,29 @@
+{"t": 1793677308.345, "src": "sniffer", "event": "ready"}
+{"t": 1793677317.305, "src": "dns", "qname": "api.openai.com", "qtype": 1}
+{"t": 1793677317.305, "src": "dns", "qname": "api.openai.com", "qtype": 28}
+{"t": 1793677317.305, "src": "sniff", "proto": "udp", "dst": "10.0.0.2:53"}
+{"t": 1793677317.305, "src": "sniff", "proto": "udp", "dst": "10.0.0.2:53"}
+{"t": 1793677317.305, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:443", "sport": 51784}
+{"t": 1793677317.307, "src": "sink443", "host": "api.openai.com", "peer": "127.0.0.1"}
+{"t": 1793677317.32, "src": "sniff", "proto": "udp", "dst": "10.0.0.2:53"}
+{"t": 1793677317.32, "src": "sniff", "proto": "udp", "dst": "10.0.0.2:53"}
+{"t": 1793677317.321, "src": "dns", "qname": "chatgpt.com", "qtype": 1}
+{"t": 1793677317.321, "src": "dns", "qname": "chatgpt.com", "qtype": 28}
+{"t": 1793677317.321, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:80", "sport": 50208}
+{"t": 1793677317.322, "src": "sink80", "host": "chatgpt.com", "peer": "127.0.0.1"}
+{"t": 1793677317.327, "src": "sniff", "proto": "tcp-syn", "dst": "1.2.3.4:8443", "sport": 57884}
+{"t": 1793677317.34, "src": "sniff", "proto": "udp", "dst": "9.9.9.9:5555"}
+{"t": 1793677351.118, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 47902}
+{"t": 1793677353.644, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 47912}
+{"t": 1793677354.982, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 47914}
+{"t": 1793677356.199, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36922}
+{"t": 1793677357.546, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36930}
+{"t": 1793677358.471, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36942}
+{"t": 1793677359.744, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36958}
+{"t": 1793677361.399, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36962}
+{"t": 1793677365.553, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 36972}
+{"t": 1793677367.62, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 60202}
+{"t": 1793677369.047, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 60204}
+{"t": 1793677373.559, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 60206}
+{"t": 1793677383.372, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 58996}
+{"t": 1793677420.954, "src": "sniff", "proto": "tcp-syn", "dst": "127.0.0.1:18080", "sport": 55398}

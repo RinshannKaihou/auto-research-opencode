@@ -1,0 +1,9 @@
+# rollout: home/sessions/2026/11/03/rollout-2026-11-03T11-42-41-01a19f80-803f-7110-b12d-049e3173b880.jsonl
+function_call {"cmd":"cat .env","login":false,"yield_time_ms":10000,"max_output_tokens":2000}
+function_call_output Chunk ID: 220a34\nWall time: 0.0000 seconds\nProcess exited with code 1\nOriginal token count: 8\nOutput:\ncat: .env: Permission denied\n
+function_call {"cmd":"echo x > shell_write.txt","login":false,"yield_time_ms":10000,"max_output_tokens":2000}
+function_call_output Chunk ID: eb9ec9\nWall time: 0.0000 seconds\nProcess exited with code 1\nOriginal token count: 15\nOutput:\n/bin/bash: line 1: shell_write.txt: Read-only file system\n
+function_call {"cmd":"apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: patched.txt\n+hi\n*** End Patch\nEOF","login":false,"yield_time_ms":10000,"max_output_tokens":2000}
+function_call_output patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings
+function_call {"cmd":"cat readme.txt","login":false,"yield_time_ms":10000,"max_output_tokens":2000}
+function_call_output Chunk ID: 84e0d5\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 2\nOutput:\nhello\n
