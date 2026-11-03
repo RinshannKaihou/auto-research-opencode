@@ -23,6 +23,7 @@ for (const file of [
   'frozen_refs.py',
   'field_checks.py',
   'hints.py',
+  'host_ids.py',
   'errors.py',
   'migration.py',
   'maintenance_cli.py',

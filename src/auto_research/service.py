@@ -24,6 +24,7 @@ from .migration import preflight, recovery_preview
 from .native_store import NativeStore, SCHEMA_VERSION
 from .memory_store import KINDS, STATUSES
 from .errors import ConflictError, ValidationError
+from .host_ids import CODEX, valid_session_id
 
 MAX_REQUEST = 64 * 1024
 MAX_RESPONSE = 4 * 1024 * 1024
@@ -224,6 +225,8 @@ class NativeService:
             raise ValueError("host_id is required")
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("session_id is required")
+        if host_id == CODEX and not valid_session_id(host_id, session_id):
+            raise ValueError("session_id is not a valid codex session ID")
         return host_id, session_id
 
     @staticmethod
@@ -1516,6 +1519,7 @@ class NativeService:
                     },
                     self._operation(request),
                     control_actor=(host_id, session_id) if request.get('model_call') else None,
+                    host=host_id,
                 )
             elif method == "specialist_result_import":
                 task = store.specialist_get(request.get("task_id"))

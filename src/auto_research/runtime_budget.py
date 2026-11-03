@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from .errors import ValidationError, BudgetError, ConflictError, ResearchControlError, ResearchExecutionUnverified
+from .host_ids import CODEX, new_message_id, valid_message_id, valid_shell_id
 
 LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost',
           'shared_work_budget', 'resource_capacities'}
@@ -356,7 +357,7 @@ def claim_exploration_resources(store, db, task_id):
 class RuntimeStore:
     def runtime_turn_not_sent(self, host, session, message_id, operation):
         """Revoke a standalone nudge only with the host's pre-API not-sent proof."""
-        if not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256:
+        if not valid_message_id(host, message_id):
             raise ValidationError('A bounded host message ID is required')
 
         def work(db):
@@ -467,7 +468,7 @@ class RuntimeStore:
         if not isinstance(transcript_witness, bool) or transcript_witness and event_seq is not None:
             raise ValidationError('Transcript binding must not supply a delivery event sequence')
         if transcript_witness:
-            if not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256:
+            if not valid_message_id(host, message_id):
                 raise ValidationError('A valid transcript shell message ID is required')
             from .controller import CURRENT_MODEL_CALL
             if CURRENT_MODEL_CALL.get():
@@ -747,7 +748,7 @@ class RuntimeStore:
             intent_id = f'node-launch:{task_id}:{launch_no}'
             details = dict(host=host, parent=session, task_id=task_id, node_id=task['node_id'],
                            generation=task['generation'], launch_no=launch_no, session_id=child,
-                           message_id='msg_research_' + uuid4().hex, reuse=reuse)
+                           message_id=new_message_id(host, uuid4().hex), reuse=reuse)
             db.execute("INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)",
                        (intent_id, 'node_launch', session, 'claimed', json.dumps(details, sort_keys=True), timestamp()))
             db.execute("UPDATE exploration_tasks SET state='starting',session_id=?,error=NULL,updated_at=? WHERE task_id=?",
@@ -822,7 +823,8 @@ class RuntimeStore:
                 details = json.loads(previous['details'])
                 db.execute("UPDATE workflow_intents SET state='submitting',updated_at=? WHERE intent_id=?", (timestamp(), intent_id))
                 return {'intent_id': intent_id, 'state': 'submitting', 'send': True, **details}
-            details = {**payload, 'message_id': 'msg_research_wake_' + hashlib.sha256(intent_id.encode()).hexdigest()[:24]}
+            wake_id = new_message_id(host, 'wake_' + hashlib.sha256(intent_id.encode()).hexdigest()[:24])
+            details = {**payload, 'message_id': wake_id}
             db.execute('INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)',
                        (intent_id, 'notification_wake', session, 'submitting', json.dumps(details, sort_keys=True), timestamp()))
             self._event(db, 'runtime.wake_submitting', {'intent_id': intent_id, 'notification_id': notification_id})
@@ -887,7 +889,7 @@ class RuntimeStore:
                         **json.loads(previous['details'])}
             if notice['state'] != 'pending':
                 return {'intent_id': intent_id, 'state': notice['state'], 'send': False}
-            message_id = 'msg_research_' + hashlib.sha256(intent_id.encode()).hexdigest()[:32]
+            message_id = new_message_id(host, hashlib.sha256(intent_id.encode()).hexdigest()[:32])
             details = {**payload, 'message_id': message_id, 'text': text}
             db.execute('INSERT INTO workflow_intents VALUES(?,?,?,?,?,?)',
                        (intent_id, 'notification_delivery', session, 'submitting', json.dumps(details, sort_keys=True), timestamp()))
@@ -1207,7 +1209,9 @@ class RuntimeStore:
     def runtime_shell_result(self, host, session, call_id, state, shell_id, operation):
         if state not in {'running', 'finished', 'unverified'}:
             raise ValidationError('Invalid shell result state')
-        if state == 'running' and (not isinstance(shell_id, str) or not shell_id.startswith('sh_') or len(shell_id) > 256):
+        if state == 'running' and host == CODEX:
+            raise ValidationError('Background shell IDs are not supported for this host yet')
+        if state == 'running' and not valid_shell_id(host, shell_id):
             raise ValidationError('A background shell ID is required')
         payload = dict(host=host, session=session, call_id=call_id, state=state, shell_id=shell_id)
 
@@ -1240,8 +1244,9 @@ class RuntimeStore:
         return self._mutate('runtime.shell_result', payload, operation, work)
 
     def runtime_shell_notice(self, host, session, shell_id, message_id, outcome, exit_code, operation):
-        if (not isinstance(shell_id, str) or not shell_id.startswith('sh_') or len(shell_id) > 256
-                or not isinstance(message_id, str) or not message_id.startswith('msg_') or len(message_id) > 256
+        if host == CODEX:
+            raise ValidationError('Background shell IDs are not supported for this host yet')
+        if (not valid_shell_id(host, shell_id) or not valid_message_id(host, message_id)
                 or not isinstance(outcome, str) or not outcome or len(outcome) > 80
                 or exit_code is not None and (not isinstance(exit_code, int) or isinstance(exit_code, bool))):
             raise ValidationError('Invalid shell terminal notice')
@@ -1357,7 +1362,7 @@ class RuntimeStore:
         return self._mutate('runtime.resume_session', payload, operation, work)
 
     def runtime_reserve(self, host, session, operation, source_snapshot=None, wake_intent_id=None, launch_intent_id=None, specialist_launch_id=None, message_id=None):
-        if message_id is not None and (not isinstance(message_id, str) or not message_id.startswith('msg_')):
+        if message_id is not None and not valid_message_id(host, message_id):
             raise ValidationError('A valid host message ID is required')
         def work(db):
             # This operation is host-only. A specialist may be delegated by a

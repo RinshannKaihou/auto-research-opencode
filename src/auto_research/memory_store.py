@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from .errors import (ConflictError, NotFoundError, ValidationError,
                      CheckpointBaseRequired, CheckpointBaseMismatch, CheckpointConflict)
+from .host_ids import valid_message_id, valid_session_id
 
 
 MEMORY_SCHEMA = """
@@ -2160,7 +2161,7 @@ class MemoryStore:
                 temporary.chmod(0o644)
                 temporary.unlink()
 
-    def specialist_create(self, fields: dict, request_id: str, *, control_actor=None) -> dict:
+    def specialist_create(self, fields: dict, request_id: str, *, control_actor=None, host=None) -> dict:
         payload = {
             "parent_session_id": _require_text(
                 fields.get("parent_session_id"), "parent_session_id"
@@ -2182,7 +2183,9 @@ class MemoryStore:
             allowed = {'research_read_input'} if payload['context_mode'] == 'blind' else {'read', 'glob', 'grep', 'research_query', 'research_read_input'}
             if not tools or not all(isinstance(item, str) and item in allowed for item in tools) or len(tools) != len(set(tools)):
                 raise ValidationError('Invalid specialist effective tool scope')
-            if not isinstance(launch.get('deadline_at'), int) or not isinstance(launch.get('session_id'), str) or not launch['session_id'].startswith('ses_') or not isinstance(launch.get('message_id'), str) or not launch['message_id'].startswith('msg_'):
+            if (not isinstance(launch.get('deadline_at'), int)
+                    or not valid_session_id(host, launch.get('session_id'))
+                    or not valid_message_id(host, launch.get('message_id'))):
                 raise ValidationError('Invalid specialist launch identity or deadline')
             payload['effective_tools'] = tools
 
