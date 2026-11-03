@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """Re-check the specialist child-session lifecycle model.
 
-Exit 0: the code on disk matches the current model and TLC says Safe holds,
-        and the two known breaks still violate Safe.
-Exit 1: Safe is violated for the code on disk (a real counterexample).
-Exit 2: the model is out of sync with the code, or TLC itself failed.
+Exit codes (GNU make prints this number as ``Error N`` and then exits 2 itself):
+
+0  Pass. Covered function bodies match the sync commit, TLC checked invariant
+   Safe on the current model, and the known breaks still violate Safe.
+1  Counterexample. Safe is violated for the code the model describes. The
+   trace is a product bug. Do not weaken Safe.
+2  Model or tool failure. The spec, a config, or TLC failed, or a known break
+   stopped failing. Not a product-bug verdict.
+3  Drift. A covered function body differs from the sync commit recorded in
+   skills/verify-specialist-child-lifecycle/SKILL.md. Re-sync the model before
+   trusting a pass. A same-meaning rewrite is drift, not a counterexample.
+4  Setup. git or java is missing, a required commit is not in this clone, or
+   the TLC jar could not be downloaded or is not the pinned release.
 """
 
 from __future__ import annotations
@@ -16,39 +25,64 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_DIR = ROOT / "spec" / "specialist-child-lifecycle"
 SPEC = SPEC_DIR / "SpecialistChildLifecycle.tla"
-JAR_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
-JAR_SHA256 = "c57d4d7bbee3ed2c89c32cb9c60cac728f751e80e2570bc4b7368ae39291fc21"
-TLC_RELEASE = "v1.8.0"
-# `java -jar tla2tools.jar` reports this build for that GitHub release.
-TLC_VERSION = "2026.11.02.164701"
+SKILL = ROOT / "skills" / "verify-specialist-child-lifecycle" / "SKILL.md"
+JAR_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar"
+JAR_SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+TLC_RELEASE = "v1.7.4"
+# Banner TLC prints for that release. The manifest's Implementation-Version
+# field is "2.0 2024-08-08"; the checker version is this banner.
+TLC_VERSION = "2.19 of 08 August 2024"
+TLC_REVISION = "5a47802"
+TLC_BANNER = f"TLC2 Version {TLC_VERSION} (rev: {TLC_REVISION})"
+TLC_TIMEOUT_SECONDS = 120
 PRE28 = "8a2c6c944ef3606face6cc834250e50a3bd5be1b"
+CHECKED_MARK = "Checked invariant Safe"
 
-BUSY_CHECK = (
-    'if (exited && await this.childBusy(child)) return { text: "", exited: false }'
+EXIT_OK = 0
+EXIT_COUNTEREXAMPLE = 1
+EXIT_MODEL = 2
+EXIT_DRIFT = 3
+EXIT_SETUP = 4
+
+# Signature plus body, extracted the same way from the worktree and from the
+# sync commit. The comment above a function is not part of the fingerprint.
+COVERED = (
+    ("plugin/src/specialists.ts", "sessionResult", "function"),
+    ("plugin/src/specialists.ts", "messageID", "function"),
+    ("plugin/src/specialists.ts", "probeWithin", "function"),
+    ("plugin/src/specialists.ts", "textSince", "function"),
+    ("plugin/src/specialists.ts", "noteProgress", "method"),
+    ("plugin/src/specialists.ts", "childBusy", "method"),
+    ("plugin/src/specialists.ts", "armLimits", "method"),
+    ("plugin/src/specialists.ts", "finished", "method"),
+    ("plugin/src/specialists.ts", "stop", "method"),
+    ("plugin/src/specialists.ts", "summarize", "method"),
+    ("plugin/src/specialists.ts", "finishChild", "method"),
+    ("plugin/src/specialists.ts", "settle", "method"),
+    ("plugin/index.ts", "within", "function"),
+    ("plugin/index.ts", "busy", "prop"),
+    ("plugin/index.ts", "observeSpecialist", "assign"),
 )
-# These must still be the control flow the model describes. A missing busy
-# check alone selects the noBusyCheck variant. Anything else is out of sync.
-ANCHORS = {
-    "plugin/src/specialists.ts": [
-        "function textSince(",
-        'mark("cap")',
-        'mark("stall")',
-        "return this.stop(child, idle)",
-        "return probeWithin(probe, true)",
-        "textSince(messages, summaryMessageID)",
-        "private async summarize(",
-    ],
-    "plugin/index.ts": [
-        "specialists.noteProgress(sessionID)",
-        "specialists.noteBusy(sessionID, event.data?.status?.type)",
-        "result === undefined ? true : !!result",
-    ],
+
+_PATTERNS = {
+    "function": r"(?:export\s+)?(?:async\s+)?function\s+{name}\b",
+    "method": r"(?<![\w.])(?:(?:private|public|protected)\s+)?(?:async\s+)?{name}\b",
+    "prop": r"(?<![\w.]){name}\s*:\s*",
+    "assign": r"(?<![\w.]){name}\s*=\s*",
 }
+
+CHECKS = (
+    ("code on disk", "current.cfg", "pass"),
+    ("pre-#28 main at 8a2c6c9", "pre28.cfg", "violation"),
+    ("busy check removed", "noBusyCheck.cfg", "violation"),
+    ("textSince returns every message", "textSinceAll.cfg", "violation"),
+)
 
 ACTIONS = {
     "CapTimerAborts": "The absolute cap aborts the work controller.",
@@ -56,8 +90,6 @@ ACTIONS = {
     "ProgressResetsStall": "A progress event resets the stall window.",
     "QuietWindowElapses": "The stall window elapses again.",
     "ParentAborts": "The delegating call aborts.",
-    'TurnEnds("succeeded")': "The child turn ends with outcome succeeded.",
-    'TurnEnds("interrupted")': "The child turn ends with outcome interrupted.",
     "SummarySendLandsAndStartsTurn": "The summary send lands and starts a turn while its promise is still pending.",
     "WatchSeesIdle": "finished() sees the work turn go idle.",
     "WatchSeesAbort": "finished() sees the abort first and calls stop().",
@@ -76,20 +108,25 @@ ACTIONS = {
     "BusyProbeSeesRunningChild": "The busy probe sees the child still running.",
     "BusyProbeSeesIdleChild": "The busy probe sees the child idle.",
     "BusyProbeHangsOrTimesOut": "The busy probe hangs, times out, or throws, which counts as busy.",
-    "PostGraceReadSettles": "The bounded message read after the summary grace returns textSince only.",
-    "BoundedSummaryReadSettles": "The summary message read returns textSince only.",
+    "PostGraceReadSettles": "The message read after the summary grace returns textSince.",
+    "BoundedSummaryReadSettles": "The summary message read returns textSince.",
     "RecordLedger": "specialist_finish records the result.",
     "DoneStutter": "The ledger write has finished.",
     "Initial predicate": "The child is running after kickoff, with the opening line already in the transcript.",
 }
 
 
-def fail(message: str, code: int = 2) -> None:
-    print(message, file=sys.stderr)
+class ExtractError(Exception):
+    pass
+
+
+def fail(message: str, code: int = EXIT_MODEL) -> None:
+    label = {1: "COUNTEREXAMPLE", 2: "MODEL", 3: "DRIFT", 4: "SETUP"}.get(code, "ERROR")
+    print(f"{label}: {message}", file=sys.stderr)
     raise SystemExit(code)
 
 
-def sha256(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
@@ -97,56 +134,320 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def ensure_jar() -> Path:
-    cache = SPEC_DIR / ".cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    jar = cache / "tla2tools.jar"
-    if jar.exists() and sha256(jar) == JAR_SHA256:
-        return jar
-    print(f"Downloading TLC {TLC_RELEASE} from {JAR_URL}")
-    tmp = jar.with_suffix(".jar.partial")
-    try:
-        urllib.request.urlretrieve(JAR_URL, tmp)
-    except Exception as error:  # noqa: BLE001 — surface the download failure as a tool error
-        fail(f"Could not download TLC: {error}")
-    digest = sha256(tmp)
-    if digest != JAR_SHA256:
-        tmp.unlink(missing_ok=True)
-        fail(f"TLC jar sha256 {digest} does not match the pinned {JAR_SHA256}")
-    tmp.replace(jar)
-    return jar
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def detect_variant() -> str:
-    missing = []
-    for relative, needles in ANCHORS.items():
-        text = (ROOT / relative).read_text()
-        for needle in needles:
-            if needle not in text:
-                missing.append(f"{relative} is missing {needle!r}")
-    if missing:
+def _skip_comment(source: str, index: int) -> int:
+    if source.startswith("//", index):
+        newline = source.find("\n", index)
+        return len(source) if newline < 0 else newline + 1
+    if source.startswith("/*", index):
+        end = source.find("*/", index + 2)
+        if end < 0:
+            raise ExtractError("unterminated block comment")
+        return end + 2
+    return index
+
+
+def _skip_ws_comments(source: str, index: int) -> int:
+    while index < len(source):
+        if source.startswith("//", index) or source.startswith("/*", index):
+            index = _skip_comment(source, index)
+            continue
+        if source[index] in " \t\r\n":
+            index += 1
+            continue
+        break
+    return index
+
+
+def _skip_string(source: str, index: int) -> int:
+    """Return the index after a string or template starting at index, else index."""
+    if index >= len(source) or source[index] not in "'\"`":
+        return index
+    quote = source[index]
+    index += 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == quote:
+            return index + 1
+        index += 1
+    raise ExtractError("unterminated string")
+
+
+def _match_delim(source: str, open_at: int, open_ch: str, close_ch: str) -> int:
+    if source[open_at] != open_ch:
+        raise ExtractError(f"expected {open_ch}")
+    index = open_at + 1
+    depth = 1
+    while index < len(source):
+        if source.startswith("//", index) or source.startswith("/*", index):
+            index = _skip_comment(source, index)
+            continue
+        nxt = _skip_string(source, index)
+        if nxt != index:
+            index = nxt
+            continue
+        if source[index] == open_ch:
+            depth += 1
+        elif source[index] == close_ch:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ExtractError(f"unbalanced {open_ch}")
+
+
+def _match_angle(source: str, open_at: int) -> int:
+    index = open_at
+    depth = 0
+    while index < len(source):
+        if source[index] == "<":
+            depth += 1
+        elif source[index] == ">":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ExtractError("unterminated generic")
+
+
+def _param_open(source: str, index: int) -> int:
+    index = _skip_ws_comments(source, index)
+    if index < len(source) and source[index] == "<":
+        index = _skip_ws_comments(source, _match_angle(source, index) + 1)
+    if source.startswith("async", index) and not (index + 5 < len(source) and source[index + 5].isalnum()):
+        index = _skip_ws_comments(source, index + 5)
+    if index >= len(source) or source[index] != "(":
+        raise ExtractError("no parameter list")
+    return index
+
+
+def _body_open(source: str, paren_close: int) -> int:
+    index = _skip_ws_comments(source, paren_close + 1)
+    if source.startswith("=>", index):
+        index = _skip_ws_comments(source, index + 2)
+        if index >= len(source) or source[index] != "{":
+            raise ExtractError("arrow function has no block body")
+        return index
+    angle = paren = bracket = 0
+    while index < len(source):
+        if source.startswith("//", index) or source.startswith("/*", index):
+            index = _skip_comment(source, index)
+            continue
+        nxt = _skip_string(source, index)
+        if nxt != index:
+            index = nxt
+            continue
+        if source.startswith("=>", index) and angle == paren == bracket == 0:
+            index += 2
+            continue
+        char = source[index]
+        if char == "<":
+            angle += 1
+        elif char == ">" and angle:
+            angle -= 1
+        elif char == "(":
+            paren += 1
+        elif char == ")" and paren:
+            paren -= 1
+        elif char == "[":
+            bracket += 1
+        elif char == "]" and bracket:
+            bracket -= 1
+        elif char == "{" and angle == paren == bracket == 0:
+            close = _match_delim(source, index, "{", "}")
+            after = _skip_ws_comments(source, close + 1)
+            if after < len(source) and source[after] == "{":
+                return after
+            if after < len(source) and source[after] in "|&[":
+                index = after
+                continue
+            return index
+        index += 1
+    raise ExtractError("no function body")
+
+
+def extract_function(source: str, name: str, kind: str) -> str:
+    pattern = _PATTERNS[kind].format(name=re.escape(name))
+    found: list[str] = []
+    for match in re.finditer(pattern, source):
+        try:
+            paren = _param_open(source, match.end())
+            close = _match_delim(source, paren, "(", ")")
+            body = _body_open(source, close)
+            end = _match_delim(source, body, "{", "}")
+        except ExtractError:
+            continue
+        found.append(source[match.start() : end + 1])
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise ExtractError(f"no {kind} definition of {name}")
+    raise ExtractError(f"{len(found)} definitions of {name}")
+
+
+def sync_commit() -> str:
+    if not SKILL.is_file():
+        fail(f"Missing {SKILL.relative_to(ROOT)}. The coverage record has no sync commit.", EXIT_MODEL)
+    text = SKILL.read_text(encoding="utf-8")
+    match = re.search(r"^Sync commit:\s+`([0-9a-f]{7,40})`\s*$", text, re.M)
+    if not match:
         fail(
-            "Model is out of sync with the code (this is a modeling error, not a product-bug verdict).\n"
-            + "\n".join(missing)
-            + "\nUpdate spec/specialist-child-lifecycle/SpecialistChildLifecycle.tla so each action "
-            "matches the new await boundaries, then move the sync commit in the verify skill."
+            "The verify skill has no `Sync commit: `<sha>`` line. "
+            "That line is the commit whose covered function bodies the model describes.",
+            EXIT_MODEL,
         )
-    source = (ROOT / "plugin/src/specialists.ts").read_text()
-    if BUSY_CHECK in source:
-        return "current"
-    return "noBusyCheck"
+    return match.group(1)
 
 
-def check_pre28_commit() -> None:
+def git_show(commit: str, relative: str) -> str:
     try:
-        old = subprocess.check_output(
-            ["git", "show", f"{PRE28}:plugin/src/specialists.ts"],
+        return subprocess.check_output(
+            ["git", "show", f"{commit}:{relative}"],
             cwd=ROOT,
             text=True,
+            encoding="utf-8",
             stderr=subprocess.STDOUT,
         )
     except subprocess.CalledProcessError as error:
-        fail(f"Cannot read pre-#28 specialists.ts at {PRE28}:\n{error.output}")
+        fail(
+            f"Cannot read {relative} at {commit}. Fetch history so this clone contains that commit.\n{error.output}",
+            EXIT_SETUP,
+        )
+    raise AssertionError("unreachable")
+
+
+def drift_problems(commit: str) -> list[str]:
+    """Functions whose signature or body differ from commit. Empty means in sync."""
+    problems: list[str] = []
+    for relative, name, kind in COVERED:
+        try:
+            current_text = (ROOT / relative).read_text(encoding="utf-8")
+        except OSError as error:
+            problems.append(f"{relative} {name}: cannot read the worktree file ({error})")
+            continue
+        recorded_text = git_show(commit, relative)
+        try:
+            recorded = extract_function(recorded_text, name, kind)
+        except ExtractError as error:
+            fail(
+                f"Sync commit {commit} has no fingerprinted {relative} {name} ({error}). "
+                "The coverage record does not describe that commit. Fix the skill or the extractor. "
+                "This is not a product-bug verdict.",
+                EXIT_MODEL,
+            )
+        try:
+            current = extract_function(current_text, name, kind)
+        except ExtractError as error:
+            problems.append(f"{relative} {name}: the covered function no longer extracts ({error})")
+            continue
+        if sha256_text(current) != sha256_text(recorded):
+            problems.append(f"{relative} {name}")
+    return problems
+
+
+def check_drift(commit: str) -> None:
+    problems = drift_problems(commit)
+    if not problems:
+        return
+    fail(
+        "Covered function bodies differ from sync commit "
+        f"{commit}. Do not trust a pass, and do not read this as a counterexample. "
+        "A same-meaning rewrite is drift too. Re-sync the model before trusting TLC: "
+        "read the diff of the functions below, update "
+        "spec/specialist-child-lifecycle/SpecialistChildLifecycle.tla so each action matches "
+        "the new await boundaries, run make verify-specialist-lifecycle, and only then move "
+        "the sync commit in skills/verify-specialist-child-lifecycle/SKILL.md.\n"
+        + "\n".join(problems),
+        EXIT_DRIFT,
+    )
+
+
+def manifest_entries(path: Path) -> dict[str, str]:
+    with zipfile.ZipFile(path) as archive:
+        raw = archive.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+    entries: dict[str, str] = {}
+    key: str | None = None
+    buffer: list[str] = []
+    for line in raw.splitlines():
+        if line.startswith(" ") and key:
+            buffer.append(line[1:])
+            continue
+        if key:
+            entries[key] = "".join(buffer).strip()
+        if ":" in line:
+            key, value = line.split(":", 1)
+            buffer = [value.strip()]
+        else:
+            key = None
+            buffer = []
+    if key:
+        entries[key] = "".join(buffer).strip()
+    return entries
+
+
+def check_jar_metadata(jar: Path) -> None:
+    entries = manifest_entries(jar)
+    tag = entries.get("X-Git-Tag", "")
+    revision = entries.get("X-Git-ShortRevision", "")
+    if tag != TLC_RELEASE or revision != TLC_REVISION:
+        fail(
+            f"TLC jar manifest tag {tag!r} revision {revision!r} does not match "
+            f"pinned {TLC_RELEASE} revision {TLC_REVISION}. Refusing to treat its result as a pass or a counterexample.",
+            EXIT_SETUP,
+        )
+
+
+def ensure_jar() -> Path:
+    cache = SPEC_DIR / ".cache"
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        fail(f"Cannot create {cache}: {error}", EXIT_SETUP)
+    jar = cache / "tla2tools.jar"
+    if jar.exists() and sha256_file(jar) == JAR_SHA256:
+        check_jar_metadata(jar)
+        return jar
+    print(f"Downloading TLC {TLC_RELEASE} from {JAR_URL}")
+    tmp = jar.with_suffix(".jar.partial")
+    request = urllib.request.Request(JAR_URL, headers={"User-Agent": "auto-research-opencode-verify"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, tmp.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+    except Exception as error:  # noqa: BLE001 — download failure is a setup error
+        tmp.unlink(missing_ok=True)
+        fail(f"Could not download TLC {TLC_RELEASE}: {error}", EXIT_SETUP)
+    digest = sha256_file(tmp)
+    if digest != JAR_SHA256:
+        tmp.unlink(missing_ok=True)
+        fail(f"TLC jar sha256 {digest} does not match the pinned {JAR_SHA256}", EXIT_SETUP)
+    tmp.replace(jar)
+    check_jar_metadata(jar)
+    return jar
+
+
+def cfg_declares_safe(text: str) -> bool:
+    return re.search(r"(?m)^\s*INVARIANT\s+Safe\s*$", text) is not None
+
+
+def require_invariant(config: str) -> None:
+    path = SPEC_DIR / config
+    if not path.is_file():
+        fail(f"Missing TLC config {path.relative_to(ROOT)}", EXIT_MODEL)
+    if not cfg_declares_safe(path.read_text(encoding="utf-8")):
+        fail(
+            f"{config} has no INVARIANT Safe line, so a TLC pass would not have checked the property. "
+            "This is a modeling error, not a product-bug verdict.",
+            EXIT_MODEL,
+        )
+
+
+def check_pre28_commit() -> None:
+    old = git_show(PRE28, "plugin/src/specialists.ts")
     problems = []
     if "private async summarize" in old:
         problems.append("8a2c6c9 unexpectedly has summarize(); the pre28 model would be wrong")
@@ -154,8 +455,14 @@ def check_pre28_commit() -> None:
         problems.append("8a2c6c9 is missing the timeout partial-report copy the pre28 model archives")
     if "exit_verified: exited" not in old:
         problems.append("8a2c6c9 does not record exit_verified from the stop result")
+    if "signal.aborted" in old.split("const timer = setTimeout", 1)[-1].split("},", 1)[0]:
+        problems.append("8a2c6c9's absolute timer checks signal.aborted; the pre28 cap model would be wrong")
     if problems:
-        fail("pre28 fixture does not match commit 8a2c6c9:\n" + "\n".join(problems))
+        fail(
+            "pre28 fixture does not match commit 8a2c6c9. This is a modeling error, not a product-bug verdict.\n"
+            + "\n".join(problems),
+            EXIT_MODEL,
+        )
 
 
 def parse_trace(text: str) -> list[tuple[str, dict[str, str]]]:
@@ -201,14 +508,26 @@ def compact_trace(states: list[tuple[str, dict[str, str]]]) -> str:
 
 def narrate(states: list[tuple[str, dict[str, str]]]) -> str:
     sentences = []
-    for name, _fields in states:
-        sentence = ACTIONS.get(name)
+    for name, fields in states:
+        if name == "TurnEnds":
+            kind = fields.get("outcome", "?").strip('"')
+            which = "summary" if fields.get("summaryLanded") == "TRUE" else "child"
+            sentence = f"The {which} turn ends with outcome {kind}."
+        else:
+            sentence = ACTIONS.get(name)
         if sentence and sentence not in sentences:
             sentences.append(sentence)
     if not states:
         return ""
     final = states[-1][1]
-    if final.get("archivedPre") == "TRUE":
+    via_text_since = any(name in {"PostGraceReadSettles", "BoundedSummaryReadSettles"} for name, _fields in states)
+    if final.get("archivedPre") == "TRUE" and via_text_since:
+        sentences.append(
+            "textSince returned the opening line from before the summary prompt, "
+            "and finishChild archived it with "
+            f"exit_verified={final.get('exitVerified', '?')}."
+        )
+    elif final.get("archivedPre") == "TRUE":
         sentences.append(
             "The ledger records that finish with the opening line archived "
             "(text from before any summary prompt) and "
@@ -223,9 +542,16 @@ def narrate(states: list[tuple[str, dict[str, str]]]) -> str:
 
 def tlc_summary(text: str) -> str:
     kept = []
+    saw_checked = False
     for line in text.splitlines():
+        if CHECKED_MARK in line:
+            if not saw_checked:
+                kept.append(line.strip())
+                saw_checked = True
+            continue
         if (
             line.startswith("Error:")
+            or line.startswith("TLC2 Version")
             or line.startswith("Model checking completed")
             or "distinct states" in line
             or line.startswith("Finished in")
@@ -240,40 +566,67 @@ def tlc_summary(text: str) -> str:
 
 
 def run_tlc(jar: Path, config: str) -> tuple[str, str]:
-    """Return ('pass'|'violation'|'error', output)."""
-    with tempfile.TemporaryDirectory(prefix="tlc-specialist-") as meta:
-        command = [
-            "java",
-            "-XX:+UseParallelGC",
-            "-jar",
-            str(jar),
-            "-workers",
-            "1",
-            "-cleanup",
-            "-nowarning",
-            "-metadir",
-            meta,
-            "-config",
-            str(SPEC_DIR / config),
-            SPEC.name,
-        ]
-        completed = subprocess.run(
-            command,
-            cwd=SPEC_DIR,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
+    """Return ('pass'|'violation'|'error'|'timeout'|'unchecked', output)."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="tlc-specialist-") as meta:
+            command = [
+                "java",
+                "-XX:+UseParallelGC",
+                "-jar",
+                str(jar),
+                "-workers",
+                "1",
+                "-cleanup",
+                "-nowarning",
+                "-metadir",
+                meta,
+                "-config",
+                str(SPEC_DIR / config),
+                SPEC.name,
+            ]
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=SPEC_DIR,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    timeout=TLC_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as error:
+                output = error.stdout or ""
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", "replace")
+                return "timeout", output
+            except FileNotFoundError:
+                fail("java is not on PATH. TLC needs a JVM. This is not a verdict on the product.", EXIT_SETUP)
+            output = completed.stdout or ""
+            returncode = completed.returncode
+    finally:
+        for leftover in SPEC_DIR.glob("SpecialistChildLifecycle_TTrace_*"):
+            leftover.unlink()
+    if TLC_BANNER not in output:
+        fail(
+            "TLC output does not identify itself as "
+            f"{TLC_BANNER}. The jar that ran is not the pinned {TLC_RELEASE} checker. "
+            "Refusing to treat the result as a pass or a counterexample.\n"
+            + "\n".join(output.splitlines()[:8]),
+            EXIT_SETUP,
         )
-    output = completed.stdout
-    for leftover in SPEC_DIR.glob("SpecialistChildLifecycle_TTrace_*"):
-        leftover.unlink()
+    if not cfg_declares_safe((SPEC_DIR / config).read_text(encoding="utf-8")):
+        return "error", output
+    checked = CHECKED_MARK in output or "Invariant Safe is violated" in output
     if "not completely specified" in output or "Deadlock reached" in output:
         return "error", output
     if "Invariant Safe is violated" in output:
+        if CHECKED_MARK not in output:
+            return "error", output
         return "violation", output
-    if "No error has been found" in output and completed.returncode == 0:
+    if "No error has been found" in output and returncode == 0 and checked:
         return "pass", output
+    if "No error has been found" in output and CHECKED_MARK not in output:
+        return "unchecked", output
     return "error", output
 
 
@@ -287,33 +640,43 @@ def report(title: str, status: str, output: str) -> None:
 
 
 def main() -> None:
+    if not SPEC.is_file():
+        fail(f"Missing {SPEC}", EXIT_SETUP)
+    if shutil.which("git") is None:
+        fail("git is not on PATH. The fingerprint compares covered functions to the sync commit.", EXIT_SETUP)
+    commit = sync_commit()
+    check_drift(commit)
     if shutil.which("java") is None:
-        fail("java is not on PATH; TLC needs a JVM")
-    if not SPEC.exists():
-        fail(f"Missing {SPEC}")
-    variant = detect_variant()
+        fail("java is not on PATH. TLC needs a JVM. This is not a verdict on the product.", EXIT_SETUP)
     check_pre28_commit()
     jar = ensure_jar()
-    print(f"TLC release {TLC_RELEASE} (tool version {TLC_VERSION})")
+    for _title, config, _want in CHECKS:
+        require_invariant(config)
+    print(f"TLC release {TLC_RELEASE} (TLC {TLC_VERSION}, rev {TLC_REVISION})")
     print(f"jar sha256 {JAR_SHA256}")
-    print(f"Code on disk matches model variant {variant}")
-
-    # The variant that describes the code must meet Safe only when that code is current.
-    code_expect = "pass" if variant == "current" else "violation"
-    plan = [("code on disk", f"{variant}.cfg", code_expect)]
-    plan.append(("pre-#28 main at 8a2c6c9", "pre28.cfg", "violation"))
-    if variant == "current":
-        plan.append(("busy check removed", "noBusyCheck.cfg", "violation"))
+    print(f"Covered function bodies match sync commit {commit}")
 
     code_failed = False
-    for title, config, want in plan:
+    for title, config, want in CHECKS:
         status, output = run_tlc(jar, config)
         report(f"{title} ({config})", status, output)
+        if status == "timeout":
+            fail(
+                f"TLC exceeded {TLC_TIMEOUT_SECONDS}s on {config}. "
+                "This is a tool failure, not a verdict on the product.",
+                EXIT_MODEL,
+            )
+        if status == "unchecked":
+            fail(
+                f"TLC reported no error for {config}, but the output never shows that invariant Safe was checked. "
+                "A pass without that check is not a pass.",
+                EXIT_MODEL,
+            )
         if status == "error":
             fail(
                 "TLC failed while checking the model. Treat this as a modeling or tool error, "
                 "not as a verdict on the product, until the spec parses and every action assigns every variable.",
-                code=2,
+                EXIT_MODEL,
             )
         if status != want:
             if title == "code on disk" and status == "violation":
@@ -322,20 +685,21 @@ def main() -> None:
             fail(
                 f"{title} was {status}, expected {want}. "
                 "If a known break started passing, the model no longer describes that bug.",
-                code=2,
+                EXIT_MODEL,
             )
         if title == "code on disk" and status == "violation":
             code_failed = True
 
-    if code_failed or variant != "current":
-        print(
-            "\nSafe does not hold for the specialist lifecycle code on disk. "
-            "The trace above is a counterexample. Do not weaken the invariant."
+    if code_failed:
+        fail(
+            "Safe does not hold for the specialist lifecycle code on disk. "
+            "The trace above is a counterexample. Do not weaken the invariant.",
+            EXIT_COUNTEREXAMPLE,
         )
-        raise SystemExit(1)
     print(
-        "\nSafe holds for the code on disk. "
-        "The pre-#28 model and the removed-busy-check model still produce counterexamples."
+        "\nSafe holds for the code on disk. TLC checked invariant Safe. "
+        "The pre-#28 model, the removed-busy-check model, and the textSince-returns-every-message "
+        "model still produce counterexamples."
     )
 
 

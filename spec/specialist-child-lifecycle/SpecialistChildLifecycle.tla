@@ -1,4 +1,5 @@
 ------------------------------- MODULE SpecialistChildLifecycle -------------------------------
+EXTENDS TLC
 \* Child-session lifecycle for one specialist after kickoff has been submitted
 \* and the work turn is running.
 \*
@@ -7,24 +8,34 @@
 \*   A stall or absolute-cap finish never archives the opening text that was
 \*   written before the summary prompt.
 \*
-\* Tool: TLC from the TLA+ release v1.8.0 (jar sha256 pinned by
-\* scripts/verify_specialist_lifecycle.py). Chosen because the question is
-\* whether host events can interleave badly, and the steps are the code's
-\* await points. No verifier here runs on this TypeScript.
+\* Tool: TLC from the stable TLA+ release v1.7.4 (TLC 2.19 of 08 August 2024,
+\* jar sha256 pinned by scripts/verify_specialist_lifecycle.py). Chosen because
+\* the question is whether host events can interleave badly, and the steps are
+\* the code's await points. No verifier here runs on this TypeScript.
 \*
 \* Variant:
-\*   "current"     plugin/src/specialists.ts at the sync commit (PR #28)
-\*   "pre28"       main 8a2c6c9: one absolute timer, sessionResult text archived,
-\*                 no summary turn and no busy check (issue #27)
-\*   "noBusyCheck" current code with specialists.ts:574 removed
+\*   "current"      plugin/src/specialists.ts at the sync commit (PR #28)
+\*   "pre28"        main 8a2c6c9: one absolute timer, sessionResult text archived,
+\*                  no summary turn and no busy check (issue #27)
+\*   "noBusyCheck"  current code with specialists.ts:574 removed
+\*   "textSinceAll" current code, except textSince returns sessionResult of the
+\*                  whole transcript instead of the slice after the summary id
+\*                  (specialists.ts:195-199). The opening line is that result
+\*                  when the summary turn did not end "succeeded" (no later
+\*                  assistant text). A succeeded summary turn has written text
+\*                  after the prompt, so sessionResult returns that text.
 \*
 \* Each action is one yield: host events may happen at an await, and the
 \* statements between awaits run in the action that resumes. Line numbers are
 \* the current file unless marked pre28.
+\*
+\* The opening line from issue #27 is the transcript's last assistant text until
+\* a summary turn ends "succeeded". An interrupted summary turn adds no
+\* assistant text. A correct textSince never returns the opening line.
 
 CONSTANT Variant
 
-ASSUME Variant \in {"current", "pre28", "noBusyCheck"}
+ASSUME Variant \in {"current", "pre28", "noBusyCheck", "textSinceAll"}
 
 VARIABLES
   pc,              \* which await the plugin is blocked in
@@ -100,11 +111,15 @@ QuietWindowElapses ==
                 summaryLanded, sendStarted, sendSettled, exitedSeen, willVerify, badArchive,
                 recorded, exitVerified, archivedPre, ret, sumAborted>>
 
-\* specialists.ts:470-473. pre28 timer is specialists.ts at 8a2c6c9:252-255.
+\* specialists.ts:470-473. The current tick and its mark callback return without
+\* marking once the work controller is already aborted, so a parent abort
+\* suppresses the cap. pre28's timer at 8a2c6c9:252-255 sets timedOut and
+\* aborts with no signal.aborted check, so it still fires after the parent.
 CapTimerAborts ==
   /\ limitsArmed
   /\ limit = "none"
-  /\ ~parentAbort
+  /\ \/ Variant = "pre28"
+     \/ ~parentAbort
   /\ limit' = "cap"
   /\ UNCHANGED <<pc, running, outcome, parentAbort, fromAbort, quiet, limitsArmed,
                 summaryLanded, sendStarted, sendSettled, exitedSeen, willVerify, badArchive,
@@ -417,7 +432,7 @@ DeadReadReturns ==
                       archivedPre, ret, sumAborted>>
      \/ /\ summaryLanded
         /\ exitedSeen
-        /\ Variant = "current"
+        /\ Variant \in {"current", "textSinceAll"}
         /\ pc' = "BusyProbe"
         /\ UNCHANGED <<running, outcome, limit, parentAbort, fromAbort, quiet, limitsArmed,
                       summaryLanded, sendStarted, sendSettled, exitedSeen, willVerify, badArchive,
@@ -468,12 +483,17 @@ BusyProbeHangsOrTimesOut ==
 
 \* specialists.ts:582-590. textSince (195-199) drops text before the summary id.
 \* The read may time out (probeWithin) or the bounded read may hit the grace.
-\* Both store exited true and neither stores the opening line.
+\* Both store exited true. finishChild archives a non-empty summary.text
+\* (625-645). On current that text is not the opening line, so badArchive
+\* stays FALSE (an empty slice takes the preview "" branch and also does not
+\* archive it). textSinceAll returns sessionResult of every message: the
+\* opening line when the summary turn did not end succeeded, and finishChild
+\* archives that non-empty line. A succeeded summary turn is later text.
 PostGraceReadSettles ==
   /\ pc = "PostGraceRead"
   /\ pc' = "Settle"
   /\ willVerify' = TRUE
-  /\ badArchive' = FALSE
+  /\ badArchive' = (Variant = "textSinceAll" /\ outcome # "succeeded")
   /\ UNCHANGED <<running, outcome, limit, parentAbort, fromAbort, quiet, limitsArmed,
                 summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
                 archivedPre, ret, sumAborted>>
@@ -482,7 +502,7 @@ BoundedSummaryReadSettles ==
   /\ pc = "BoundedRead"
   /\ pc' = "Settle"
   /\ willVerify' = TRUE
-  /\ badArchive' = FALSE
+  /\ badArchive' = (Variant = "textSinceAll" /\ outcome # "succeeded")
   /\ UNCHANGED <<running, outcome, limit, parentAbort, fromAbort, quiet, limitsArmed,
                 summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
                 archivedPre, ret, sumAborted>>
@@ -536,8 +556,23 @@ Next ==
 
 \* Still running => the ledger must not say the exit was verified.
 \* A stall or cap must not archive the opening line from before the summary.
+\* The PrintT conjunct is true on every state. TLC evaluates it only on the
+\* initial state, so a successful run's output contains this sentence only
+\* when Safe itself was checked.
 Safe ==
   /\ ~(recorded /\ exitVerified /\ running)
   /\ ~archivedPre
+  /\ IF /\ pc = "Watch"
+        /\ running
+        /\ outcome = "none"
+        /\ limit = "none"
+        /\ ~parentAbort
+        /\ quiet
+        /\ limitsArmed
+        /\ ~summaryLanded
+        /\ ~sendStarted
+        /\ ~recorded
+     THEN PrintT("Checked invariant Safe")
+     ELSE TRUE
 
 =============================================================================
