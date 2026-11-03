@@ -1,0 +1,15 @@
+{
+  "runs": [
+    {
+      "label": "previous_pr_run",
+      "decide_prepare_attempts": 11,
+      "basis_changed_rejections": 1
+    },
+    {
+      "label": "review_fix_run",
+      "decide_prepare_attempts": 9,
+      "basis_changed_rejections": 1
+    }
+  ],
+  "limitations": "Scripted-provider runs with different completion policies and timing; not real-model performance or production rejection rates"
+}

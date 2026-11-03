@@ -434,8 +434,11 @@ def test_exploration_context_discloses_omitted_details(tmp_path):
     host.open()
     scope_and_route(host)
     small = sections(host.call('memory_context',policy='memory-r1-v1',max_chars=900))['exploration']
-    large = sections(host.call('memory_context',policy='memory-r1-v1',max_chars=2400))['exploration']
+    # Role/control instructions outrank the samples now, so the disclosure
+    # budget is the one where both coexist with the samples.
+    large = sections(host.call('memory_context',policy='memory-r1-v1',max_chars=4000))['exploration']
     assert small['details_omitted'] and small['routes']['collection'] == 'exploration_routes'
+    assert 'brief' in small['strategy']
     assert not large['details_omitted'] and large['details']['route_sample']
 
 

@@ -530,7 +530,8 @@ export class Research {
           dependencies: view.dependencies ?? [],
           selection: { source_digest: view.source_digest, context_mode: view.context_mode, omitted: view.omitted ?? [],
             exploration_policy: view.exploration_policy, conclusion_contract: view.conclusion_contract,
-            exploration_context: view.exploration_context, plugin_version:packageInfo.version,
+            exploration_context: view.exploration_context, exploration_selection: view.exploration_selection,
+            plugin_version:packageInfo.version,
             selected: view.selection, coverage: view.coverage, block_chars: view.block_chars, truncation: view.truncation },
         },
       }).then(() => { this.memoryObservations.recorded++ }, () => { this.memoryObservations.recordFailed++ })

@@ -1,0 +1,13 @@
+{
+  "base_commit": "13079c8a7fb902e50a9fe0a14e7032ab6bc2d7b6",
+  "python_version": "3.11.4 (v3.11.4:d2340ef257, Jun  6 2023, 19:15:51) [Clang 13.0.0 (clang-1300.0.29.30)]",
+  "platform": "macOS-26.5.1-arm64-arm-64bit",
+  "python_passed": 840,
+  "python_skipped": 1,
+  "bun_passed": 224,
+  "bun_failed": 0,
+  "typecheck": "passed",
+  "packed_e3": "passed",
+  "sdk": "2.2.5",
+  "real_model_calls": false
+}

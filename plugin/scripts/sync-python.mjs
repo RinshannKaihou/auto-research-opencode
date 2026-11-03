@@ -18,6 +18,7 @@ for (const file of [
   'epistemic.py',
   'evidence_read.py',
   'evidence_conclusion.py',
+  'exploration_read.py',
   'exploration_store.py',
   'frozen_refs.py',
   'field_checks.py',

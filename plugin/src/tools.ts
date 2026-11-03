@@ -33,7 +33,7 @@ export const TOOLS: ToolDefinition[] = [
     method: "query",
     writes: false,
     description:
-      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view; always pass scope_id for a local exploration choice. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request; decision pages default to limit=16384 and only offset 0 includes the full delivery manifest. exploration_scopes/routes/decisions/results/intents contain choices and history; exploration_budget pages common allocations and resource leases. A read proves delivery, not scientific understanding.',
+      'Read research state and fixed references. collection=evidence with refs opens a consistent paged evidence view; always pass scope_id for a local exploration choice. Read frozen text separately with collection=evidence and material_ref, following every cursor; material pages can be delivered across model requests. Evidence view offsets count characters; material and draft decision offsets count UTF-8 bytes. Return each cursor unchanged. Query the evidence view again after reading, then prepare a conclusion. Read every page of its draft decision package in the concluding request; decision pages default to limit=16384 and only offset 0 includes the full delivery manifest. exploration_scopes/routes/decisions/results/intents contain choices and history; exploration_inbox pages read-only work groups of results by attempt identity for navigation (its ref is a group key, not a scientific reference, and research_decide still cites explicit result IDs); exploration_budget pages common allocations and resource leases. A read proves delivery, not scientific understanding.',
     parameters: {
       expected_digest: { type: "string" },
       scope_id:{type:'string',description:'For a local exploration choice, query evidence with this scope ID; omit for project-wide conclusion evidence.'},
@@ -447,7 +447,7 @@ TOOLS.push(
     engine: "finish",
     writes: true,
     description:
-      "End your node work segment after this turn. Use state finished when the node question is answered and stopped when you are blocked. The summary states the evidence, gaps and suggested next steps; the coordinator receives it together with your publications.",
+      "End your node work segment after this turn. Use state finished when the node question is answered and stopped when you are blocked. Publish new evidence, limits and suggestions with research_publish before finishing; only a normal completion that adds no further information may reuse the last complete publication summary verbatim. A different summary is still valid and is treated as new information; the coordinator receives it together with your publications.",
     parameters: {
       state: { type: "string", required: true, enum: ["finished", "stopped"] },
       summary: { type: "string", required: true },

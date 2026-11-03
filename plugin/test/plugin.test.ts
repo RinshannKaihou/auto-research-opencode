@@ -974,6 +974,8 @@ describe("autonomous research", () => {
     const kickoff = host.said(host.created[0]!).at(-1)
     expect(kickoff).toMatchObject({ resume: true })
     expect(kickoff.text).toContain("你是节点 X-001 的执行会话")
+    expect(kickoff.text).toContain("research_finish.summary 原文复制本次执行最后一份完整发布的 summary")
+    expect(kickoff.text).toContain("新增证据、限制和建议先发布")
     await host.call("research_wait", "ses_main", { task_ids: [task1.task_id] })
     const mainBefore = host.said("ses_main").length
     host.turn.end("ses_main")
@@ -2656,6 +2658,7 @@ test('turning exploration off wakes the waiting coordinator and retains closing 
   await host.hooks.get('context')!(context)
   const spec=(context.tools.research_decide.input as any).properties
   expect(spec.next_work).toBeUndefined()
+  expect(spec.work_batch).toBeUndefined()
   expect(spec.action.enum).toEqual(['defer','propose_stop'])
   expect(context.tools.research_scope).toBeUndefined()
 })
