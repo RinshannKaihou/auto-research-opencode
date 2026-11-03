@@ -2329,6 +2329,111 @@ describe("node specialists", () => {
     first.reply(child, 'original waiter unwinds')
     await pending
   })
+
+  /** Issue #27's transcript: an opening line, later reasoning, then the timeout interrupt. */
+  function timeoutTranscript(host: Awaited<ReturnType<typeof load>>, timeoutMs = 200) {
+    host.ctx.options.specialistTimeoutMs = timeoutMs
+    const native = host.ctx.session.context
+    const shaped = new Set<string>()
+    host.ctx.session.context = async (input: { sessionID: string }) => {
+      const messages = await native(input)
+      const idle = messages.at(-1)
+      if (!shaped.has(input.sessionID) && idle?.type === "idle" && idle.outcome === "interrupted") {
+        shaped.add(input.sessionID)
+        messages.pop()
+        messages.push(
+          { type: "assistant", content: [{ type: "text", text: "I'll start by exploring the workspace structure and then reading the key files." }] },
+          { type: "assistant", content: [{ type: "reasoning", text: "The actual audit findings are here..." }] },
+          idle,
+        )
+      }
+      return messages
+    }
+  }
+
+  test("a timed-out specialist is asked for one tool-free summary, archived as unverified", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "timeout summary", 4000)
+    const prompt = host.said(child).at(-1)
+    expect(prompt.resume).toBe(true)
+    expect(prompt.text).toContain("不要使用任何工具")
+    expect(prompt.text).toContain("推理")
+    expect(prompt.text).toContain("工具结果")
+    const request = modelRequest(child)
+    await host.hooks.get("context")!(request)
+    expect(Object.keys(request.tools)).toEqual([])
+    host.reply(child, "已看到 8 个事件里有 3 个与原始计数不符。")
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，已收回部分报告",
+      child_session_id: child,
+    })
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBe(true)
+    expect(result.result.preview).toContain("【未完成·未核实】")
+    expect(result.result.preview).toContain("原始计数不符")
+    expect(result.result.preview).not.toContain("I'll start")
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    expect(archived).toMatchObject({ stop_reason: "interrupted", incomplete: true, unverified: true })
+    expect(archived.output[0].text).toContain("【未完成·未核实】")
+    expect(archived.output[0].text).toContain("原始计数不符")
+    expect(archived.output[0].text).not.toContain("I'll start")
+  })
+
+  test("a timed-out specialist with an empty summary records no usable report and keeps the session", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "timeout summary", 4000)
+    host.reply(child, "")
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，没有可用报告",
+      child_session_id: child,
+    })
+    expect(result.error).not.toBe("达到专家时间上限，已收回部分报告")
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+  })
+
+  test("a failed timeout summary records no usable report instead of the opening line", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        const original = raw.ctx.session.synthetic
+        let resumes = 0
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          if (node && input.sessionID !== node && input.resume && ++resumes >= 2) throw new Error("summary model unavailable")
+          return original(input)
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "达到专家时间上限，没有可用报告",
+      child_session_id: child,
+    })
+    expect(result.error).not.toBe("达到专家时间上限，已收回部分报告")
+    expect(result.result.session_id).toBe(child)
+    expect(result.result.preview ?? "").not.toContain("I'll start")
+    expect(result.result.report_path).toBeUndefined()
+  })
 })
 
 describe("storage", () => {

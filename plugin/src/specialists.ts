@@ -8,7 +8,7 @@
  * assigned inputs: no workspace, no research records, none of OpenCode's prompt.
  */
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { wasNotSent } from './host-submission'
 import { oneLine, type ModelRef, type PermissionRule, type SessionHost } from "./engine"
@@ -40,6 +40,16 @@ const FINAL_REPORT =
 const PREVIEW_CHARS = 1600
 /** How long an interrupted specialist may take to stop before its exit counts as unverified. */
 const STOP_GRACE_MS = 60_000
+/** One tool-free follow-up after a timeout. Long enough for a single reply, not another full shift. */
+const SUMMARY_GRACE_MS = 30_000
+const PARTIAL_REPORT = "达到专家时间上限，已收回部分报告"
+const NO_USABLE_REPORT = "达到专家时间上限，没有可用报告"
+const UNVERIFIED_MARK = "【未完成·未核实】"
+const SUMMARY_PROMPT = [
+  "时间已到。不要使用任何工具。",
+  "请只根据本会话里已经出现的文字、推理和工具结果，写一份报告：列出已看到的发现和依据，并写明仍不确定、尚未核实的地方。",
+  "不要把开场的进度说明当作结论。",
+].join("\n")
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -109,21 +119,40 @@ function kickoff(task: any, workspace: string, tools: readonly string[]): string
   ].join("\n")
 }
 
-/** How a specialist session's turn ended and the last text it wrote. */
+function assistantText(message: any): string {
+  return (message?.content ?? [])
+    .filter((part: any) => part?.type === "text")
+    .map((part: any) => String(part.text ?? ""))
+    .join("\n")
+    .trim()
+}
+
+/** How a specialist session's turn ended, and the text of its latest assistant message.
+ * An earlier progress sentence is not the report once a later assistant message exists. */
 export function sessionResult(messages: any[]): { outcome: string | null; text: string } {
   const last = messages.at(-1)
   const outcome = last?.type === "idle" && last.outcome ? String(last.outcome) : null
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index]
     if (item?.type !== "assistant") continue
-    const text = (item.content ?? [])
-      .filter((part: any) => part?.type === "text")
-      .map((part: any) => String(part.text ?? ""))
-      .join("\n")
-      .trim()
-    if (text) return { outcome, text }
+    return { outcome, text: assistantText(item) }
   }
   return { outcome, text: "" }
+}
+
+function messageID(item: any): string {
+  return String(item?.id ?? item?.info?.id ?? "")
+}
+
+/** Text written after the summary prompt. Earlier progress lines are not part of it. */
+function textSince(messages: any[], id: string): string {
+  const start = messages.findIndex((item) => messageID(item) === id)
+  if (start < 0) return ""
+  return sessionResult(messages.slice(start + 1)).text
+}
+
+function markUnverified(text: string): string {
+  return `${UNVERIFIED_MARK}\n${text.trim()}`
 }
 
 function verdict(exited: boolean, outcome: string | null, text: string, timedOut: boolean) {
@@ -133,7 +162,7 @@ function verdict(exited: boolean, outcome: string | null, text: string, timedOut
   }
   if (outcome === "interrupted") {
     return timedOut
-      ? { state: "incomplete", error: "达到专家时间上限，已收回部分报告" }
+      ? { state: "incomplete", error: PARTIAL_REPORT }
       : { state: "cancelled", error: "专家这一轮被中断" }
   }
   return { state: "incomplete", error: `专家会话以「${outcome ?? "未知"}」结束` }
@@ -291,32 +320,7 @@ export class Specialists {
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'submitted' }, `${operationID}:submitted`)
       const exited = await this.finished(child, controller.signal)
       if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
-      const { outcome, text } = sessionResult(await this.host.messages(child).catch(() => []))
-      const { state, error } = verdict(exited, outcome, text, timedOut)
-      let archiveError: string | undefined
-      const artifact = text
-        ? await this.archive(root, parent, reserved.task_id, outcome, text, operationID).catch((failure) => {
-            archiveError = message(failure)
-            return null
-          })
-        : null
-      return await this.settle(
-        parent,
-        reserved.task_id,
-        {
-          state,
-          error,
-          exit_verified: exited,
-          result: {
-            stop_reason: outcome,
-            session_id: child,
-            preview: text.slice(0, PREVIEW_CHARS),
-            ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
-            ...(archiveError ? { archive_error: archiveError } : {}),
-          },
-        },
-        `${operationID}:finish`,
-      )
+      return await this.finishChild(root, parent, reserved.task_id, child, exited, timedOut, operationID, signal)
     } catch (error) {
       if (!this.current()) return { task_id: reserved.task_id, state: 'unverified', error: '控制器已重绑定，等待新实例核对。' }
       const stage = !child && (!createAttempted || wasNotSent(error, 'create')) ? 'create'
@@ -373,6 +377,102 @@ export class Specialists {
     }
   }
 
+  /** After a timeout, ask the same child — with its tools withdrawn — to summarize work already in the session. */
+  private async summarize(child: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted || !this.current()) return ""
+    this.tools.set(child, [])
+    const summaryMessageID = `msg_research_${randomUUID().replaceAll("-", "")}`
+    const controller = new AbortController()
+    let summaryTimedOut = false
+    const onAbort = () => controller.abort()
+    signal?.addEventListener("abort", onAbort, { once: true })
+    const timer = setTimeout(() => {
+      summaryTimedOut = true
+      controller.abort()
+    }, SUMMARY_GRACE_MS)
+    try {
+      await this.host.synthetic(child, SUMMARY_PROMPT, "专家超时后的未核实摘要", true, summaryMessageID)
+      const exited = await this.finished(child, controller.signal)
+      if (!exited || summaryTimedOut || signal?.aborted) return ""
+      const messages = await this.host.messages(child).catch(() => [])
+      return textSince(messages, summaryMessageID)
+    } catch {
+      await this.stop(child).catch(() => false)
+      return ""
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
+    }
+  }
+
+  /** Records the specialist's report. A timeout is summarized instead of replaying an earlier progress line. */
+  private async finishChild(
+    root: string,
+    parent: string,
+    taskID: string,
+    child: string,
+    exited: boolean,
+    timedOut: boolean,
+    operationID: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
+    const found = sessionResult(await this.host.messages(child).catch(() => []))
+    if (timedOut && exited && found.outcome !== "succeeded") {
+      const summary = signal?.aborted ? "" : await this.summarize(child, signal)
+      if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
+      const stopReason = found.outcome ?? "interrupted"
+      if (summary) {
+        const text = markUnverified(summary)
+        let archiveError: string | undefined
+        const artifact = await this.archive(root, parent, taskID, stopReason, text, operationID, true).catch((failure) => {
+          archiveError = message(failure)
+          return null
+        })
+        return this.settle(parent, taskID, {
+          state: "incomplete",
+          error: PARTIAL_REPORT,
+          exit_verified: true,
+          result: {
+            stop_reason: stopReason,
+            session_id: child,
+            preview: text.slice(0, PREVIEW_CHARS),
+            incomplete: true,
+            unverified: true,
+            ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
+            ...(archiveError ? { archive_error: archiveError } : {}),
+          },
+        }, `${operationID}:finish`)
+      }
+      return this.settle(parent, taskID, {
+        state: "incomplete",
+        error: NO_USABLE_REPORT,
+        exit_verified: true,
+        result: { stop_reason: stopReason, session_id: child, preview: "" },
+      }, `${operationID}:finish`)
+    }
+    const { state, error } = verdict(exited, found.outcome, found.text, timedOut)
+    let archiveError: string | undefined
+    const artifact = found.text
+      ? await this.archive(root, parent, taskID, found.outcome, found.text, operationID).catch((failure) => {
+          archiveError = message(failure)
+          return null
+        })
+      : null
+    return this.settle(parent, taskID, {
+      state,
+      error,
+      exit_verified: exited,
+      result: {
+        stop_reason: found.outcome,
+        session_id: child,
+        preview: found.text.slice(0, PREVIEW_CHARS),
+        ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
+        ...(archiveError ? { archive_error: archiveError } : {}),
+      },
+    }, `${operationID}:finish`)
+  }
+
   /** Freezes the report into the ledger's objects, the same file format as the DSH plugin. */
   private async archive(
     root: string,
@@ -381,11 +481,17 @@ export class Specialists {
     outcome: string | null,
     text: string,
     operationID: string,
+    partial = false,
   ): Promise<{ path: string; version: string; kind: string }> {
     const directory = join(root, ".research", "specialist-results")
     mkdirSync(directory, { recursive: true })
     const path = join(directory, `${taskID}.json`)
-    writeFileSync(path, JSON.stringify({ stop_reason: outcome, output: [{ type: "text", text }] }), { mode: 0o600 })
+    const body = {
+      stop_reason: outcome,
+      ...(partial ? { incomplete: true, unverified: true } : {}),
+      output: [{ type: "text", text }],
+    }
+    writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
     try {
       return await this.research.call("specialist_result_import", parent, { task_id: taskID }, `${operationID}:result`)
     } finally {
@@ -458,18 +564,14 @@ export class Specialists {
       const start = messages.findIndex(item => item?.id === launch.message_id || item?.info?.id === launch.message_id)
       const subsequent = start >= 0 ? messages.slice(start + 1) : []
       const correlated = start >= 0 && !subsequent.some(item => item?.type === 'user' || item?.type === 'synthetic')
-      const { outcome, text } = sessionResult(messages)
+      const { outcome } = sessionResult(messages)
       if (!correlated || !outcome) {
         await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
           exit_verified: false, error: '无法把专家终态与原启动消息对应；需人工核对。' }, `${task.task_id}:warm-unknown`)
         return
       }
-      const { state, error } = verdict(exited, outcome, text, timedOut)
-      const operationID = `${task.task_id}:warm-result`
-      const artifact = text ? await this.archive(root, task.parent_session_id, task.task_id, outcome, text, operationID).catch(() => null) : null
-      await this.settle(task.parent_session_id, task.task_id, { state, error, exit_verified: exited,
-        result: { stop_reason: outcome, session_id: launch.session_id, preview: text.slice(0, PREVIEW_CHARS),
-          ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}) } }, `${operationID}:finish`)
+      await this.finishChild(root, task.parent_session_id, task.task_id, launch.session_id, exited, timedOut,
+        `${task.task_id}:warm-result`)
     } catch {
       if (this.current()) await this.settle(task.parent_session_id, task.task_id, { state: 'unverified', result: {}, preserve_result: true,
         exit_verified: false, error: '专家恢复核对失败；需人工核对。' }, `${task.task_id}:warm-error`).catch(() => {})
