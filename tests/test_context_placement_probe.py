@@ -1,5 +1,6 @@
 """The context-placement probe must fail when a research request lacks a tail."""
 import sys
+import pytest
 from pathlib import Path
 
 SCRIPTS = str(Path(__file__).resolve().parents[1] / "scripts")
@@ -37,9 +38,9 @@ def tool_result():
         {"type": "text", "text": "ok", "cache_control": {"type": "ephemeral"}}]}
 
 
-def finishing():
+def finishing(kind="wait"):
     return {"tools": [], "messages": [
-        {"role": "system", "content": "A research wait was accepted in this execution. Do not call tools."},
+        {"role": "system", "content": f"A research {kind} was accepted in this execution. Do not call tools."},
         tool_call(), tool_result()]}
 
 
@@ -81,13 +82,16 @@ def test_an_auxiliary_request_without_a_tail_is_ignored():
     assert checks["all_research_requests_accounted_for"] is True
 
 
-def test_one_tool_free_finishing_request_is_accounted_for():
+@pytest.mark.parametrize("kind", ["wait", "finish"])
+def test_one_tool_free_finishing_request_is_accounted_for(kind):
     checks = probe.context_placement_checks(
-        [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()]), finishing()],
+        [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()]), finishing(kind)],
         "tail", "")
     assert checks["research_requests"] == 3
     assert checks["tail_requests"] == 2
     assert checks["finishing_requests"] == 1
+    assert checks["wait_finishing_requests"] == (kind == "wait")
+    assert checks["node_finishing_requests"] == (kind == "finish")
     assert checks["all_research_requests_accounted_for"] is True
     assert checks["finishing_requests_have_no_tools_and_no_tail"] is True
     assert probe.context_placement_ok(checks) is True
@@ -108,6 +112,17 @@ def test_a_finishing_request_with_a_tail_is_rejected():
     bad["messages"] = bad["messages"] + [tail()]
     checks = probe.context_placement_checks(
         [body([text_part(), tail()]), bad], "tail", "")
+    assert checks["finishing_requests"] == 1
+    assert checks["finishing_requests_have_no_tools_and_no_tail"] is False
+    assert probe.context_placement_ok(checks) is False
+
+
+@pytest.mark.parametrize("kind", ["wait", "finish"])
+def test_a_finishing_instruction_with_tools_is_rejected(kind):
+    bad = finishing(kind)
+    bad["tools"] = body([])["tools"]
+    checks = probe.context_placement_checks(
+        [body([text_part(), tool_call(), tool_result(), tail()]), bad], "tail", "")
     assert checks["finishing_requests"] == 1
     assert checks["finishing_requests_have_no_tools_and_no_tail"] is False
     assert probe.context_placement_ok(checks) is False

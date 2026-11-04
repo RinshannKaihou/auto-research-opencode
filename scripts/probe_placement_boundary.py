@@ -17,6 +17,7 @@ Two checks:
    text, signature metadata, tool IDs and result ordering. This is wire
    preservation only, not provider acceptance.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -170,6 +171,10 @@ def submit(base, password, sid, message_id, text):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check-tool-choice-options', action='store_true',
+                        help='try context option aliases on the local route and report wire forwarding')
+    args = parser.parse_args()
     BoundaryProvider.bodies = []
     BoundaryProvider.primary_tool_sent = False
     with tempfile.TemporaryDirectory(prefix='ari-placement-boundary-') as temporary:
@@ -192,7 +197,12 @@ def main():
         instrumentation.mkdir()
         (instrumentation / 'package.json').write_text(json.dumps(
             {'name': 'ari-boundary-probe', 'type': 'module', 'exports': {'.': './index.js'}}))
-        (instrumentation / 'index.js').write_text(INSTRUMENTATION)
+        instrumentation_source = INSTRUMENTATION
+        if args.check_tool_choice_options:
+            instrumentation_source = instrumentation_source.replace(
+                'req=>log("context",req)',
+                'req=>{req.options.toolChoice={type:"none"};req.options.tool_choice="none";log("context",req)}')
+        (instrumentation / 'index.js').write_text(instrumentation_source)
 
         plugin = (Path(__file__).resolve().parents[1] / 'plugin').resolve()
         config = root / 'config' / 'opencode'
@@ -355,6 +365,13 @@ def main():
                     'compaction_hook_has_tail': any(item.get('has_tail') for item in compaction_rows),
                     'hooks': compaction_hooks,
                 }
+                if args.check_tool_choice_options:
+                    result['tool_choice_option_probe'] = {
+                        'primary_requests': len(primary_before) + len(primary_after),
+                        'with_tool_definitions': sum(bool(body.get('tools')) for body in primary_before + primary_after),
+                        'with_tool_choice_none': sum(body.get('tool_choice') in ('none', {'type': 'none'})
+                                                     for body in primary_before + primary_after),
+                    }
                 print(json.dumps(result, indent=2, sort_keys=True))
                 if not result['all_primary_have_tail'] or not result['tail_is_last']:
                     raise RuntimeError('primary requests did not carry exactly the trailing temporary message')

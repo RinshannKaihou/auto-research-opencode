@@ -4674,6 +4674,129 @@ describe('tail wait completion', () => {
     return task
   }
 
+  async function nodeAtFinish(host: Awaited<ReturnType<typeof load>>, accept = true) {
+    await host.command('auto', 'ses_main', { goal: 'node finish completion fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const node = host.created[0]!
+    host.turn.start(node)
+    await host.call('research_publish', node, { status: 'complete', summary: 'node result',
+      items: [{ item_id: 'r', kind: 'text', content: { text: 'delivered result' } }] })
+    if (accept) await host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+    return node
+  }
+
+  function finishHistory() {
+    return [{ role: 'assistant', content: [
+      { type: 'tool-call', id: 'query-call', name: 'research_query', arguments: { collection: 'nodes' } },
+      { type: 'tool-call', id: 'finish-call', name: 'research_finish', arguments: { state: 'finished', summary: 'node result' } },
+    ] }, { role: 'tool', content: [
+      { type: 'tool-result', id: 'query-call', name: 'research_query', result: { type: 'text', value: 'nodes' } },
+      { type: 'tool-result', id: 'finish-call', name: 'research_finish', result: { type: 'text', value: 'accepted' } },
+    ] }]
+  }
+
+  test('an accepted node finish keeps sibling results and only commits after execution end', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const history = finishHistory()
+    const snapshot = JSON.stringify(history)
+    for (let preparation = 0; preparation < 2; preparation++) {
+      const request = modelRequest(node)
+      request.messages = history as any
+      await host.hooks.get('context')!(request)
+      expect(request.messages).toBe(history)
+      expect(JSON.stringify(history)).toBe(snapshot)
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(systemText(request)).toContain('A research finish was accepted')
+      expect(systemText(request)).toContain('after this execution ends')
+      expect(systemText(request)).toContain('## recent_node_notes')
+      expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+      expect(cacheHints(request)).toHaveLength(0)
+    }
+    const before = await host.command('status', 'ses_main')
+    expect(before.state.workflow.tasks.find((task: any) => task.session_id === node).state).toBe('running')
+    expect(host.said('ses_main').some((item) => item.text.includes('节点 X-001'))).toBe(false)
+    host.turn.end(node)
+    await until(() => host.said('ses_main').some((item) => !item.resume && item.text.includes('节点 X-001')),
+      'node finish committed after execution end')
+    const after = await host.page('tasks')
+    expect(after.items).toHaveLength(1)
+    expect(after.items[0].state).toBe('finished')
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a rejected node finish and transcript alone cannot latch finishing', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host, false)
+    await expect(host.call('research_finish', node, { state: 'invalid', summary: 'node result' })).rejects.toThrow()
+    const request = modelRequest(node)
+    request.messages = finishHistory() as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a mismatched authoritative node finish invalidates the marker', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      const result = await (call as any).call(this, method, ...args)
+      return method === 'node_finish_pending' && result ? { ...result, turn_token: 'another-execution' } : result
+    })
+    try {
+      const request = modelRequest(node)
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toContain('research_query')
+      expect(systemText(request)).not.toContain('A research finish was accepted')
+    } finally { spy.mockRestore() }
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a warm rebind retains an accepted node finish for the same execution', async () => {
+    const first = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(first)
+    const second = await load({ placement: 'tail' })
+    const request = modelRequest(node)
+    await second.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research finish was accepted')
+  })
+
+  test('system mode discards a node finish marker and tail rebind cannot resurrect it', async () => {
+    const first = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(first)
+    const system = await load()
+    const request = modelRequest(node)
+    await system.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+    expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+    const tail = await load({ placement: 'tail' })
+    const next = modelRequest(node)
+    await tail.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research finish was accepted')
+  })
+
+  test('system mode does not latch an accepted node finish', async () => {
+    const host = await load()
+    const node = await nodeAtFinish(host)
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
   test('an accepted wait keeps finishing until the execution ends', async () => {
     const host = await load({ placement: 'tail' })
     const task = await acceptedWait(host)

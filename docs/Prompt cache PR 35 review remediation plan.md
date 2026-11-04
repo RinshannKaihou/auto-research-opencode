@@ -1,6 +1,6 @@
 # PR #35: review remediation plan
 
-2026-11-04. Status: implementation plan; no remediation code or new API experiment has been run under this plan.
+2026-11-04. Status: Commits A–C and the follow-up node-finish correction are implemented and locally checked. No new real-provider API experiment has been run. See the [review response](./evidence/context-cache/review-response.md) for current results and open gates.
 
 Target: PR #35, branch `cursor/prompt-cache-stabilization`, starting at `a463f91` (includes main/v0.2.2 at `6f36885`). Continue in the existing feature worktree. Preserve unrelated changes; follow `AGENTS.md`; sync main by merge when necessary. Do not modify the old dirty checkout, rewrite history, merge the PR, release, or restart the shared service.
 
@@ -23,7 +23,7 @@ Sources: [Chinese review and inline findings](https://github.com/RinshannKaihou/
 
 Keep `contextPlacement: "system"` as default. Preserve fresh context, the 12,000-character budget, full-text delivery, checkpoint/evidence matching, blind isolation, and execution controls. No Python renderer/schema/budget changes, turn snapshots, provider registry, tokenizer, pricing engine, or replacement probe framework.
 
-The one bounded control exception is a tail-mode coordinator's response immediately after an accepted wait: completing that response may require withholding tools. This is wait completion, not a general tool-schema caching change. System mode retains its existing behavior.
+The bounded control exception is a tail-mode response after an accepted coordinator wait or node finish: completing that response requires withholding tools. This is terminal-action completion, not a general tool-schema caching change. System mode retains its existing behavior.
 
 Preferred PR readiness: Commits A-C and the local checks below pass. If a verified host-contract gap blocks B or C, an experimental-only merge remains a separate reviewer decision after A and the warning; do not mark the blocked finding resolved. Normal tail-mode use requires the later real-route behavior check. Default enablement remains a separate decision. No PR merge or publication is authorized by this planning task.
 
@@ -113,16 +113,23 @@ Run focused tests after each commit, then `PYTHONDONTWRITEBYTECODE=1 make test` 
 
 Add one concise `docs/evidence/context-cache/review-response.md` mapping the review findings to dispositions, commits, commands/results, and remaining limitations. Keep historical numbers intact. Lead any updated PR summary with per-role usage and request counts; describe all hit rates and averages as observational. Cost stays unavailable unless actually reported; no custom pricing project is required.
 
-The source analysis's stable allowlist is unchanged in this correction. `project` includes `run_state` and `pause_reason`; wait/wake can cause legitimate cold prefixes. Record that limitation and defer a renderer split. Reconsider it after waiting is fixed and its remaining impact is measured.
+The stable allowlist is unchanged. The waiting variant of `project` is confined to the full-system finishing request; confirmed wake clears waiting, so subsequent tail requests are expected to regain the pre-wait stable prefix while its cache is live. This is expected mitigation, pending stable-digest comparison across real wakes. Other ledger changes, the shared content budget and cache expiry can still change reuse. A renderer split is deferred.
 
 ### Real-route gate — outside the initial implementation handoff
 
 No paid request is authorized by this planning document. After the user authorizes a concrete test goal/model/request budget:
 
+**Route qualification comes first.** Before real research with tail, send both actual finishing shapes (accepted `research_wait` and `research_finish`): full system context, complete tool-call/result history, zero tool definitions, no tail and no new placement hint, with the chosen reasoning settings intact. Require provider acceptance and an actual terminal reply rather than further tools. Check the user's DeepSeek gateway and any Anthropic-family route intended for use independently. A 400, retry/pause, rejected reasoning replay, missing usage or inconclusive response leaves that route unqualified. Currently no real route is qualified, so normal research uses system. This is a documented experimental-use restriction; there is no runtime provider allowlist or automatic certification.
+
+The pinned context hook has no typed tool-choice control; the local `--check-tool-choice-options` probe sends neither tested option alias on the wire. Do not assume an arbitrary `request.options.toolChoice` works, rewrite production HTTP bodies, or retain callable definitions based only on a prompt instruction. The tool-free path remains experimental until its exact native request is accepted.
+
+
 1. Capture one representative wait-continuation payload without publishing its content. Compare otherwise-identical requests with and without the temporary tail, alternating order, up to 10 requests per arm with the same model/reasoning/output settings.
 2. Send directly to the selected provider and classify the responses; never execute returned tool calls. Count tools versus final replies, errors, truncation, and reported usage. Missing/truncated usage or inconclusive behavior stays explicit. This is a small experiment, not a native-runner framework or exact-cost guarantee.
 3. Verify reasoning acceptance on the actual chosen route. Preserve thinking settings and signatures; do not disable reasoning to make the test pass.
-4. Only after the finishing path is sound, repeat the matched research pair, including wait calls, turn ends, notifications/wakes, request counts, unknown usage, report evidence and whole-run known usage. It must not continue an unbounded wait loop.
+4. Only after the finishing path is sound, repeat the matched research pair, including wait calls, turn ends, notifications/wakes, request counts, unknown usage, report evidence and whole-run known usage. It must not continue an unbounded wait or post-finish loop. Include node message sequences, both finishing shapes and the coordinator stable-block digest immediately before wait and after confirmed wake. Investigate mismatches rather than asserting that every wake must be identical despite other ledger/budget changes.
+
+Query-only polling before any terminal action remains possible in either placement. Consider an in-execution step cap for both modes as a separate control-design task before changing the default; this correction does not introduce one.
 
 Keep system default throughout. A default change is a separate decision after suitable repeats and both exploration settings; no universal savings threshold or multi-provider certification is added here.
 
@@ -147,3 +154,7 @@ response with actual results and unresolved limitations. Stop at a concrete host
 contract gap instead of inventing a guard. No paid API experiment, shared-service
 restart, PR merge, release, or default change is included in this handoff.
 ```
+
+## Follow-up to the dcf09c9 re-review
+
+[Re-review](https://github.com/RinshannKaihou/auto-research-opencode/pull/35#issuecomment-6631854671): accepted node finishes now reuse the same marker/lifetime and full-system finishing path. The marker is installed only after `Engine.finish` succeeds for the captured execution. Context checks existing node authorization and the service's `node_finish_pending.turn_token`; the engine still commits only at real execution end. Failed calls, stale or mismatched pending finishes, system mode and warm rollback cannot activate this path. The existing warm-state map key is retained; missing `kind` means the earlier wait marker. No renderer, service, schema or finish-commit logic changes.

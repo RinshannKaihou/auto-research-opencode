@@ -41,3 +41,13 @@ This establishes exact wire preservation through the selected adapter, not that 
 ## Result
 
 Compaction does not receive the tail, and reasoning/tool bytes survive the temporary tail at the wire level. Production routing is unchanged. The limitations above and the unverified real-provider acceptance are recorded in the review response.
+
+## Re-review: finishing request provider gate
+
+`python3 scripts/probe_placement_boundary.py --check-tool-choice-options` registers a scratch instrumentation hook that sets both `request.options.toolChoice = {type: "none"}` and `request.options.tool_choice = "none"`. On the pinned 2.2.5 host and local OpenAI-compatible route, all three primary bodies retained tool definitions and **zero** sent `tool_choice: none`. The context contract types only generation settings; additional option keys are provider options, not a documented top-level LLM tool-choice control. This rules out these two proposed aliases on this route, not every possible future host API.
+
+The SDK/provider support for `tool_choice` is different from hook support. [Anthropic documents tool choice](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools), but the plugin cannot assume that an untyped host option forwards it. No production HTTP rewrite or speculative option was added.
+
+The actual tail finishing request retains full paired tool history but offers zero tool definitions. Its acceptance by the DeepSeek gateway and Anthropic-family routes is **unverified**; the scripted provider cannot establish it. Both wait and node-finish shapes must pass the native route gate with reasoning settings preserved before real tail research. No real route is currently qualified; use system normally. This is an experimental-use requirement, not a runtime route allowlist.
+
+The local lifecycle now observes 4 tailed requests plus 2 finishing requests (one wait, one node finish), complete tool pairing, at most 4 hints and no persisted tail. The system control completes with 7 requests. The compaction check still observes three tailed primary requests and a separate, clean compaction. The compact, content-free results are in [followup-checks.json](followup-checks.json); request counts can vary with local scheduling, while the probe enforces both finishing kinds and the placement invariants.

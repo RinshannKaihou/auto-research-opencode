@@ -120,9 +120,9 @@ If the selected API rejects the message sequence or reasoning replay, keep syste
 
 Revisit the source plan's Phase 2 only if renderer budget coupling materially limits the measured improvement. Revisit Phase 3 only if tool-schema changes materially explain remaining misses and the user accepts the visibility change. Output-token overhead, isolated-session rereading, and cache TTL are separate investigations.
 
-Repeated waiting occurred in the tail arm: 104 `research_wait` calls (102 as the sole tool, median 2.1 s apart). The wait tool permits continued steps; placement's contribution remains undetermined. A temporary user message could interact with model behavior, and this pair cannot exclude that. The bounded tail-only wait completion in the remediation plan is implemented and locally verified, but it has not been checked on a real model route; that check belongs to the later gate.
+Repeated waiting occurred in the tail arm: 104 `research_wait` calls (102 as the sole tool, median 2.1 s apart). The wait tool permits continued steps; placement's contribution remains undetermined. A temporary user message could interact with model behavior, and this pair cannot exclude that. The bounded tail-only wait and node-finish completion in the remediation plan is implemented and locally verified, but it has not been checked on a real model route; that check belongs to the later gate.
 
-The source stable allowlist is unchanged. `project` still carries `run_state` and `pause_reason`, so wait/wake can legitimately produce a cold prefix. A renderer split is deferred until the wait-completion path has been measured; treating the whole block as volatile would re-send the goal on every request.
+The stable allowlist is unchanged. The full-system finishing request carries the waiting variant of `project`; confirmed wake clears waiting, so regular tail requests are expected to regain their pre-wait stable prefix while the cache remains live. Verify stable digests across real wakes, accounting for other ledger and content-budget changes. This is expected mitigation, not an independently established blocker requiring a renderer split. Native acceptance of both tool-free finishing shapes remains a separate route gate; no real route is qualified yet.
 
 Do not treat these follow-ups as prerequisites for the opt-in placement patch.
 

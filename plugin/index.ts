@@ -87,8 +87,8 @@ export default Plugin.define({
     let notifyEventState = () => {}
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
-    /** Drop a wait marker only for the execution it belongs to (or for cleanup). */
-    const clearWaitFinish = (sessionID: string, execution?: string) => {
+    /** Drop a finishing marker only for its own execution (or for cleanup). */
+    const clearTurnFinish = (sessionID: string, execution?: string) => {
       const markers = lifecycle.state.waitFinishes
       const marker = markers?.get(sessionID)
       if (marker && (execution === undefined || marker.execution === execution)) markers!.delete(sessionID)
@@ -604,8 +604,16 @@ export default Plugin.define({
           }
           return result
         }
-        case "finish":
-          return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
+        case "finish": {
+          const execution = engine.executionToken(sessionID)
+          const result = await engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
+          if (contextPlacement === 'tail' && execution !== undefined
+              && engine.executionToken(sessionID) === execution) {
+            const markers = lifecycle.state.waitFinishes ??= new Map()
+            markers.set(sessionID, { execution, waiting: [], kind: 'finish' })
+          }
+          return result
+        }
         case "conclude":
           return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID,
             research.evidenceDelivery.forCall(sessionID,call.messageID,call.id))
@@ -706,7 +714,12 @@ export default Plugin.define({
         const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
         if (!main) throw new Error('Research controller owner is unavailable')
         await ensureController(root, main)
-        let finishing = false
+        let finishing: 'wait' | 'finish' | undefined
+        // Both terminal actions share the existing execution-scoped lifetime.
+        // Switching to system mode discards either kind across a warm rebind.
+        const markers = lifecycle.state.waitFinishes
+        if (contextPlacement !== 'tail') markers?.delete(request.sessionID)
+        const candidate = contextPlacement === 'tail' ? markers?.get(request.sessionID) : undefined
         if (role === "main") {
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
@@ -740,25 +753,19 @@ export default Plugin.define({
           // execution. This marker is process-local and never reconstructs
           // control from old tool results. A warm rebind to system mode must
           // discard a marker left by a tail attachment.
-          const markers = lifecycle.state.waitFinishes
-          if (markers && contextPlacement !== 'tail') markers.delete(request.sessionID)
-          const candidate = contextPlacement === 'tail' ? markers?.get(request.sessionID) : undefined
           if (candidate) {
             const execution = engine.executionToken(request.sessionID)
             const waiting = Array.isArray(state.workflow?.session?.waiting)
               ? state.workflow.session.waiting.map(String) : []
-            const matches = execution !== undefined && execution === candidate.execution
+            const matches = candidate.kind !== 'finish' && execution !== undefined && execution === candidate.execution
               && run === 'running' && pause === 'wait'
               && waiting.length === candidate.waiting.length
               && waiting.every((id: string) => candidate.waiting.includes(id))
             if (matches) {
-              finishing = true
+              finishing = 'wait'
             } else markers!.delete(request.sessionID)
           }
         }
-        // A finishing request keeps every completed result but exposes no tool,
-        // so neither a repeated wait nor query polling can continue the turn.
-        if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
         if (role === 'node_core') {
           await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
@@ -774,8 +781,22 @@ export default Plugin.define({
             request.system.push({ type: 'text', text: shellWake
               ? 'A background completion arrived while execution is paused or unverified. Stop this response and report that explicit recovery is required.'
               : 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
+            if (candidate) markers!.delete(request.sessionID)
+          } else if (candidate) {
+            const execution = engine.executionToken(request.sessionID)
+            // The service remains authoritative: never infer a finish from
+            // transcript text or commit it before the real execution ends.
+            const pending = candidate.kind === 'finish' && execution === candidate.execution
+              ? await research.call<any>('node_finish_pending', request.sessionID) : undefined
+            if (execution !== undefined && pending?.turn_token === execution
+                && engine.executionToken(request.sessionID) === execution
+                && markers?.get(request.sessionID) === candidate) finishing = 'finish'
+            else if (markers?.get(request.sessionID) === candidate) markers.delete(request.sessionID)
           }
         }
+        // Keep every sibling result. Provider acceptance of this tool-free
+        // request with tool history is a required, route-specific native gate.
+        if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
         const deadline=performance.now()+2000
         // Delivery checks read the persistent history and the original text;
         // the temporary tail is not part of either.
@@ -816,8 +837,10 @@ export default Plugin.define({
           else request.system.push({type:'text',text:warning})
         }
         if (finishing) {
-          request.system.push({ type: 'text', text:
-            'A research wait was accepted in this execution. Acknowledge that the coordinator is waiting and end this response; ' +
+          request.system.push({ type: 'text', text: finishing === 'finish'
+            ? 'A research finish was accepted in this execution. End this response without further work; ' +
+              'the engine will commit the node result and notify the coordinator after this execution ends. Do not call tools.'
+            : 'A research wait was accepted in this execution. Acknowledge that the coordinator is waiting and end this response; ' +
             'the engine will deliver the result and wake the coordinator. Do not call tools.' })
         }
         // Allocate a new array: the boundary helper returns the host's array
@@ -913,7 +936,7 @@ export default Plugin.define({
         await engine.started(sessionID, event.id, sequence)
         const current = engine.executionToken(sessionID)
         const marker = lifecycle.state.waitFinishes?.get(sessionID)
-        if (marker && marker.execution !== current) clearWaitFinish(sessionID, marker.execution)
+        if (marker && marker.execution !== current) clearTurnFinish(sessionID, marker.execution)
       }
       else if (type === 'session.inbox.enqueued') {
         const metadata = (data as any)?.item?.payload?.metadata
@@ -948,7 +971,7 @@ export default Plugin.define({
         // Only a terminal event this handler actually processed may confirm
         // that the marked execution ended. Replayed duplicates and no-op ends
         // leave a newer execution's marker untouched.
-        if (handled && engine.executionToken(sessionID) === ending) clearWaitFinish(sessionID, ending)
+        if (handled && engine.executionToken(sessionID) === ending) clearTurnFinish(sessionID, ending)
       }
       nativeObservations.event(event)
     }

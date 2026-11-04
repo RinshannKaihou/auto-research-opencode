@@ -47,16 +47,24 @@ def _tool_pairing_ok(messages):
     return not pending
 
 
+def _finishing_kind(body):
+    for message in body.get('messages') or []:
+        if message.get('role') == 'system':
+            for kind in ('wait', 'finish'):
+                if f'A research {kind} was accepted' in _message_text(message):
+                    return kind
+    return None
+
+
 def context_placement_checks(bodies, placement, persisted_context):
     """Checks the temporary research-state message and the cache breakpoints
-    the SDK actually put on the wire. A tail-mode wait-completion request is
+    the SDK actually put on the wire. A tail-mode wait/node-completion request is
     the one deliberate exception: it carries the full context in system and
     exposes no tools, so it must have no temporary tail."""
     research = []
     for body in bodies:
         names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
-        finishing = (not names and any('A research wait was accepted' in _message_text(message)
-                                       for message in body.get('messages') or [] if message.get('role') == 'system'))
+        finishing = _finishing_kind(body) is not None
         if any(name.startswith('research_') for name in names) or finishing:
             research.append(body)
     checks = {'requests': len(bodies), 'research_requests': len(research)}
@@ -64,9 +72,7 @@ def context_placement_checks(bodies, placement, persisted_context):
         checks['max_cache_markers'] = max((_cache_markers(body) for body in research), default=0)
         return checks
     tails = [body for body in research if _has_tail(body)]
-    finishing = [body for body in research if not body.get('tools')
-                 and any('A research wait was accepted' in _message_text(message)
-                         for message in body.get('messages') or [] if message.get('role') == 'system')]
+    finishing = [body for body in research if _finishing_kind(body) is not None]
     tails = [body for body in tails if body not in finishing]
     tool_continuations = [body for body in research
                           if len(body.get('messages') or []) > 1
@@ -75,6 +81,8 @@ def context_placement_checks(bodies, placement, persisted_context):
     checks.update({
         'tail_requests': len(tails),
         'finishing_requests': len(finishing),
+        'wait_finishing_requests': sum(_finishing_kind(body) == 'wait' for body in finishing),
+        'node_finishing_requests': sum(_finishing_kind(body) == 'finish' for body in finishing),
         'unaccounted_requests': len(research) - len(tails) - len(finishing),
         'all_research_requests_accounted_for': len(tails) + len(finishing) == len(research),
         'tail_is_last': all(_has_tail(body) for body in research if body not in finishing),
@@ -620,8 +628,11 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     if args.context_placement == 'tail' and not context_placement_ok(checks):
                         print(json.dumps(result, sort_keys=True))
                         raise RuntimeError('Tail context placement did not reach the wire as expected')
+                    if args.context_placement == 'tail' and checks.get('node_finishing_requests', 0) < 1:
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('The scripted node finish did not produce a tool-free finishing request')
                     if args.wait_finish:
-                        if checks.get('finishing_requests', 0) < 1:
+                        if checks.get('wait_finishing_requests', 0) < 1:
                             print(json.dumps(result, sort_keys=True))
                             raise RuntimeError('The scripted accepted wait did not produce a tool-free finishing request')
                         if ResearchProvider.actions.count('wait') != 1:
