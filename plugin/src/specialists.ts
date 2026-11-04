@@ -597,7 +597,7 @@ export class Specialists {
     }
   }
 
-  /** Records the specialist's report. A stall or the absolute cap is summarized instead of replaying an earlier progress line. A failed or cancelled turn does not archive that line. */
+  /** Records the specialist's report. A stall or the absolute cap is summarized instead of replaying an earlier progress line. A failed turn archives its text marked unverified, which is not a clean report. A cancelled turn does not archive the opening line. */
   private async finishChild(
     root: string,
     parent: string,
@@ -648,14 +648,14 @@ export class Specialists {
       }
       return this.settle(parent, taskID, {
         state: "incomplete",
-        error: summary.refusal ?? limitCopy(limit, false),
+        error: summary.refusal ? `${limitCopy(limit, false)}\n${summary.refusal}` : limitCopy(limit, false),
         exit_verified: true,
         result: { stop_reason: stopReason, session_id: child, preview: "" },
       }, `${operationID}:finish`)
     }
     // A succeeded turn can still have written only an opening line before its tool calls.
     if (exited && found.outcome === "succeeded" && found.text && textPrecedesTool(messages)) {
-      const text = markProgress(found.text)
+      const text = markProgress(textAfterKickoff(messages) || found.text)
       let archiveError: string | undefined
       const artifact = await this.archive(root, parent, taskID, found.outcome, text, operationID, false, true).catch((failure) => {
         archiveError = message(failure)
@@ -676,11 +676,15 @@ export class Specialists {
       }, `${operationID}:finish`)
     }
     const { state, error } = verdict(exited, found.outcome, found.text, limit)
-    // A non-succeeded turn must not freeze an earlier progress line as the report.
-    const report = exited && found.outcome === "succeeded" ? found.text : ""
+    // A failed turn keeps its text, marked unverified. That is not a clean report,
+    // including when the only text is the opening line. A cancel archives nothing.
+    const failedUnverified = exited && !limit && found.outcome === "failed" && found.text
+      ? markUnverified(found.text)
+      : ""
+    const report = exited && found.outcome === "succeeded" ? found.text : failedUnverified
     let archiveError: string | undefined
     const artifact = report
-      ? await this.archive(root, parent, taskID, found.outcome, report, operationID).catch((failure) => {
+      ? await this.archive(root, parent, taskID, found.outcome, report, operationID, Boolean(failedUnverified)).catch((failure) => {
           archiveError = message(failure)
           return null
         })
@@ -693,6 +697,7 @@ export class Specialists {
         stop_reason: found.outcome,
         session_id: child,
         preview: report.slice(0, PREVIEW_CHARS),
+        ...(failedUnverified ? { incomplete: true, unverified: true } : {}),
         ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
         ...(archiveError ? { archive_error: archiveError } : {}),
       },
@@ -837,8 +842,19 @@ export class Specialists {
   }
 }
 
+/** Assistant text after the kickoff, in order. Text before that message stays out of the report. */
+function textAfterKickoff(messages: any[]): string {
+  const kickoff = messages.findIndex((item) => item?.type === "synthetic" || item?.type === "user")
+  const slice = kickoff >= 0 ? messages.slice(kickoff + 1) : messages
+  return slice
+    .filter((item) => item?.type === "assistant")
+    .map((item) => assistantText(item))
+    .filter(Boolean)
+    .join("\n")
+}
+
 /** The last assistant text is only a progress line when a tool call comes after it. */
-function textPrecedesTool(messages: any[]): boolean {
+export function textPrecedesTool(messages: any[]): boolean {
   let lastText = -1
   let lastTool = -1
   let cursor = 0
@@ -866,6 +882,6 @@ function summaryRefusal(error: unknown): string | null {
   if (code === "runtime_budget_exhausted") return "自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。"
   if (code === "research_control_paused") return "研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。"
   if (code === "research_control_stopped") return "研究已停止，超时补问没有发出；已有进度句不是报告。"
-  if (message(error).includes("研究事件需核对")) return "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。"
+  if (code === "research_events_need_check") return "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。"
   return null
 }

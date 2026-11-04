@@ -28,10 +28,13 @@ EXTENDS TLC
 \*   "failedArchivesOpening"
 \*                  current code, except the direct finishChild archive is the
 \*                  pre-fix `report = exited ? found.text : ""`
-\*                  (specialists.ts:680). A failed turn archives the opening line.
-\*                  A parent cancel on that branch does not: the fixed code
-\*                  leaves badArchive false there, and the variant does too, so
-\*                  the counterexample TLC prints is the failed turn.
+\*                  (specialists.ts:684). A failed turn archives the opening line
+\*                  as a clean report. The current code archives that text with
+\*                  the unverified mark instead, which is not a clean report, so
+\*                  badArchive stays FALSE. A parent cancel on that branch does
+\*                  not archive: the fixed code leaves badArchive false there,
+\*                  and the variant does too, so the counterexample TLC prints
+\*                  is the failed turn.
 \*
 \* Each action is one yield: host events may happen at an await, and the
 \* statements between awaits run in the action that resumes. Line numbers are
@@ -40,8 +43,11 @@ EXTENDS TLC
 \* The opening line from issue #27 is the transcript's last assistant text until
 \* a summary turn ends "succeeded". An interrupted summary turn adds no
 \* assistant text. A correct textSince never returns the opening line.
-\* A work turn that ends "failed", or "interrupted" with no stall or cap, does
-\* not archive that line. failedArchivesOpening is the pre-fix code, which did.
+\* A work turn that ends "failed" archives its text with the unverified mark.
+\* That archive is not a clean report, so archivedPre stays FALSE. An
+\* "interrupted" turn with no stall or cap does not archive the opening line.
+\* failedArchivesOpening is the pre-fix code, which archived that line as a
+\* clean report.
 
 CONSTANT Variant
 
@@ -347,15 +353,20 @@ ReadTranscriptAndDecide ==
            /\ ~(limit # "none" /\ exitedSeen /\ found # "succeeded")
            /\ pc' = "Settle"
            /\ willVerify' = exitedSeen
-           \* specialists.ts:680. Only a succeeded turn archives its own text.
-           \* A failed turn does not. A parent cancel (interrupted, limit "none")
-           \* does not either. failedArchivesOpening is the pre-fix line
-           \* `report = exited ? found.text : ""` on a failed turn: it archives
-           \* the opening line. The same pre-fix line also archived a parent
-           \* cancel; that exit stays badArchive FALSE here so the first
-           \* counterexample TLC prints is the failed turn. A succeeded turn's
-           \* text is its report. A progress line before a later tool call is
-           \* not in this model.
+           \* specialists.ts:681-684. A succeeded turn archives its own text.
+           \* A failed turn with no stall or cap archives its text with the
+           \* unverified mark (specialists.ts:681-684, 700). That is not a
+           \* clean report: badArchive stays FALSE, and exit_verified only
+           \* records that the turn ended. A parent cancel (interrupted, limit
+           \* "none") archives nothing. failedArchivesOpening is the pre-fix
+           \* line `report = exited ? found.text : ""` on a failed turn: it
+           \* archives the opening line as a clean report. The same pre-fix
+           \* line also archived a parent cancel; that exit stays badArchive
+           \* FALSE here so the first counterexample TLC prints is the failed
+           \* turn. A succeeded turn's text is its report. A progress line
+           \* before a later tool call is not in this model. The code keeps
+           \* every assistant text after the kickoff on that path; this model
+           \* has no tool-call step, and that archive is not a clean report.
            /\ badArchive' = (Variant = "failedArchivesOpening" /\ exitedSeen /\ found = "failed")
            /\ UNCHANGED <<running, outcome, limit, parentAbort, fromAbort, quiet, limitsArmed,
                          summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
@@ -532,8 +543,8 @@ BoundedSummaryReadSettles ==
                 summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
                 archivedPre, ret, sumAborted>>
 
-\* specialists.ts:732-736 specialist_finish. exit_verified is the value chosen
-\* above (623, 637, 652, 667, 691). This action is the ledger write.
+\* specialists.ts:737-741 specialist_finish. exit_verified is the value chosen
+\* above (623, 637, 652, 667, 695). This action is the ledger write.
 RecordLedger ==
   /\ pc = "Settle"
   /\ pc' = "Done"

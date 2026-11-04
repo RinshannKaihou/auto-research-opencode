@@ -1,0 +1,393 @@
+{
+  "description": "Real OpenCode v2.2.5 transcript: ctx.session.context({sessionID}) called from a plugin on session.execution.succeeded; model opencode-go/deepseek-v4.1-flash; prompt asked for text -> read tool -> final text.",
+  "opencode_version": "v2.2.5",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "trigger_event": "session.execution.succeeded",
+  "sessionID": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+  "http_context_identical": true,
+  "events": [
+    {
+      "type": "probe.ready",
+      "sessionKeys": [
+        "hook",
+        "list",
+        "create",
+        "get",
+        "remove",
+        "switchAgent",
+        "switchModel",
+        "prompt",
+        "generate",
+        "command",
+        "compact",
+        "synthetic",
+        "interrupt",
+        "update",
+        "move",
+        "wait",
+        "context",
+        "instructions"
+      ]
+    },
+    {
+      "type": "session.inbox.enqueued",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 1,
+      "dataKeys": [
+        "sessionID",
+        "inboxID",
+        "item"
+      ]
+    },
+    {
+      "type": "session.execution.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 2,
+      "dataKeys": [
+        "sessionID"
+      ],
+      "data": {
+        "sessionID": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7"
+      }
+    },
+    {
+      "type": "session.instructions.updated",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 3,
+      "dataKeys": [
+        "sessionID",
+        "delta"
+      ]
+    },
+    {
+      "type": "session.inbox.delivered",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 4,
+      "dataKeys": [
+        "sessionID",
+        "inboxID"
+      ]
+    },
+    {
+      "type": "session.step.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 5,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "agent",
+        "model",
+        "started"
+      ]
+    },
+    {
+      "type": "session.text.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 6,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal"
+      ]
+    },
+    {
+      "type": "session.text.delta",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal",
+        "delta"
+      ]
+    },
+    {
+      "type": "session.tool.input.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 7,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "id",
+        "name"
+      ]
+    },
+    {
+      "type": "session.tool.input.ended",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 8,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "id",
+        "text"
+      ]
+    },
+    {
+      "type": "session.tool.called",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 9,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "id",
+        "input",
+        "executed"
+      ]
+    },
+    {
+      "type": "session.text.ended",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 10,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal",
+        "text"
+      ]
+    },
+    {
+      "type": "session.step.streamed",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 11,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID"
+      ]
+    },
+    {
+      "type": "session.tool.success",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 12,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "id",
+        "content",
+        "metadata",
+        "executed"
+      ]
+    },
+    {
+      "type": "session.step.ended",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 13,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "finish",
+        "rawFinish",
+        "cost",
+        "tokens"
+      ]
+    },
+    {
+      "type": "session.usage.updated",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "dataKeys": [
+        "sessionID",
+        "cost",
+        "tokens"
+      ]
+    },
+    {
+      "type": "session.step.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 14,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "agent",
+        "model",
+        "started"
+      ]
+    },
+    {
+      "type": "session.text.started",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 15,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal"
+      ]
+    },
+    {
+      "type": "session.text.delta",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal",
+        "delta"
+      ]
+    },
+    {
+      "type": "session.text.ended",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 16,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "ordinal",
+        "text"
+      ]
+    },
+    {
+      "type": "session.step.streamed",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 17,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID"
+      ]
+    },
+    {
+      "type": "session.step.ended",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 18,
+      "dataKeys": [
+        "sessionID",
+        "assistantMessageID",
+        "finish",
+        "rawFinish",
+        "cost",
+        "tokens"
+      ]
+    },
+    {
+      "type": "session.usage.updated",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "dataKeys": [
+        "sessionID",
+        "cost",
+        "tokens"
+      ]
+    },
+    {
+      "type": "session.execution.succeeded",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "seq": 19,
+      "dataKeys": [
+        "sessionID"
+      ],
+      "data": {
+        "sessionID": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7"
+      }
+    },
+    {
+      "type": "probe.context_dumped",
+      "session": "ses_fvshape_3e16e20075174d8cba7e011ca7155de7",
+      "count": 4
+    }
+  ],
+  "context": [
+    {
+      "id": "msg_1a4b7183d001AHne8JT1wsuFzu",
+      "time": {
+        "created": 1793764826543
+      },
+      "text": "Do exactly three steps, in this order, in a single turn: (1) First write one short sentence saying you will now read note.txt. (2) Then call the read tool on the file note.txt in the current directory. (3) After the tool result, write one final sentence stating the secret word from the file.",
+      "type": "user"
+    },
+    {
+      "id": "msg_1a4b71db8001w74gpnx0xtXqn3",
+      "time": {
+        "created": 1793764826558,
+        "streamed": 1793764827731,
+        "completed": 1793764827741
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll now read note.txt."
+        },
+        {
+          "type": "tool",
+          "id": "call_92c57a73a8a84071899b2cf6",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "note.txt"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file note.txt, lines 1-1\n1: The secret word is PINEAPPLE."
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1793764827604,
+            "ran": 1793764827727,
+            "completed": 1793764827738
+          }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 5906,
+        "output": 45,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1a4b72266001oNDqbWClggYKq0",
+      "time": {
+        "created": 1793764827755,
+        "streamed": 1793764829719,
+        "completed": 1793764829721
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash",
+        "providerID": "opencode-go",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "The secret word is PINEAPPLE."
+        }
+      ],
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 5983,
+        "output": 11,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1a4b72a1c001CuxiDmf5O5c3ol",
+      "time": {
+        "created": 1793764829724
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    }
+  ]
+}

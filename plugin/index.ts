@@ -177,7 +177,7 @@ export default Plugin.define({
     let bootstrap: () => Promise<void> = async () => { throw new Error('Controller not initialized') }
     const verifyController = async (sessionID: string, reducingOrReading = false) => {
       requireCurrent()
-      if (!reducingOrReading && (eventGap || failedEvents.has(sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume')
+      if (!reducingOrReading && (eventGap || failedEvents.has(sessionID))) throw Object.assign(new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume'), { code: 'research_events_need_check' })
       const root = research.rootOf(sessionID) ?? research.scope
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
       if (!main || !research.inScope(root)) throw new Error('Research controller scope is unavailable')
