@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
-import { LLMRequest, Message } from '@opencode/ai/effect'
+import { LLMRequest, LanguageModel, Message } from '@opencode/ai/effect'
 import { AnthropicCompatible } from '@opencode/ai/providers/anthropic-compatible'
+import { OpenAICompatible } from '@opencode/ai/providers/openai-compatible'
 import {
   STABLE_CONTEXT_BLOCKS,
   markHistoryCacheBoundary,
@@ -269,6 +270,56 @@ describe('markHistoryCacheBoundary', () => {
     expect(assistant.content.find((part: any) => part.type === 'text').cache_control).toEqual({ type: 'ephemeral' })
     expect(tool.content[0].cache_control).toEqual({ type: 'ephemeral' })
     expect(body.system[0].cache_control).toEqual({ type: 'ephemeral' })
+  })
+
+  test('the installed OpenAI-compatible adapter replays prior reasoning and tools with a trailing tail', async () => {
+    const model = LanguageModel.update(
+      OpenAICompatible.configure({ baseURL: 'http://127.0.0.1:1' }).model('probe'),
+      { compatibility: { cacheFormat: 'anthropic' } })
+    const metadataKey = model.route.providerMetadataKey!
+    const hint = { type: 'ephemeral' as const }
+    const history = [
+      new Message({ role: 'user', content: [{ type: 'text', text: 'measure the fixture' }] }),
+      new Message({ role: 'assistant', content: [
+        { type: 'reasoning', text: 'prior reasoning', providerMetadata: {
+          [metadataKey]: { reasoningField: 'reasoning_content',
+            reasoningDetails: [{ type: 'encrypted', encrypted: 'signature-bytes' }] },
+        } },
+        { type: 'tool-call', id: 'call_1', name: 'research_query', input: { collection: 'nodes' } },
+      ] as any }),
+      new Message({ role: 'tool', content: [
+        { type: 'tool-result', id: 'call_1', name: 'research_query',
+          result: { type: 'text', value: '{"items":[]}' }, cache: hint },
+      ] as any }),
+    ]
+    const snapshot = JSON.stringify(history)
+    const marked = markHistoryCacheBoundary({ messages: history as any })!
+    expect(marked).toBe(history)
+    const outgoing = [...marked, researchStateMessage(['## findings\n[]'])]
+    const control = [...marked]
+    const tailBody: any = await Effect.runPromise(model.route.body.from(new LLMRequest({
+      model, system: [{ type: 'text', text: 'system' }], messages: outgoing as any, tools: [],
+    }) as any))
+    const controlBody: any = await Effect.runPromise(model.route.body.from(new LLMRequest({
+      model, system: [{ type: 'text', text: 'system' }], messages: control as any, tools: [],
+    }) as any))
+
+    expect(tailBody.messages.slice(0, -1)).toEqual(controlBody.messages)
+    const assistant = tailBody.messages.find((message: any) => message.role === 'assistant')
+    expect(assistant.content).toBeNull()
+    expect(assistant.reasoning_content).toBe('prior reasoning')
+    expect(assistant.reasoning_details).toEqual([{ type: 'encrypted', encrypted: 'signature-bytes' }])
+    expect(assistant.tool_calls).toEqual([{ id: 'call_1', type: 'function',
+      function: { name: 'research_query', arguments: '{"collection":"nodes"}' } }])
+    const tool = tailBody.messages.find((message: any) => message.role === 'tool')
+    expect(tool.tool_call_id).toBe('call_1')
+    expect(tool.content[0].text).toBe('{"items":[]}')
+    expect(tool.content[0].cache_control).toEqual(hint)
+    const tail = tailBody.messages.at(-1)
+    expect(tail.role).toBe('user')
+    expect(tail.content).toContain('<research_state>')
+    expect(tail.content).not.toContain('cache_control')
+    expect(JSON.stringify(history)).toBe(snapshot)
   })
 
   test('returns undefined when no legal boundary exists', () => {
