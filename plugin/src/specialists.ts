@@ -148,7 +148,8 @@ function limitSpan(ms: number): string {
 }
 
 function limitNotice(stallMs: number, capMs: number): string {
-  return `连续 ${limitSpan(stallMs)}没有新的推进会被停下；即使一直有推进，${limitSpan(capMs)}后也会停下。请在那之前写好报告。`
+  // The specialist has no clock, so the windows are stated and the reply has to carry findings as it goes.
+  return `连续 ${limitSpan(stallMs)}没有新的推进会被停下；即使一直有推进，${limitSpan(capMs)}后也会停下。请边做边把发现写进回复，这样停下时仍有可用文字。`
 }
 
 function kickoff(task: any, workspace: string, tools: readonly string[], stallMs = SPECIALIST_STALL_MS, capMs = SPECIALIST_TIMEOUT_MS): string {
