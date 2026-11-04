@@ -15,7 +15,7 @@ EXTENDS TLC
 \* the code's await points. No verifier here runs on this TypeScript.
 \*
 \* Variant:
-\*   "current"      plugin/src/specialists.ts at the sync commit (PR #28)
+\*   "current"      plugin/src/specialists.ts at the sync commit
 \*   "pre28"        main 8a2c6c9: one absolute timer, sessionResult text archived,
 \*                  no summary turn and no busy check (issue #27)
 \*   "noBusyCheck"  current code with specialists.ts:574 removed
