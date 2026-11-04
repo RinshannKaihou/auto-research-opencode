@@ -40,7 +40,7 @@ The observation log records **primary** model requests. The host's `session_v2` 
 | Hit ratio, whole-run known | 78.7% | 94.1% |
 | Requests without usage | 0 | **1** |
 
-The tail coordinator has one final assistant message without a usage record; it is counted as **one request with unknown usage**, not as zero. It is not included in the host aggregate either. Complete accounting therefore remains unavailable for the tail arm. On the known subtotal, uncached input falls by **64.9%** (from 2,445,881 to 857,630). The primary-only subtotal falls by 68.2%; the difference is the compaction usage above.
+The tail coordinator has one final assistant message without a usage record, immediately after the conclusion; it is counted as **one request with unknown usage**, not as zero. It is not included in the host aggregate either, so its tokens are genuinely unknown rather than zero. Complete accounting therefore remains unavailable for the tail arm. On the known subtotal, uncached input falls by **64.9%** (from 2,445,881 to 857,630). The primary-only subtotal falls by 68.2%; the difference is the compaction usage above.
 
 ## Results by role (primary completed)
 
@@ -107,19 +107,19 @@ The wait requests are 54% of the tail coordinator's prompt tokens (6.0M of 11.1M
 Committed evidence tooling and sanitized source records:
 
 - `scripts/context_placement_evidence.py` — offline extractor and report. It reads an isolated arm root (research ledger + OpenCode host DB) and writes sanitized records; it never copies prompt or report text.
-- `records/system.json`, `records/tail.json` — source records with session roles, host aggregates, primary usage rows, coordinator message IDs/timestamps/tool names, compaction metadata and deltas, notification metadata, stable-block digests, and the unknown-usage list.
+- `records/system/`, `records/tail/` — sanitized per-arm records: session roles and host aggregates, per-request primary usage (JSONL), per-request coordinator message metadata (JSONL), per-request stable-part digests (JSONL), compaction metadata and deltas, notification metadata, and the unknown-usage list.
 - `corrected-report.json` — the machine-readable output of the `report` command.
 
 ```bash
 # Re-extract from an isolated arm root (optional; the committed records already exist)
 python3 scripts/context_placement_evidence.py extract \
   --root <isolated-arm-root> \
-  --output docs/evidence/context-cache/step3/records/<arm>.json
+  --output docs/evidence/context-cache/step3/records/<arm>
 
 # Recompute the corrected tables from the committed records
 python3 scripts/context_placement_evidence.py report \
-  docs/evidence/context-cache/step3/records/system.json \
-  docs/evidence/context-cache/step3/records/tail.json \
+  docs/evidence/context-cache/step3/records/system \
+  docs/evidence/context-cache/step3/records/tail \
   --output docs/evidence/context-cache/step3/corrected-report.json
 ```
 

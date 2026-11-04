@@ -147,6 +147,75 @@ def extract(root):
     }
 
 
+def write_records(record, output):
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / 'sessions.json').write_text(json.dumps({
+        'sessions': record['sessions'],
+        'host_sessions': record['host_sessions'],
+        'compaction': record['compaction'],
+        'unknown_usage': record['unknown_usage'],
+        'conclusion': record['conclusion'],
+    }, indent=2, ensure_ascii=False))
+    (output / 'notifications.json').write_text(json.dumps(record['notifications'], indent=2, ensure_ascii=False))
+
+    def jsonl(name, rows):
+        (output / name).write_text(''.join(
+            json.dumps(row, separators=(',', ':'), ensure_ascii=False) + '\n' for row in rows))
+
+    jsonl('primary-usage.jsonl', [row for row in record['observations']
+                                  if row.get('phase') == 'native_usage'])
+    jsonl('model-requests.jsonl', [row for row in record['observations']
+                                   if row.get('phase') == 'model_request'])
+    jsonl('main-messages.jsonl', [{'session_id': session, **message}
+                                  for session, messages in record['main_messages'].items()
+                                  for message in messages])
+    jsonl('stability.jsonl', [{'session_id': session, **entry}
+                              for session, entries in record['stability'].items()
+                              for entry in entries])
+
+
+def _read_jsonl(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def load_records(directory):
+    directory = Path(directory)
+    summary = json.loads((directory / 'sessions.json').read_text())
+    observed = {}
+    for row in _read_jsonl(directory / 'primary-usage.jsonl'):
+        tokens = row['tokens']
+        cache = tokens.get('cache') or {}
+        session = row['session_id']
+        entry = observed.setdefault(session, {'requests': 0, 'input': 0, 'cache_read': 0,
+                                              'cache_write': 0, 'output': 0, 'reasoning': 0})
+        entry['requests'] += 1
+        entry['input'] += int(tokens.get('input') or 0)
+        entry['cache_read'] += int(cache.get('read') or 0)
+        entry['cache_write'] += int(cache.get('write') or 0)
+        entry['output'] += int(tokens.get('output') or 0)
+        entry['reasoning'] += int(tokens.get('reasoning') or 0)
+    main_messages = {}
+    for message in _read_jsonl(directory / 'main-messages.jsonl'):
+        session = message.pop('session_id')
+        main_messages.setdefault(session, []).append(message)
+    stability = {}
+    for entry in _read_jsonl(directory / 'stability.jsonl'):
+        session = entry.pop('session_id')
+        stability.setdefault(session, []).append(entry)
+    return {
+        'sessions': summary['sessions'],
+        'host_sessions': summary['host_sessions'],
+        'compaction': summary['compaction'],
+        'unknown_usage': summary['unknown_usage'],
+        'conclusion': summary.get('conclusion'),
+        'notifications': json.loads((directory / 'notifications.json').read_text()),
+        'main_messages': main_messages,
+        'stability': stability,
+        'observed': observed,
+    }
+
+
 def totals(entries):
     keys = ('requests', 'input', 'cache_read', 'cache_write', 'output', 'reasoning')
     return {key: sum(entry.get(key, 0) for entry in entries) for key in keys}
@@ -256,21 +325,22 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     extract_parser = sub.add_parser('extract')
     extract_parser.add_argument('--root', required=True, type=Path)
-    extract_parser.add_argument('--output', required=True, type=Path)
+    extract_parser.add_argument('--output', required=True, type=Path,
+                                help='directory for the sanitized record files')
     report_parser = sub.add_parser('report')
-    report_parser.add_argument('records', nargs='+', type=Path)
+    report_parser.add_argument('records', nargs='+', type=Path,
+                               help='record directories written by extract')
     report_parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     if args.command == 'extract':
         record = extract(args.root)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(record, indent=2, ensure_ascii=False))
+        write_records(record, args.output)
         print(json.dumps(summarize(record), indent=2, ensure_ascii=False))
     else:
         report = {}
         for path in args.records:
-            record = json.loads(path.read_text())
-            report[path.stem] = summarize(record)
+            record = load_records(path)
+            report[Path(path).name] = summarize(record)
         text = json.dumps(report, indent=2, ensure_ascii=False)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,245 @@
+{
+  "sessions": {
+    "ses_cache_9cf92982bf784504b119ce0835bf4cc2": {
+      "role": "main",
+      "node_id": null,
+      "pause_reason": "complete"
+    },
+    "ses_research_ca3b222dd9cf4ebaae593f14db4f4f6e": {
+      "role": "node_core",
+      "node_id": "X-001",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_157072d25585b8d488f86eee28e37ae4": {
+      "role": "specialist",
+      "node_id": "X-001",
+      "pause_reason": null
+    },
+    "ses_research_3df814e0aa104ec98a4b2403ddafdfd4": {
+      "role": "node_core",
+      "node_id": "X-002",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_99f27fdfbf453928699e0e7f7d39ad73": {
+      "role": "specialist",
+      "node_id": "X-002",
+      "pause_reason": null
+    },
+    "ses_research_1ccc3bb8294a402a835e068127fda908": {
+      "role": "node_core",
+      "node_id": "X-003",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_a35467c46503445a411c89759c2e9707": {
+      "role": "specialist",
+      "node_id": "X-003",
+      "pause_reason": null
+    },
+    "ses_research_8fcffc28aa44b2946745eea89abd2774": {
+      "role": "specialist",
+      "node_id": "X-003",
+      "pause_reason": null
+    }
+  },
+  "host_sessions": {
+    "ses_cache_9cf92982bf784504b119ce0835bf4cc2": {
+      "input": 548996,
+      "output": 10471,
+      "reasoning": 7481,
+      "cache_read": 628864,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 29,
+        "input": 548996,
+        "cache_read": 628864,
+        "cache_write": 0,
+        "output": 10471,
+        "reasoning": 7481
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_ca3b222dd9cf4ebaae593f14db4f4f6e": {
+      "input": 276521,
+      "output": 18632,
+      "reasoning": 1154,
+      "cache_read": 797440,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 30,
+        "input": 276521,
+        "cache_read": 797440,
+        "cache_write": 0,
+        "output": 18632,
+        "reasoning": 1154
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_157072d25585b8d488f86eee28e37ae4": {
+      "input": 29660,
+      "output": 5668,
+      "reasoning": 11561,
+      "cache_read": 53632,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 6,
+        "input": 29660,
+        "cache_read": 53632,
+        "cache_write": 0,
+        "output": 5668,
+        "reasoning": 11561
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_3df814e0aa104ec98a4b2403ddafdfd4": {
+      "input": 623853,
+      "output": 35243,
+      "reasoning": 15417,
+      "cache_read": 2304384,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 45,
+        "input": 623853,
+        "cache_read": 2304384,
+        "cache_write": 0,
+        "output": 35243,
+        "reasoning": 15417
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_99f27fdfbf453928699e0e7f7d39ad73": {
+      "input": 59649,
+      "output": 2959,
+      "reasoning": 17093,
+      "cache_read": 252416,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 10,
+        "input": 59649,
+        "cache_read": 252416,
+        "cache_write": 0,
+        "output": 2959,
+        "reasoning": 17093
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_1ccc3bb8294a402a835e068127fda908": {
+      "input": 866669,
+      "output": 43844,
+      "reasoning": 18184,
+      "cache_read": 4906496,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 95,
+        "input": 756897,
+        "cache_read": 4900352,
+        "cache_write": 0,
+        "output": 41946,
+        "reasoning": 18184
+      },
+      "delta": {
+        "input": 109772,
+        "cache_read": 6144,
+        "cache_write": 0,
+        "output": 1898,
+        "reasoning": 0
+      }
+    },
+    "ses_research_a35467c46503445a411c89759c2e9707": {
+      "input": 20290,
+      "output": 1997,
+      "reasoning": 8307,
+      "cache_read": 37376,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 6,
+        "input": 20290,
+        "cache_read": 37376,
+        "cache_write": 0,
+        "output": 1997,
+        "reasoning": 8307
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    },
+    "ses_research_8fcffc28aa44b2946745eea89abd2774": {
+      "input": 20243,
+      "output": 1597,
+      "reasoning": 8253,
+      "cache_read": 30464,
+      "cache_write": 0,
+      "idle_outcome": "succeeded",
+      "observed": {
+        "requests": 5,
+        "input": 20243,
+        "cache_read": 30464,
+        "cache_write": 0,
+        "output": 1597,
+        "reasoning": 8253
+      },
+      "delta": {
+        "input": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    }
+  },
+  "compaction": [
+    {
+      "session_id": "ses_research_1ccc3bb8294a402a835e068127fda908",
+      "id": "msg_1a4f82f66002LwuGny4J7PEhD4",
+      "created": 1793769090918,
+      "status": "completed",
+      "reason": "auto"
+    }
+  ],
+  "unknown_usage": [],
+  "conclusion": {
+    "outcome": "answered",
+    "final_ref": "pub/P-006#report",
+    "summary_chars": 1539
+  }
+}
