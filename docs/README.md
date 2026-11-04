@@ -12,6 +12,7 @@
 - [E1/E2 详细开发计划](<./E1 E2 detailed development plan auto-research-opencode.md>)：接口、事务与验收。
 - [E3 详细开发计划](<./E3 detailed development plan auto-research-opencode.md>)：多范围、预算、异步比较、组合与结项。
 - [提示缓存重启计划](<./Prompt cache stabilization development plan.md>)：基于原始分析，先做默认关闭的 TypeScript 上下文放置优化；旧 WP-00～WP-08 开发方案已撤回。
+- [PR #35 评审修复计划](<./Prompt cache PR 35 review remediation plan.md>)：修复数组所有权和测试缺口，核实辅助请求与推理转发，并限定 tail 模式的等待收尾；渲染器重构继续延后。
 
 E1／E2／E3 已接入开发源码并通过工程回归；[E3 验证记录](./evidence/e3-multiroute/README.md)区分本地工程、隔离宿主与真实模型效果。真实模型配对效果仍未验证；严格确认性验证不属于本轮范围。
 

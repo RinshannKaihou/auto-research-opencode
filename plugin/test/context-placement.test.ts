@@ -290,9 +290,12 @@ describe('markHistoryCacheBoundary', () => {
     expect(markHistoryCacheBoundary({ messages, system, tools })).toBeUndefined()
   })
 
-  test('keeps an existing explicit hint and leaves the array alone', () => {
+  test('keeps an existing explicit hint and preserves the history', () => {
     const messages = [{ role: 'user', content: [{ type: 'text', text: 'hello', cache: { type: 'ephemeral' } }] }]
-    expect(markHistoryCacheBoundary({ messages })).toBe(messages)
+    const before = JSON.stringify(messages)
+    const marked = markHistoryCacheBoundary({ messages })!
+    expect(marked[0]!.content[0]).toMatchObject({ type: 'text', text: 'hello', cache: { type: 'ephemeral' } })
+    expect(JSON.stringify(messages)).toBe(before)
   })
 
   test('respects the SDK marker limit across tools, system and messages', () => {

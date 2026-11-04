@@ -770,7 +770,10 @@ export default Plugin.define({
           if (tailMode) tail.push(warning)
           else request.system.push({type:'text',text:warning})
         }
-        if (tail.length) request.messages.push(researchStateMessage(tail) as any)
+        // Allocate a new array: the boundary helper returns the host's array
+        // when the history already carries a hint, and the tail must never be
+        // written into the host's own message list.
+        if (tail.length) request.messages = [...request.messages, researchStateMessage(tail) as any]
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)

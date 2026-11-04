@@ -4332,6 +4332,12 @@ describe('context placement', () => {
     return hints
   }
 
+  function tailMessages(request: any): any[] {
+    return request.messages.filter((message: any) =>
+      Array.isArray(message?.content) && message.content.some((part: any) =>
+        typeof part?.text === 'string' && part.text.startsWith('<research_state>\n')))
+  }
+
   async function nodeContext(host: Awaited<ReturnType<typeof load>>, child: string, messages?: any[]) {
     const request = modelRequest(child)
     if (messages) request.messages = messages
@@ -4375,7 +4381,7 @@ describe('context placement', () => {
     expect(JSON.stringify(after.messages)).not.toContain('A measured note\n\n## role_instructions')
   })
 
-  test('tail placement keeps the coordinator prefix stable across proposal, dispatch and a delivered result', async () => {
+  test('tail placement keeps the coordinator prefix stable across proposal and dispatch', async () => {
     const host = await load({ placement: 'tail' })
     await host.command('auto', 'ses_main', { goal: 'coordinator cache fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
@@ -4389,6 +4395,55 @@ describe('context placement', () => {
     expect(JSON.stringify(after.tools)).toBe(toolsBefore)
     expect(lastMessageText(after)).not.toBe(lastMessageText(before))
     expect(lastMessageText(after)).toContain('questions')
+  })
+
+  test('an existing history hint leaves the host array untouched and the tail is not replayed', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'history ownership fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const history = [{
+      role: 'assistant',
+      content: [{ type: 'text', text: 'earlier result', cache: { type: 'ephemeral' } }],
+    }]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).not.toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(tailMessages(request)).toHaveLength(1)
+    expect(request.messages.at(-1)).toBe(tailMessages(request)[0]!)
+    expect((request.messages[0] as any).content[0].cache).toEqual({ type: 'ephemeral' })
+
+    // Reusing the host's original history must not replay the previous tail.
+    const second = modelRequest('ses_main')
+    second.messages = history as any
+    await host.hooks.get('context')!(second)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(tailMessages(second)).toHaveLength(1)
+    expect(second.messages.at(-1)).toBe(tailMessages(second)[0]!)
+  })
+
+  test('a newly added history hint does not mutate the host array', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'new hint ownership fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const history = [{ role: 'assistant', content: [{ type: 'text', text: 'earlier result' }] }]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).not.toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect((history[0]!.content[0] as any).cache).toBeUndefined()
+    expect((request.messages[0] as any).content[0].cache).toEqual({ type: 'ephemeral' })
+    expect((request.messages[0] as any).content[0].text).toBe('earlier result')
+    expect(tailMessages(request)).toHaveLength(1)
+    expect(request.messages.at(-1)).toBe(tailMessages(request)[0]!)
   })
 
   test('tail placement still accepts a checkpoint base delivered in context', async () => {
@@ -4531,14 +4586,26 @@ describe('context placement', () => {
     expect(request.messages).toHaveLength(1)
   })
 
-  test('an unknown placement value falls back to system mode', async () => {
-    const host = await load({ placement: 'turn' })
-    await host.command('auto', 'ses_main', { goal: 'unknown placement fixture' })
-    await host.command('context-policy', 'ses_main', { policy: 'r1' })
-    const request = modelRequest('ses_main')
-    await host.hooks.get('context')!(request)
-    expect(systemText(request)).toContain('## recent_node_notes')
-    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  test('an unknown placement value warns once and falls back to system mode', async () => {
+    const writes: string[] = []
+    const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: any) => {
+      writes.push(String(chunk))
+      return true
+    }) as any)
+    try {
+      const host = await load({ placement: 'turn' })
+      await host.command('auto', 'ses_main', { goal: 'unknown placement fixture' })
+      await host.command('context-policy', 'ses_main', { policy: 'r1' })
+      for (let index = 0; index < 3; index++) {
+        const request = modelRequest('ses_main')
+        await host.hooks.get('context')!(request)
+        expect(systemText(request)).toContain('## recent_node_notes')
+        expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+      }
+      const warnings = writes.filter((line) =>
+        line.includes('Unknown contextPlacement') && line.includes('"turn"') && line.includes('"system"'))
+      expect(warnings).toHaveLength(1)
+    } finally { spy.mockRestore() }
   })
 
   test('a node turn without drain authorization keeps its refusal in the system prompt', async () => {

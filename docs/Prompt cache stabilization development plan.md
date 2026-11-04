@@ -2,15 +2,17 @@
 
 2026-11-04. Status: Step 1, its focused Step 2 checks, and one Step 3 real-API pair are done on `cursor/prompt-cache-stabilization`. The pair is recorded in [evidence/context-cache/step3/README.md](./evidence/context-cache/step3/README.md); the tail coordinator showed repeated waiting whose relationship to placement remains undetermined, and the default remains `"system"` because the default-change gate (both exploration settings, repeats, no regressions) is not met.
 
+Remaining PR #35 review work is governed by the [review remediation plan](<./Prompt cache PR 35 review remediation plan.md>). Its merge and experiment gates supersede the earlier follow-up recommendations below.
+
 Source: [Plan: keep the prompt cache valid in auto-research-opencode](<./Plan keep the prompt cache valid in auto-research-opencode.md>). The source analysis is preserved unchanged. This document defines the first implementation and replaces the earlier nine-work-package development plan.
 
 ## 1. Restart point
 
 - Code baseline: `fd1c62d` / v0.2.1.
-- Development checkout: `/Users/ywang2397/.local/share/opencode/worktree/132b21/prompt-cache-stabilization`.
+- Development checkout: this feature worktree; no local absolute path is part of the public record.
 - Development branch: `cursor/prompt-cache-stabilization`.
 - Previous development is preserved at `15765cd` on `cursor/prompt-cache-before-restart-20261104`. Its tools, tests, evidence framework, and implementation plan are retired from the active branch. Do not copy them back as prerequisites.
-- The original dirty checkout at `/Users/ywang2397/work/agent-research/auto-research-opencode` is not a development baseline and must retain its unrelated changes.
+- The earlier local dirty checkout used before this restart is not a development baseline and must retain its unrelated changes.
 
 Follow the checkout's `AGENTS.md`. Keep each step reviewable; use `make test`; do not push main, merge, force-push, release, or restart a shared service automatically. No work directory may be created directly under `~/work`.
 
