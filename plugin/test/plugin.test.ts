@@ -2492,6 +2492,143 @@ describe("node specialists", () => {
     expect(result.error).toBeFalsy()
   })
 
+  /** Issue #27's opening line, then reasoning only, kept in front of the turn's idle marker. */
+  function openingBeforeIdle(host: Awaited<ReturnType<typeof load>>, extra: any[] = []) {
+    const native = host.ctx.session.context
+    host.ctx.session.context = async (input: { sessionID: string }) => {
+      const messages = [...await native(input)]
+      const idle = messages.at(-1)
+      const node = host.created[0]
+      if (node && input.sessionID !== node && host.created.includes(input.sessionID) && idle?.type === "idle") {
+        messages.pop()
+        messages.push(
+          { type: "assistant", content: [{ type: "text", text: OPENING_LINE }, ...extra] },
+          { type: "assistant", content: [{ type: "reasoning", text: "real findings only in reasoning" }] },
+          idle,
+        )
+      }
+      return messages
+    }
+  }
+
+  test("a failed specialist turn does not archive the opening progress line", async () => {
+    const host = await load({ hostSetup: openingBeforeIdle })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    host.reply(child, "", "failed")
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "专家会话以「failed」结束",
+      child_session_id: child,
+    })
+    expect(result.result.preview ?? "").toBe("")
+    expect(result.result.report_path).toBeUndefined()
+    expect(result.result.incomplete).toBeUndefined()
+    expect(JSON.stringify(result.result)).not.toContain(OPENING_LINE)
+  })
+
+  test("a parent cancel does not archive the opening progress line", async () => {
+    const host = await load({ hostSetup: openingBeforeIdle })
+    await nodeAtWork(host)
+    const controller = new AbortController()
+    const pending = host.call("research_delegate", host.created[0]!, TASK, controller.signal)
+    await specialist(host, 1)
+    controller.abort()
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "cancelled",
+      error: "专家这一轮被中断",
+    })
+    expect(result.result.preview ?? "").toBe("")
+    expect(result.result.report_path).toBeUndefined()
+    expect(JSON.stringify(result.result)).not.toContain(OPENING_LINE)
+  })
+
+  test("a succeeded turn whose only text precedes a tool call is not a clean report", async () => {
+    const host = await load({
+      hostSetup: (raw) => openingBeforeIdle(raw, [{
+        type: "tool",
+        id: "call_read",
+        name: "read",
+        state: { status: "completed", input: { path: "notes.md" }, content: [{ type: "text", text: "file body" }] },
+      }]),
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    host.reply(child, "", "succeeded")
+    const result = await pending
+    expect(result.state).not.toBe("completed")
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      child_session_id: child,
+    })
+    expect(result.error).toContain("进度")
+    expect(result.result.preview).toContain("【可能只是进度说明】")
+    expect(result.result.preview).toContain(OPENING_LINE)
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBeUndefined()
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    expect(archived.output[0].text).toContain("【可能只是进度说明】")
+    expect(archived.output[0].text).toContain(OPENING_LINE)
+    expect(archived.incomplete).toBe(true)
+    expect(archived.unverified).toBeUndefined()
+  })
+
+  test("a summary refused by an event-stream gap names the gap", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    host.events.end()
+    await Bun.sleep(30)
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。",
+    })
+    expect(result.error).not.toContain("没有可用报告")
+    expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+    expect(result.result.report_path).toBeUndefined()
+  })
+
+  test("a summary refused because the project is paused names the pause", async () => {
+    const host = await load({ hostSetup: (raw) => timeoutTranscript(raw, 800) })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    expect((await host.command("pause", "ses_main")).error).toBeUndefined()
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。",
+    })
+    expect(result.error).not.toContain("没有可用报告")
+    expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+  })
+
+  test("a summary refused because the budget is exhausted names the budget", async () => {
+    const host = await load({ hostSetup: (raw) => timeoutTranscript(raw, 800) })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    expect((await host.command("budget", "ses_main", { limit: "turns", value: "1", reason: "block the timeout summary" })).error).toBeUndefined()
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。",
+    })
+    expect(result.error).not.toContain("没有可用报告")
+    expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+  })
+
   /** Later interrupt calls are recorded but do not end the summary turn. */
   function ignoreSummaryStop(host: Awaited<ReturnType<typeof load>>) {
     const native = host.ctx.session.interrupt

@@ -88,6 +88,7 @@ CHECKS = (
     ("pre-#28 main at 8a2c6c9", "pre28.cfg", "violation"),
     ("busy check removed", "noBusyCheck.cfg", "violation"),
     ("textSince returns every message", "textSinceAll.cfg", "violation"),
+    ("failed turn archives its opening line", "failedArchivesOpening.cfg", "violation"),
 )
 
 ACTIONS = {
@@ -117,6 +118,7 @@ ACTIONS = {
     "PostGraceReadSettles": "The message read after the summary grace returns textSince.",
     "BoundedSummaryReadSettles": "The summary message read returns textSince.",
     "RecordLedger": "specialist_finish records the result.",
+    "TurnEndsFailed": "The child turn ends with outcome failed.",
     "DoneStutter": "The ledger write has finished.",
     "Initial predicate": "The child is running after kickoff, with the opening line already in the transcript.",
 }
@@ -954,8 +956,8 @@ def main() -> None:
         )
     print(
         "\nSafe holds for the code on disk. TLC checked invariant Safe. "
-        "The pre-#28 model, the removed-busy-check model, and the textSince-returns-every-message "
-        "model still produce counterexamples."
+        "The pre-#28 model, the removed-busy-check model, the textSince-returns-every-message "
+        "model, and the failed-turn-archives-opening-line model still produce counterexamples."
     )
 
 

@@ -533,7 +533,7 @@ export class Specialists {
    * `exited` is false when the child cannot be confirmed stopped. A summary send
    * that has not been accepted yet is in that group: it can still start a turn.
    */
-  private async summarize(child: string, signal?: AbortSignal): Promise<{ text: string; exited: boolean }> {
+  private async summarize(child: string, signal?: AbortSignal): Promise<{ text: string; exited: boolean; refusal?: string }> {
     if (signal?.aborted || !this.current()) return { text: "", exited: true }
     this.tools.set(child, [])
     const summaryMessageID = `msg_research_${randomUUID().replaceAll("-", "")}`
@@ -603,15 +603,16 @@ export class Specialists {
       const messages = await bounded(this.host.messages(child).catch(() => []))
       if (messages === "deadline" || controller.signal.aborted) return { text: "", exited: true }
       return { text: textSince(messages, summaryMessageID), exited: true }
-    } catch {
-      return { text: "", exited: await stopped() }
+    } catch (error) {
+      const refusal = summaryRefusal(error)
+      return { text: "", exited: await stopped(), ...(refusal ? { refusal } : {}) }
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener("abort", onSignal)
     }
   }
 
-  /** Records the specialist's report. A stall or the absolute cap is summarized instead of replaying an earlier progress line. */
+  /** Records the specialist's report. A stall or the absolute cap is summarized instead of replaying an earlier progress line. A failed or cancelled turn does not archive that line. */
   private async finishChild(
     root: string,
     parent: string,
@@ -623,7 +624,8 @@ export class Specialists {
     signal?: AbortSignal,
   ): Promise<unknown> {
     if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
-    const found = sessionResult(await this.host.messages(child).catch(() => []))
+    const messages = await this.host.messages(child).catch(() => [])
+    const found = sessionResult(messages)
     if (limit && exited && found.outcome !== "succeeded") {
       const summary = signal?.aborted ? { text: "", exited: true } : await this.summarize(child, signal)
       if (!this.current()) return { task_id: taskID, state: "unverified", error: "控制器已重绑定，等待新实例核对。" }
@@ -661,14 +663,36 @@ export class Specialists {
       }
       return this.settle(parent, taskID, {
         state: "incomplete",
-        error: limitCopy(limit, false),
+        error: summary.refusal ?? limitCopy(limit, false),
         exit_verified: true,
         result: { stop_reason: stopReason, session_id: child, preview: "" },
       }, `${operationID}:finish`)
     }
+    // A succeeded turn can still have written only an opening line before its tool calls.
+    if (exited && found.outcome === "succeeded" && found.text && textPrecedesTool(messages)) {
+      const text = markProgress(found.text)
+      let archiveError: string | undefined
+      const artifact = await this.archive(root, parent, taskID, found.outcome, text, operationID, false, true).catch((failure) => {
+        archiveError = message(failure)
+        return null
+      })
+      return this.settle(parent, taskID, {
+        state: "incomplete",
+        error: "专家最后的文字出现在后续工具调用之前，可能只是进度说明，未当作完整报告",
+        exit_verified: true,
+        result: {
+          stop_reason: found.outcome,
+          session_id: child,
+          preview: text.slice(0, PREVIEW_CHARS),
+          incomplete: true,
+          ...(artifact ? { artifact, report_path: join(root, artifact.path) } : {}),
+          ...(archiveError ? { archive_error: archiveError } : {}),
+        },
+      }, `${operationID}:finish`)
+    }
     const { state, error } = verdict(exited, found.outcome, found.text, limit)
-    // An unverified exit must not freeze an earlier progress line as the report.
-    const report = exited ? found.text : ""
+    // A non-succeeded turn must not freeze an earlier progress line as the report.
+    const report = exited && found.outcome === "succeeded" ? found.text : ""
     let archiveError: string | undefined
     const artifact = report
       ? await this.archive(root, parent, taskID, found.outcome, report, operationID).catch((failure) => {
@@ -699,6 +723,7 @@ export class Specialists {
     text: string,
     operationID: string,
     partial = false,
+    progress = false,
   ): Promise<{ path: string; version: string; kind: string }> {
     const directory = join(root, ".research", "specialist-results")
     mkdirSync(directory, { recursive: true })
@@ -706,6 +731,7 @@ export class Specialists {
     const body = {
       stop_reason: outcome,
       ...(partial ? { incomplete: true, unverified: true } : {}),
+      ...(progress ? { incomplete: true } : {}),
       output: [{ type: "text", text }],
     }
     writeFileSync(path, JSON.stringify(body), { mode: 0o600 })
@@ -824,4 +850,37 @@ export class Specialists {
       }
     }
   }
+}
+
+/** The last assistant text is only a progress line when a tool call comes after it. */
+function textPrecedesTool(messages: any[]): boolean {
+  let lastText = -1
+  let lastTool = -1
+  let cursor = 0
+  for (const item of messages) {
+    if (item?.type !== "assistant" || !Array.isArray(item.content)) {
+      cursor += 1
+      continue
+    }
+    for (const part of item.content) {
+      if (part?.type === "text" && String(part.text ?? "").trim()) lastText = cursor
+      if (part?.type === "tool") lastTool = cursor
+      cursor += 1
+    }
+  }
+  return lastText >= 0 && lastTool > lastText
+}
+
+function markProgress(text: string): string {
+  return `【可能只是进度说明】\n${text.trim()}`
+}
+
+/** A timeout summary that never started, named by why the send was refused. */
+function summaryRefusal(error: unknown): string | null {
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+  if (code === "runtime_budget_exhausted") return "自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。"
+  if (code === "research_control_paused") return "研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。"
+  if (code === "research_control_stopped") return "研究已停止，超时补问没有发出；已有进度句不是报告。"
+  if (message(error).includes("研究事件需核对")) return "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。"
+  return null
 }
