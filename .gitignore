@@ -14,3 +14,7 @@ workspaces/
 /plugin/python/
 # A directory or a symlink to a shared install.
 /plugin/node_modules
+
+# TLC jar cache and generated trace specs (scripts/verify_specialist_lifecycle.py).
+spec/specialist-child-lifecycle/.cache/
+spec/specialist-child-lifecycle/*_TTrace_*
