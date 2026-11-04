@@ -1,6 +1,6 @@
 # Context placement smoke record
 
-2026-11-04 · branch `cursor/prompt-cache-stabilization` · revision `7e26d47` (initial placement implementation `ce393d5`), based on `73d507a` / v0.2.1.
+2026-11-04 · branch `cursor/prompt-cache-stabilization` · revision `bc18986` (initial placement implementation `ce393d5`), based on `73d507a` / v0.2.1.
 
 This note records the engineering checks for the opt-in `contextPlacement: "tail"` change. It is not a real-model cache or cost measurement. The default remains `"system"`.
 
