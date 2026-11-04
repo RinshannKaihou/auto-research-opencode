@@ -171,6 +171,7 @@ opencode --auto
 | `concurrency` | 1 | 同时运行的节点数。大于 1 还没有充分测试 |
 | `specialistFanout` | 2 | 每个节点同时最多几位专家 |
 | `specialistTimeoutMs` | 600000 | 每位专家的时间上限（毫秒），超时后收回已写的部分，记为"未完成" |
+| `contextPlacement` | `"system"` | 科研上下文的位置。`"tail"` 把随账本变化的块放进本次请求末尾的临时 `<research_state>` 消息，系统提示保持稳定；默认保持原行为 |
 | `python` | `python3` | 管理研究记录所用的 Python（3.11 或更高） |
 | `registryPath` | `~/.local/share/auto-research-opencode/registry.sqlite3` | 记录"哪个会话属于哪个项目"的登记表 |
 

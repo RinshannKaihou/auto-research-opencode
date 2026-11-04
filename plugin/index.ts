@@ -18,6 +18,7 @@ import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from ".
 import { BLIND_SYSTEM, Specialists, type SpecialistTask } from "./src/specialists"
 import { TOOLS, keepsTool, type ToolDefinition } from "./src/tools"
 import { COORDINATOR_NATIVE_READS, controlInstructions } from "./src/coordinator-boundary"
+import { STALE_CONTEXT_MARKER, markHistoryCacheBoundary, researchStateMessage, splitResearchContext } from "./src/context-placement"
 import { parameters, validateArgs } from "./src/schema"
 import { USAGE, runtimeBudgetSummary } from "./src/format"
 import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
@@ -51,6 +52,13 @@ export default Plugin.define({
       concurrency?: number
       specialistFanout?: number
       specialistTimeoutMs?: number
+      contextPlacement?: string
+    }
+    // Placement is a reversible option: an unknown value keeps today's
+    // behaviour instead of guessing, and says so once at setup.
+    const contextPlacement = options.contextPlacement === 'tail' ? 'tail' : 'system'
+    if (options.contextPlacement !== undefined && options.contextPlacement !== 'system' && options.contextPlacement !== 'tail') {
+      process.stderr.write(`Unknown contextPlacement ${JSON.stringify(options.contextPlacement)}; using "system".\n`)
     }
     const observations = new Observations()
     const workspaceProbe = new WorkspaceProbe()
@@ -695,16 +703,45 @@ export default Plugin.define({
           }
         }
         const deadline=performance.now()+2000
+        // Delivery checks read the persistent history and the original text;
+        // the temporary tail is not part of either.
+        const history = request.messages
         const evidence = role==='main' || role==='node_core'
-          ? research.observeEvidence(request.sessionID,request.messages,Math.max(0,deadline-performance.now()))
+          ? research.observeEvidence(request.sessionID,history,Math.max(0,deadline-performance.now()))
           : Promise.resolve([])
         const text = await research.memory(request.sessionID)
+        // In tail mode the stable blocks stay in the system prompt and the
+        // volatile ones travel in one temporary message after the history.
+        // The stale notice and the blockless control fallbacks keep the old
+        // system placement: they change the safety text itself.
+        let tailMode = contextPlacement === 'tail' && !!text
+          && text.startsWith('Research context:\n') && !text.includes(STALE_CONTEXT_MARKER)
+        let stable = text ?? ''
+        const tail: string[] = []
+        if (text && tailMode) {
+          const split = splitResearchContext(text)
+          const messages = markHistoryCacheBoundary(request)
+          if (messages) {
+            request.messages = messages
+            stable = split.stable
+            if (split.volatile) tail.push(split.volatile)
+          } else {
+            // No legal breakpoint before the tail: keep today's placement for
+            // this request instead of caching a message that disappears.
+            tailMode = false
+          }
+        }
         if (text) {
-          request.system.push({ type: "text", text })
-          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,request.messages,deadline-performance.now())
+          if (stable) request.system.push({ type: "text", text: stable })
+          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,history,deadline-performance.now())
         }
         const issues = await evidence
-        if (issues.length) request.system.push({type:'text',text:`Evidence delivery was not fully confirmed (${issues.join(', ')}). Re-read the affected pages and retry.`})
+        if (issues.length) {
+          const warning = `Evidence delivery was not fully confirmed (${issues.join(', ')}). Re-read the affected pages and retry.`
+          if (tailMode) tail.push(warning)
+          else request.system.push({type:'text',text:warning})
+        }
+        if (tail.length) request.messages.push(researchStateMessage(tail) as any)
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)

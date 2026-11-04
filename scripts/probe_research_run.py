@@ -17,9 +17,54 @@ from uuid import uuid4
 from probe_opencode_execution import request
 
 
+def _message_text(message):
+    content = message.get('content') if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(str(part.get('text', '')) for part in content if isinstance(part, dict))
+    return ''
+
+
+def _cache_markers(value):
+    return json.dumps(value).count('cache_control')
+
+
+def context_placement_checks(bodies, placement, persisted_context):
+    """Checks the temporary research-state message and the cache breakpoints
+    the SDK actually put on the wire."""
+    research = []
+    for body in bodies:
+        names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
+        if any(name.startswith('research_') for name in names):
+            research.append(body)
+    checks = {'requests': len(bodies), 'research_requests': len(research)}
+    if placement != 'tail':
+        checks['max_cache_markers'] = max((_cache_markers(body) for body in research), default=0)
+        return checks
+    tails = [body for body in research if body.get('messages')
+             and _message_text(body['messages'][-1]).startswith('<research_state>')]
+    checks.update({
+        'tail_requests': len(tails),
+        'tail_is_last': all(_message_text(body['messages'][-1]).startswith('<research_state>') for body in tails),
+        'tail_absent_from_earlier_messages': all(
+            not any('Injected research state' in _message_text(message) for message in body['messages'][:-1])
+            for body in research),
+        'tail_follows_tool_results': any(
+            len(body['messages']) > 1 and body['messages'][-2].get('role') == 'tool' for body in tails),
+        'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
+        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in tails),
+        'boundary_before_tail': all(
+            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in tails),
+        'persisted_history_has_tail': 'Injected research state' in persisted_context,
+    })
+    return checks
+
+
 class ResearchProvider(BaseHTTPRequestHandler):
     actions = []
     requests = []
+    bodies = []
     pause_node = False
     use_specialist = False
     hold_specialist = False
@@ -36,6 +81,7 @@ class ResearchProvider(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
+        self.bodies.append(body)
         names = {item.get('function', {}).get('name') for item in body.get('tools', []) if item.get('type') == 'function'}
         self.requests.append({'dispatch': 'research_dispatch' in names, 'finish': 'research_finish' in names,
                               'query': 'research_query' in names, 'shell': 'shell' in names, 'tool_count': len(names)})
@@ -109,6 +155,9 @@ def main():
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
     parser.add_argument('--plugin', type=Path, help='plugin directory to load (defaults to the source tree)')
+    parser.add_argument('--context-placement', choices=('system', 'tail'),
+                        help='plugin contextPlacement option; tail exercises the temporary research-state message')
+    parser.add_argument('--request-dump', type=Path, help='write every provider request body to this JSON file')
     parser.add_argument('--background-node', action='store_true', help='exercise a native background shell and completion wake')
     args = parser.parse_args()
     if args.resume_after_pause and not args.pause_node:
@@ -127,6 +176,7 @@ def main():
         parser.error('--warm-reload-specialist requires --specialist and is otherwise standalone')
     ResearchProvider.actions = []
     ResearchProvider.requests = []
+    ResearchProvider.bodies = []
     ResearchProvider.pause_node = args.pause_node
     ResearchProvider.use_specialist = args.specialist
     ResearchProvider.hold_specialist = args.stop_during_specialist or args.warm_reload_specialist or args.cold_restart_specialist
@@ -157,7 +207,8 @@ def main():
         config = root / 'config' / 'opencode'
         config.mkdir()
         plugin = (args.plugin or Path(__file__).resolve().parents[1] / 'plugin').resolve()
-        plugins = [str(plugin)]
+        plugin_options = {'contextPlacement': args.context_placement} if args.context_placement else {}
+        plugins = [{'package': str(plugin), 'options': plugin_options}]
         if args.warm_reload_specialist:
             trigger = root / 'reload-trigger'
             trigger.mkdir()
@@ -172,11 +223,12 @@ export default {id:"ari-reload-probe",async setup(ctx){
    catch(e){writeFileSync(process.env.ARI_RELOAD_RESULT,"error:"+String(e));}},50);
  return ()=>clearInterval(timer);}};
 ''')
-            plugins.append(str(trigger))
+            plugins.append({'package': str(trigger), 'options': {}})
         (config / 'opencode.jsonc').write_text(json.dumps({
             'plugins': plugins, 'model': 'ari-probe/probe',
             'providers': {'ari-probe': {'name': 'isolated test', 'env': ['ARI_PROBE_KEY'],
                 'package': '@opencode/ai/providers/openai-compatible',
+                'compatibility': {'cacheFormat': 'anthropic'},
                 'settings': {'baseURL': f'http://127.0.0.1:{fake.server_port}/v1'},
                 'models': {'probe': {'name': 'probe', 'limit': {'context': 200000, 'output': 1024}}}}},
         }))
@@ -464,6 +516,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     node_count = db.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
                     intent_states = db.execute("SELECT kind,state FROM workflow_intents WHERE kind IN ('node_launch','node_finish') ORDER BY kind").fetchall()
                     sessions = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions ORDER BY role').fetchall()
+                    role_sessions = db.execute('SELECT role,session_id FROM workflow_sessions ORDER BY role').fetchall()
                     auth_states = db.execute("SELECT kind,state FROM workflow_intents WHERE kind IN ('execution_start','turn_authorization') ORDER BY kind,state").fetchall()
                     specialist_states = db.execute('SELECT state,exit_verified FROM specialist_tasks').fetchall()
                     specialist_launches = db.execute("SELECT state FROM workflow_intents WHERE kind='specialist_launch'").fetchall()
@@ -479,6 +532,28 @@ export default {id:"ari-reload-probe",async setup(ctx){
                           'background_states': [row[0] for row in shells],
                           'execution_binding_sources': [row[0] for row in binding_sources],
                           'used_external_model': False}
+                if args.request_dump:
+                    args.request_dump.write_text(json.dumps(ResearchProvider.bodies, indent=2))
+                if args.context_placement:
+                    persisted = ''
+                    for role, session in role_sessions:
+                        if role not in {'main', 'node_core', 'specialist'}:
+                            continue
+                        _, context = request(base, f'/api/session/{session}/context', password)
+                        persisted += json.dumps(context.get('data', []))
+                    result['context_placement'] = context_placement_checks(
+                        ResearchProvider.bodies, args.context_placement, persisted)
+                    checks = result['context_placement']
+                    if args.context_placement == 'tail' and (
+                            not checks['tail_requests'] or not checks['tail_is_last']
+                            or not checks['tail_absent_from_earlier_messages']
+                            or not checks['tail_follows_tool_results']
+                            or not checks['tail_has_no_cache_marker']
+                            or not checks['boundary_before_tail']
+                            or checks['max_cache_markers'] > 4
+                            or checks['persisted_history_has_tail']):
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('Tail context placement did not reach the wire as expected')
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
                         (specialist_states != [('completed', 1)] or specialist_launches != [('submitted',)]) or ResearchProvider.pause_node and
                         (state != 'paused' or reservations_at_pause != reservations_final)):
