@@ -2,9 +2,12 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-
-import probe_research_run as probe
+SCRIPTS = str(Path(__file__).resolve().parents[1] / "scripts")
+sys.path.insert(0, SCRIPTS)
+try:
+    import probe_research_run as probe
+finally:
+    sys.path.remove(SCRIPTS)
 
 
 def body(messages, research=True):

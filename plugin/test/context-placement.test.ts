@@ -213,11 +213,12 @@ describe('markHistoryCacheBoundary', () => {
     expect(marked[2]).toBe(messages[2]!)
   })
 
-  test('a tail of reasoning and tool calls alone has no lowered boundary', () => {
+  test('a tail of reasoning, tool calls or media alone has no lowered boundary', () => {
     const messages = [
       { role: 'assistant', content: [
         { type: 'reasoning', text: 'why', encrypted: 'sig' },
         { type: 'tool-call', id: 'call_1', name: 'research_note', input: {} },
+        { type: 'media', media: {} },
       ] },
     ]
     expect(markHistoryCacheBoundary({ messages })).toBeUndefined()
