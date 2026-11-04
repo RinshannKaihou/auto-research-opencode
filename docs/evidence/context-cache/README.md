@@ -2,7 +2,7 @@
 
 2026-11-04 · branch `cursor/prompt-cache-stabilization` · revision `a990fc5` (initial placement implementation `ce393d5`), based on `73d507a` / v0.2.1.
 
-This note records the engineering checks for the opt-in `contextPlacement: "tail"` change. It is not a real-model cache or cost measurement. The default remains `"system"`.
+This note records the engineering checks for the opt-in `contextPlacement: "tail"` change. It is not a real-model cache or cost measurement; the Step 3 real-API pair is recorded separately in [step3/README.md](step3/README.md). The default remains `"system"`.
 
 ## What was checked
 
@@ -46,4 +46,4 @@ In this lifecycle every research request carried the temporary message, each too
 - No title or compaction request occurred: all tail requests (6–7 per run) and all 7 system requests were primary research requests. The earlier OpenCode 2.2.5 observation that auxiliary requests use their own hooks was not re-checked for those kinds here.
 - The shared 12,000-character budget was not measured. Budget coupling can still change or drop a stable block when the volatile part grows; the smoke run does not quantify that.
 - The `"anthropic"` cache format was declared to observe marker lowering on the wire, not to certify any real provider's behavior.
-- No real-model trial, no shared-service restart, no default change.
+- This engineering note covers no real-model trial, no shared-service restart and no default change. Step 3 is recorded in [step3/README.md](step3/README.md): one real-API pair showed 73.9% lower uncached input per model request (68.2% lower total uncached input) with both runs complete, but its arms did different amounts of work and the default-change gate is not met.

@@ -18,7 +18,7 @@ E1／E2／E3 已接入开发源码并通过工程回归；[E3 验证记录](./ev
 ## 验证与历史
 
 - [E1 工程验证](./evidence/e1-exploration/README.md) 与 [E2 工程验证](./evidence/e2-conclusion/README.md)。
-- [上下文实施记录](./evidence/r1-context/README.md)、[写入及运行时实施记录](./evidence/r2-runtime/README.md) 与 [R2 开发记录](<./R2 development plan auto-research-opencode.md>)。[科研上下文放置冒烟记录](./evidence/context-cache/README.md) 记录了 `contextPlacement: "tail"` 的假宿主与隔离宿主工程验证；默认仍为 `"system"`。
+- [上下文实施记录](./evidence/r1-context/README.md)、[写入及运行时实施记录](./evidence/r2-runtime/README.md) 与 [R2 开发记录](<./R2 development plan auto-research-opencode.md>)。[科研上下文放置冒烟记录](./evidence/context-cache/README.md) 记录了 `contextPlacement: "tail"` 的假宿主与隔离宿主工程验证，[真实 API 配对记录](./evidence/context-cache/step3/README.md) 记录一次 `system`/`tail` 的真实模型对比；默认仍为 `"system"`。
 - [运行控制验证](./evidence/runtime-control/README.md) 与 [协调者边界验证](./evidence/runtime-control/round2/README.md)。
 - [匿名历史核验摘要](./evidence/exploration-20261101/public-summary.json) 与 [已废止路线图归档](./archive/README.md)。
 
