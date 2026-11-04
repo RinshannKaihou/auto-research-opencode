@@ -65,6 +65,7 @@ function fakeHost(
   registryPath: string,
   directory: string,
   python?: string,
+  contextPlacement?: string,
   exposeSessionBusy = true,
   busySignal: "status" | "execution" = "status",
 ) {
@@ -94,7 +95,7 @@ function fakeHost(
   }
   let handlers: any
   const ctx: any = {
-    options: { registryPath, python },
+    options: { registryPath, python, ...(contextPlacement ? { contextPlacement } : {}) },
     location: { directory },
     tool: {
       hook: async (name:string,callback:Hook) => { hooks.set(`tool.${name}`,callback); return {dispose:async()=>{}} },
@@ -177,7 +178,7 @@ function modelRequest(sessionID: string) {
     agent: "build",
     model: { id: "scripted", providerID: "mock" },
     system: [{ type: "text", text: "base system" }],
-    messages: [{ role: "user", content: "hello" }],
+    messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
     options: {},
     tools: Object.fromEntries(
       ["read", "shell", "subagent", "question", ...TOOL_NAMES, "research_other_plugin"].map((name) => [
@@ -224,8 +225,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-async function load(options: { python?: string; directory?: string; hostSetup?: (host: ReturnType<typeof fakeHost>) => void; sessionBusy?: boolean; busySignal?: "status" | "execution" } = {}) {
-  const host = fakeHost(registry, options.directory ?? project, options.python, options.sessionBusy !== false, options.busySignal ?? "status")
+async function load(options: { python?: string; directory?: string; placement?: string; hostSetup?: (host: ReturnType<typeof fakeHost>) => void; sessionBusy?: boolean; busySignal?: "status" | "execution" } = {}) {
+  const host = fakeHost(registry, options.directory ?? project, options.python, options.placement, options.sessionBusy !== false, options.busySignal ?? "status")
   options.hostSetup?.(host)
   cleanups.push((await plugin.setup(host.ctx)) as () => void)
   let calls = 0
@@ -4310,4 +4311,720 @@ test('E3 tools materialize a shared probe and another route with one common allo
   await host.hooks.get('context')!(context)
   expect(JSON.stringify(context.system)).toContain('exploration_scopes')
   expect(JSON.stringify(context.system)).toContain('scope_id')
+})
+
+describe('context placement', () => {
+  function systemText(request: any): string {
+    return request.system.map((part: any) => part.text ?? '').join('\n')
+  }
+
+  function lastMessageText(request: any): string {
+    const last = request.messages.at(-1)
+    return Array.isArray(last?.content) ? last.content.map((part: any) => part.text ?? '').join('\n') : ''
+  }
+
+  function cacheHints(request: any): any[] {
+    const hints: any[] = []
+    for (const part of request.system) if (part.cache) hints.push(part.cache)
+    for (const message of request.messages) {
+      for (const part of Array.isArray(message.content) ? message.content : []) if (part.cache) hints.push(part.cache)
+    }
+    return hints
+  }
+
+  function tailMessages(request: any): any[] {
+    return request.messages.filter((message: any) =>
+      Array.isArray(message?.content) && message.content.some((part: any) =>
+        typeof part?.text === 'string' && part.text.startsWith('<research_state>\n')))
+  }
+
+  async function nodeContext(host: Awaited<ReturnType<typeof load>>, child: string, messages?: any[]) {
+    const request = modelRequest(child)
+    if (messages) request.messages = messages
+    await host.hooks.get('context')!(request)
+    return request
+  }
+
+  test('tail placement keeps a node system prefix stable across ledger writes', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'cache placement fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    host.events.push({ id: 'node-step', type: 'session.step.started',
+      data: { sessionID: child, assistantMessageID: 'node-message', model: { id: 'actual', providerID: 'mock', variant: 'v' } } })
+    await until(async () => (await host.call('research_query', child, { collection: 'usage' })).items.length === 1, 'node step registration')
+    const before = await nodeContext(host, child)
+    const systemBefore = JSON.stringify(before.system)
+    const toolsBefore = JSON.stringify(before.tools)
+    const tailBefore = lastMessageText(before)
+    expect(systemBefore).toContain('## role_instructions')
+    expect(systemBefore).not.toContain('## recent_node_notes')
+    expect(tailBefore.startsWith('<research_state>\n')).toBe(true)
+    expect(tailBefore).toContain('## recent_node_notes')
+    expect(cacheHints(before).length).toBe(1)
+
+    await host.call('research_note', child, { body: 'A measured note', kind: 'progress' })
+    await host.call('research_record', child, { kind: 'hypothesis', statement: 'Observed behaviour',
+      evidence_refs: [], visibility: 'node' })
+    const checkpoint = await host.tools.get('research_memory').execute({ action: 'checkpoint', state: { step: 'one' } },
+      { sessionID: child, messageID: 'node-message', id: 'node-checkpoint', agent: 'build' })
+    expect(JSON.parse(checkpoint.content).revision).toBe(1)
+    const after = await nodeContext(host, child)
+    expect(JSON.stringify(after.system)).toBe(systemBefore)
+    expect(JSON.stringify(after.tools)).toBe(toolsBefore)
+    expect(lastMessageText(after)).not.toBe(tailBefore)
+    expect(lastMessageText(after)).toContain('A measured note')
+    expect(lastMessageText(after)).toContain('## checkpoint')
+    expect(JSON.stringify(after.system)).not.toContain('## checkpoint')
+    expect(JSON.stringify(after.messages)).not.toContain('A measured note\n\n## role_instructions')
+  })
+
+  test('tail placement keeps the coordinator prefix stable across proposal and dispatch', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'coordinator cache fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const before = await nodeContext(host, 'ses_main')
+    const systemBefore = JSON.stringify(before.system)
+    const toolsBefore = JSON.stringify(before.tools)
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const after = await nodeContext(host, 'ses_main')
+    expect(JSON.stringify(after.system)).toBe(systemBefore)
+    expect(JSON.stringify(after.tools)).toBe(toolsBefore)
+    expect(lastMessageText(after)).not.toBe(lastMessageText(before))
+    expect(lastMessageText(after)).toContain('questions')
+  })
+
+  test('an existing history hint leaves the host array untouched and the tail is not replayed', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'history ownership fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const history = [{
+      role: 'assistant',
+      content: [{ type: 'text', text: 'earlier result', cache: { type: 'ephemeral' } }],
+    }]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).not.toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(tailMessages(request)).toHaveLength(1)
+    expect(request.messages.at(-1)).toBe(tailMessages(request)[0]!)
+    expect((request.messages[0] as any).content[0].cache).toEqual({ type: 'ephemeral' })
+
+    // Reusing the host's original history must not replay the previous tail.
+    const second = modelRequest('ses_main')
+    second.messages = history as any
+    await host.hooks.get('context')!(second)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(tailMessages(second)).toHaveLength(1)
+    expect(second.messages.at(-1)).toBe(tailMessages(second)[0]!)
+  })
+
+  test('a newly added history hint does not mutate the host array', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'new hint ownership fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const history = [{ role: 'assistant', content: [{ type: 'text', text: 'earlier result' }] }]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).not.toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect((history[0]!.content[0] as any).cache).toBeUndefined()
+    expect((request.messages[0] as any).content[0].cache).toEqual({ type: 'ephemeral' })
+    expect((request.messages[0] as any).content[0].text).toBe('earlier result')
+    expect(tailMessages(request)).toHaveLength(1)
+    expect(request.messages.at(-1)).toBe(tailMessages(request)[0]!)
+  })
+
+  test('tail placement still accepts a checkpoint base delivered in context', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'checkpoint under tail placement' })
+    host.events.push({ id: 'step-a', type: 'session.step.started',
+      data: { sessionID: 'ses_main', assistantMessageID: 'assistant-a', model: { id: 'actual', providerID: 'mock', variant: 'v' } } })
+    await until(async () => (await host.call('research_query', 'ses_main', { collection: 'usage' })).items.length === 1, 'native step registration')
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    const execute = (id: string) => host.tools.get('research_checkpoint').execute({ state: { next: id } },
+      { sessionID: 'ses_main', messageID: 'assistant-a', id, agent: 'build' })
+    const results = await Promise.allSettled([execute('one'), execute('parallel')])
+    const fulfilled = results.find((row) => row.status === 'fulfilled') as PromiseFulfilledResult<any>
+    expect(JSON.parse(fulfilled.value.content).revision).toBe(1)
+    const next = modelRequest('ses_main')
+    next.messages = [{ role: 'tool', content: [{ type: 'tool-result', id: results[0]!.status === 'fulfilled' ? 'one' : 'parallel',
+      name: 'research_checkpoint', result: { type: 'text', value: fulfilled.value.content } }] }] as any
+    host.events.push({ id: 'step-b', type: 'session.step.started',
+      data: { sessionID: 'ses_main', assistantMessageID: 'assistant-b', model: { id: 'actual', providerID: 'mock' } } })
+    await until(async () => (await host.call('research_query', 'ses_main', { collection: 'usage' })).items.length === 2, 'next native step')
+    const delivered = (next.messages[0] as any).content[0]
+    await host.hooks.get('context')!(next)
+    const after = ((next.messages as any[]).find((message: any) =>
+      message.content?.some?.((part: any) => part.type === 'tool-result'))).content[0]
+    expect(after.result).toEqual(delivered.result)
+    expect(after.id).toBe(delivered.id)
+    expect(after.name).toBe(delivered.name)
+    const saved = await host.tools.get('research_checkpoint').execute({ state: { next: 'two' } },
+      { sessionID: 'ses_main', messageID: 'assistant-b', id: 'second', agent: 'build' })
+    expect(JSON.parse(saved.content).revision).toBe(2)
+  })
+
+  test('an evidence warning travels in the tail under tail placement', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('init', 'ses_main', { goal: 'Warning placement fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    writeFileSync(join(project, 'source.txt'), 'measured material')
+    const source = await host.call('research_publish', 'ses_main', { status: 'complete', summary: 'data', gaps: [],
+      items: [{ item_id: 'data', kind: 'text', source_path: 'source.txt' }], knowledge_refs: [] })
+    const ref = `pub/${source.publication_id}#data`
+    await host.call('research_record', 'ses_main', { kind: 'claim', statement: 'Material supports the claim',
+      evidence_refs: [ref], visibility: 'project' })
+    const page = await host.tools.get('research_query').execute({ collection: 'evidence', refs: [ref], limit: 16384 },
+      { sessionID: 'ses_main', messageID: 'read-decision', id: 'decision-page', agent: 'build' })
+    host.events.push({ id: 'warning-step', type: 'session.step.started',
+      data: { sessionID: 'ses_main', assistantMessageID: 'warning-response', model: { id: 'scripted', providerID: 'mock' } } })
+    await until(async () => (await host.call('research_query', 'ses_main', { collection: 'usage' })).items.length > 0, 'warning step')
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function (method, fields, operation) {
+      if (method === 'evidence_observed') return Promise.reject(new Error('injected evidence outage'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const request = modelRequest('ses_main')
+      request.messages = [{ role: 'tool', content: [{ type: 'tool-result', id: 'decision-page', name: 'research_query',
+        result: { type: 'text', value: page.content } }] }] as any
+      await host.hooks.get('context')!(request)
+      const tail = lastMessageText(request)
+      expect(tail).toContain('Evidence delivery was not fully confirmed (backend_unavailable).')
+      expect(systemText(request)).not.toContain('Evidence delivery was not fully confirmed')
+    } finally { spy.mockRestore() }
+  })
+
+  test('the default system placement keeps the whole context in the system prompt', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'default placement fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).toContain('## role_instructions')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  })
+
+  test('tail placement falls back to system when no legal history boundary exists', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'fallback fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    const request = modelRequest('ses_main')
+    request.messages = [{ role: 'user', content: 'plain string content' }] as any
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  })
+
+  test('stale context keeps the original system placement and warning', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'stale placement fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    await host.hooks.get('context')!(modelRequest('ses_main'))
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function (method, fields, operation) {
+      if (method === 'memory_context') return Promise.reject(new Error('injected ledger outage'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      const request = modelRequest('ses_main')
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).toContain('[Research memory is stale.')
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+
+  test('a blind specialist receives no project tail under tail placement', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'Find X' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const node = host.created[0]!
+    await until(() => host.said(node).length > 0, 'node kickoff')
+    const workspace = /工作目录：(.+?)。/.exec(host.said(node).at(-1).text)![1]!
+    mkdirSync(join(workspace, 'output'), { recursive: true })
+    writeFileSync(join(workspace, 'output', 'report.md'), '# 结果\nblind evidence\n')
+    const publication = await host.call('research_publish', node, { status: 'complete', summary: 'r',
+      items: [{ item_id: 'report', kind: 'report', source_path: 'output/report.md' }] })
+    const pending = host.call('research_delegate', node, { label: '盲评', question: '结论成立吗？',
+      purpose: '独立复核', deliverable: '判断与依据', completion_criteria: '给出判断', report_requirements: '列出证据',
+      context_mode: 'blind', inputs: [`pub/${publication.publication_id}#report`] })
+    await until(() => host.created.length > 1 && host.said(host.created[1]!).length > 0, 'blind specialist')
+    const child = host.created[1]!
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    const system = systemText(request)
+    expect(system).toContain('blind reviewer')
+    expect(system).not.toContain('base system')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    expect(JSON.stringify(request.messages)).not.toContain(publication.publication_id)
+    expect(JSON.stringify(request.messages)).not.toContain('Find X')
+    host.reply(child, '盲评：材料可见，结论成立。')
+    expect((await pending).state).toBe('completed')
+  })
+
+  test('sessions outside a project are untouched under tail placement', async () => {
+    const host = await load({ placement: 'tail' })
+    const request = modelRequest('ses_plain')
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toBe('base system')
+    expect(request.messages).toHaveLength(1)
+  })
+
+  test('an unknown placement value warns once and falls back to system mode', async () => {
+    const writes: string[] = []
+    const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: any) => {
+      writes.push(String(chunk))
+      return true
+    }) as any)
+    try {
+      const host = await load({ placement: 'turn' })
+      await host.command('auto', 'ses_main', { goal: 'unknown placement fixture' })
+      await host.command('context-policy', 'ses_main', { policy: 'r1' })
+      for (let index = 0; index < 3; index++) {
+        const request = modelRequest('ses_main')
+        await host.hooks.get('context')!(request)
+        expect(systemText(request)).toContain('## recent_node_notes')
+        expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+      }
+      const warnings = writes.filter((line) =>
+        line.includes('Unknown contextPlacement') && line.includes('"turn"') && line.includes('"system"'))
+      expect(warnings).toHaveLength(1)
+    } finally { spy.mockRestore() }
+  })
+
+  test('a node turn without drain authorization keeps its refusal in the system prompt', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'drain boundary fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    host.turn.start(child)
+    await host.command('pause', 'ses_main')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'old-turn', input: {} })
+    await host.hooks.get('tool.execute.after')!({ tool: 'shell', sessionID: child, id: 'old-turn', status: 'completed', result: { metadata: {} } })
+    host.turn.end(child)
+    host.turn.start(child)
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('no active drain authorization')
+    expect(Object.keys(request.tools)).not.toContain('shell')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+  })
+
+  test('pausing keeps control instructions in the system prompt under tail placement', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'pause placement fixture' })
+    await host.command('pause', 'ses_main')
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('## control_instructions')
+    expect(systemText(request)).toContain('Research execution is paused')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(true)
+  })
+})
+
+describe('tail wait completion', () => {
+  function systemText(request: any): string {
+    return request.system.map((part: any) => part.text ?? '').join('\n')
+  }
+
+  function lastMessageText(request: any): string {
+    const last = request.messages.at(-1)
+    return Array.isArray(last?.content) ? last.content.map((part: any) => part.text ?? '').join('\n') : ''
+  }
+
+  function cacheHints(request: any): any[] {
+    const hints: any[] = []
+    for (const part of request.system) if (part.cache) hints.push(part.cache)
+    for (const message of request.messages) {
+      for (const part of Array.isArray(message.content) ? message.content : []) if (part.cache) hints.push(part.cache)
+    }
+    return hints
+  }
+
+  function waitResult(taskID: string) {
+    return { role: 'tool', content: [{ type: 'tool-result', id: 'wait-call', name: 'research_wait',
+      result: { type: 'text', value: JSON.stringify({ waiting: [taskID], message: '本轮结束后进入等待' }) } }] }
+  }
+
+  async function acceptedWait(host: Awaited<ReturnType<typeof load>>) {
+    await host.command('auto', 'ses_main', { goal: 'wait completion fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+    return task
+  }
+
+  async function nodeAtFinish(host: Awaited<ReturnType<typeof load>>, accept = true) {
+    await host.command('auto', 'ses_main', { goal: 'node finish completion fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const node = host.created[0]!
+    host.turn.start(node)
+    await host.call('research_publish', node, { status: 'complete', summary: 'node result',
+      items: [{ item_id: 'r', kind: 'text', content: { text: 'delivered result' } }] })
+    if (accept) await host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+    return node
+  }
+
+  function finishHistory() {
+    return [{ role: 'assistant', content: [
+      { type: 'tool-call', id: 'query-call', name: 'research_query', arguments: { collection: 'nodes' } },
+      { type: 'tool-call', id: 'finish-call', name: 'research_finish', arguments: { state: 'finished', summary: 'node result' } },
+    ] }, { role: 'tool', content: [
+      { type: 'tool-result', id: 'query-call', name: 'research_query', result: { type: 'text', value: 'nodes' } },
+      { type: 'tool-result', id: 'finish-call', name: 'research_finish', result: { type: 'text', value: 'accepted' } },
+    ] }]
+  }
+
+  test('an accepted node finish keeps sibling results and only commits after execution end', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const history = finishHistory()
+    const snapshot = JSON.stringify(history)
+    for (let preparation = 0; preparation < 2; preparation++) {
+      const request = modelRequest(node)
+      request.messages = history as any
+      await host.hooks.get('context')!(request)
+      expect(request.messages).toBe(history)
+      expect(JSON.stringify(history)).toBe(snapshot)
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(systemText(request)).toContain('A research finish was accepted')
+      expect(systemText(request)).toContain('after this execution ends')
+      expect(systemText(request)).toContain('## recent_node_notes')
+      expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+      expect(cacheHints(request)).toHaveLength(0)
+    }
+    const before = await host.command('status', 'ses_main')
+    expect(before.state.workflow.tasks.find((task: any) => task.session_id === node).state).toBe('running')
+    expect(host.said('ses_main').some((item) => item.text.includes('节点 X-001'))).toBe(false)
+    host.turn.end(node)
+    await until(() => host.said('ses_main').some((item) => !item.resume && item.text.includes('节点 X-001')),
+      'node finish committed after execution end')
+    const after = await host.page('tasks')
+    expect(after.items).toHaveLength(1)
+    expect(after.items[0].state).toBe('finished')
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a rejected node finish and transcript alone cannot latch finishing', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host, false)
+    await expect(host.call('research_finish', node, { state: 'invalid', summary: 'node result' })).rejects.toThrow()
+    const request = modelRequest(node)
+    request.messages = finishHistory() as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a mismatched authoritative node finish invalidates the marker', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      const result = await (call as any).call(this, method, ...args)
+      return method === 'node_finish_pending' && result ? { ...result, turn_token: 'another-execution' } : result
+    })
+    try {
+      const request = modelRequest(node)
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toContain('research_query')
+      expect(systemText(request)).not.toContain('A research finish was accepted')
+    } finally { spy.mockRestore() }
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('a warm rebind retains an accepted node finish for the same execution', async () => {
+    const first = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(first)
+    const second = await load({ placement: 'tail' })
+    const request = modelRequest(node)
+    await second.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research finish was accepted')
+  })
+
+  test('system mode discards a node finish marker and tail rebind cannot resurrect it', async () => {
+    const first = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(first)
+    const system = await load()
+    const request = modelRequest(node)
+    await system.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+    expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+    const tail = await load({ placement: 'tail' })
+    const next = modelRequest(node)
+    await tail.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research finish was accepted')
+  })
+
+  test('system mode does not latch an accepted node finish', async () => {
+    const host = await load()
+    const node = await nodeAtFinish(host)
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).not.toContain('A research finish was accepted')
+  })
+
+  test('an accepted wait keeps finishing until the execution ends', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const history = [waitResult(task.task_id)]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(lastMessageText(request)).toBe('')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    expect(systemText(request)).toContain('A research wait was accepted')
+    expect(systemText(request)).toContain('Do not call tools')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).toContain('## checkpoint_recovery')
+    expect(cacheHints(request)).toHaveLength(0)
+
+    // A repeated preparation for the same active execution is still finishing.
+    const repeated = modelRequest('ses_main')
+    repeated.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(repeated)
+    expect(Object.keys(repeated.tools)).toHaveLength(0)
+    expect(systemText(repeated)).toContain('A research wait was accepted')
+
+    // A verified terminal transition clears the marker even before a new execution.
+    host.turn.end('ses_main')
+    await Bun.sleep(100)
+    const afterEnd = modelRequest('ses_main')
+    await host.hooks.get('context')!(afterEnd)
+    expect(Object.keys(afterEnd.tools)).toContain('research_query')
+    expect(systemText(afterEnd)).not.toContain('A research wait was accepted')
+
+    // A later execution gets the normal placement too.
+    host.turn.start('ses_main')
+    await Bun.sleep(50)
+    const next = modelRequest('ses_main')
+    await host.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research wait was accepted')
+  })
+
+  test('a failed wait does not latch a finishing request', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'failed wait fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await expect(host.call('research_wait', 'ses_main', { task_ids: ['T_unknown'] }))
+      .rejects.toThrow('只能等待自己派发的任务')
+
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+  })
+
+  test('a mixed wait and query group keeps both results before finishing', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const query = await host.call('research_query', 'ses_main', { collection: 'nodes' })
+    const history = [
+      { role: 'tool', content: [{ type: 'tool-result', id: 'query-call', name: 'research_query',
+        result: { type: 'text', value: JSON.stringify(query) } }] },
+      waitResult(task.task_id),
+    ]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(JSON.stringify(request.messages)).toContain('nodes')
+    expect(JSON.stringify(request.messages)).toContain('waiting')
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+  })
+
+  test('a late wait result from an older execution cannot finish a newer execution', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    host.turn.end('ses_main')
+    host.turn.start('ses_main')
+    await Bun.sleep(50)
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+  })
+
+  test('a replayed older terminal event does not clear a newer wait marker', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'terminal replay fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    host.events.push({ id: 'older-terminal', type: 'session.execution.succeeded',
+      data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+
+    // Execution B accepts a wait; then execution A's terminal event is replayed.
+    host.turn.start('ses_main')
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+    host.events.push({ id: 'older-terminal', type: 'session.execution.succeeded',
+      data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  })
+
+  test('a warm rebind keeps the accepted wait for the same execution', async () => {
+    const first = await load({ placement: 'tail' })
+    const task = await acceptedWait(first)
+    const second = await load({ placement: 'tail' })
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+
+    await second.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+
+    second.turn.end('ses_main')
+    second.turn.start('ses_main')
+    await Bun.sleep(50)
+    const next = modelRequest('ses_main')
+    await second.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+  })
+
+  test('a warm rebind to system mode discards a tail wait marker', async () => {
+    const first = await load({ placement: 'tail' })
+    const task = await acceptedWait(first)
+    const system = await load()
+    const history = [waitResult(task.task_id)]
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await system.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    expect(request.messages).toBe(history)
+    expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+
+    // Switching back to tail must not resurrect the discarded marker.
+    const tail = await load({ placement: 'tail' })
+    const next = modelRequest('ses_main')
+    next.messages = [waitResult(task.task_id)] as any
+    await tail.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research wait was accepted')
+  })
+
+  test('a report notification does not clear the marker and the wake runs once', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const node = host.created[0]!
+    host.turn.start(node)
+    await host.call('research_publish', node, { status: 'complete', summary: 'node result',
+      items: [{ item_id: 'r', kind: 'text', content: { text: 'delivered result' } }] })
+    await host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+    host.turn.end(node)
+    await until(() => host.said('ses_main').some((item) => !item.resume && item.text.includes('节点 X-001')),
+      'report notice without resume')
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter((item) => item.resume && item.text.includes('等待的节点有了结果')).length === 1,
+      'single wake')
+    const after = modelRequest('ses_main')
+    await host.hooks.get('context')!(after)
+    expect(Object.keys(after.tools)).toContain('research_query')
+    expect(lastMessageText(after).startsWith('<research_state>')).toBe(true)
+    expect(lastMessageText(after)).toContain('pub/P-001')
+  })
+
+  test('the finishing request keeps an evidence warning in the system prompt', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const spy = spyOn(Research.prototype, 'observeEvidence').mockResolvedValue(['timeout'])
+    try {
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(systemText(request)).toContain('Evidence delivery was not fully confirmed (timeout).')
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+
+  test('system mode still ends its turn normally after a wait', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'system wait fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    expect(lastMessageText(request)).not.toContain('<research_state>')
+  })
 })

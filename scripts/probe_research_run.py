@@ -17,14 +17,122 @@ from uuid import uuid4
 from probe_opencode_execution import request
 
 
+def _message_text(message):
+    content = message.get('content') if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(str(part.get('text', '')) for part in content if isinstance(part, dict))
+    return ''
+
+
+def _cache_markers(value):
+    return json.dumps(value).count('cache_control')
+
+
+def _has_tail(body):
+    return bool(body.get('messages')) and _message_text(body['messages'][-1]).startswith('<research_state>')
+
+
+def _tool_pairing_ok(messages):
+    """Every assistant tool call is followed by its matching tool result."""
+    pending = []
+    for message in messages:
+        if message.get('role') == 'assistant':
+            for call in message.get('tool_calls') or []:
+                pending.append(call.get('id'))
+        elif message.get('role') == 'tool':
+            if not pending or message.get('tool_call_id') != pending.pop(0):
+                return False
+    return not pending
+
+
+def _finishing_kind(body):
+    for message in body.get('messages') or []:
+        if message.get('role') == 'system':
+            for kind in ('wait', 'finish'):
+                if f'A research {kind} was accepted' in _message_text(message):
+                    return kind
+    return None
+
+
+def context_placement_checks(bodies, placement, persisted_context):
+    """Checks the temporary research-state message and the cache breakpoints
+    the SDK actually put on the wire. A tail-mode wait/node-completion request is
+    the one deliberate exception: it carries the full context in system and
+    exposes no tools, so it must have no temporary tail."""
+    research = []
+    for body in bodies:
+        names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
+        finishing = _finishing_kind(body) is not None
+        if any(name.startswith('research_') for name in names) or finishing:
+            research.append(body)
+    checks = {'requests': len(bodies), 'research_requests': len(research)}
+    if placement != 'tail':
+        checks['max_cache_markers'] = max((_cache_markers(body) for body in research), default=0)
+        return checks
+    tails = [body for body in research if _has_tail(body)]
+    finishing = [body for body in research if _finishing_kind(body) is not None]
+    tails = [body for body in tails if body not in finishing]
+    tool_continuations = [body for body in research
+                          if len(body.get('messages') or []) > 1
+                          and body['messages'][-2].get('role') == 'tool']
+    regular_continuations = [body for body in tool_continuations if body not in finishing]
+    checks.update({
+        'tail_requests': len(tails),
+        'finishing_requests': len(finishing),
+        'wait_finishing_requests': sum(_finishing_kind(body) == 'wait' for body in finishing),
+        'node_finishing_requests': sum(_finishing_kind(body) == 'finish' for body in finishing),
+        'unaccounted_requests': len(research) - len(tails) - len(finishing),
+        'all_research_requests_accounted_for': len(tails) + len(finishing) == len(research),
+        'tail_is_last': all(_has_tail(body) for body in research if body not in finishing),
+        'tail_absent_from_earlier_messages': all(
+            not any('Injected research state' in _message_text(message) for message in body['messages'][:-1])
+            for body in tails),
+        'tool_continuations': len(tool_continuations),
+        'regular_tool_continuations': len(regular_continuations),
+        'tail_follows_every_regular_tool_continuation': all(_has_tail(body) for body in regular_continuations),
+        'finishing_requests_have_no_tools_and_no_tail': all(
+            not body.get('tools') and not _has_tail(body) for body in finishing),
+        'tool_pairing_ok': all(_tool_pairing_ok(
+            body['messages'][:-1] if _has_tail(body) else body['messages']) for body in research),
+        'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
+        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in tails),
+        'boundary_before_tail': all(
+            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in tails),
+        'persisted_history_has_tail': 'Injected research state' in persisted_context,
+    })
+    return checks
+
+
+def context_placement_ok(checks):
+    """The gate for the controlled tail-placement smoke run."""
+    return bool(
+        checks.get('research_requests')
+        and checks.get('all_research_requests_accounted_for')
+        and checks.get('tail_is_last')
+        and checks.get('tail_absent_from_earlier_messages')
+        and checks.get('regular_tool_continuations')
+        and checks.get('tail_follows_every_regular_tool_continuation')
+        and checks.get('finishing_requests_have_no_tools_and_no_tail')
+        and checks.get('tool_pairing_ok')
+        and checks.get('tail_has_no_cache_marker')
+        and checks.get('boundary_before_tail')
+        and checks.get('max_cache_markers', 99) <= 4
+        and not checks.get('persisted_history_has_tail')
+    )
+
+
 class ResearchProvider(BaseHTTPRequestHandler):
     actions = []
     requests = []
+    bodies = []
     pause_node = False
     use_specialist = False
     hold_specialist = False
     hold_node = False
     background_node = False
+    wait_finish = False
     node_waiting = threading.Event()
     node_gate = threading.Event()
     coordinator_gate = threading.Event()
@@ -36,6 +144,7 @@ class ResearchProvider(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
+        self.bodies.append(body)
         names = {item.get('function', {}).get('name') for item in body.get('tools', []) if item.get('type') == 'function'}
         self.requests.append({'dispatch': 'research_dispatch' in names, 'finish': 'research_finish' in names,
                               'query': 'research_query' in names, 'shell': 'shell' in names, 'tool_count': len(names)})
@@ -54,6 +163,21 @@ class ResearchProvider(BaseHTTPRequestHandler):
             elif 'dispatch' not in self.actions:
                 action, args = 'research_dispatch', {'node_id': 'X-001'}
                 self.actions.append('dispatch')
+            elif self.wait_finish and 'wait' not in self.actions:
+                # The scripted model only calls wait while tools are exposed;
+                # the finishing request offers none, so it then replies text.
+                task_id = None
+                for message in reversed(body.get('messages') or []):
+                    try:
+                        value = json.loads(_message_text(message))
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(value, dict) and isinstance(value.get('task_id'), str):
+                        task_id = value['task_id']
+                        break
+                if task_id:
+                    action, args = 'research_wait', {'task_ids': [task_id]}
+                    self.actions.append('wait')
         elif 'research_finish' in names and 'node_finish' not in self.actions:
             if self.background_node and 'background_start' not in self.actions:
                 action, args = 'shell', {'command': 'sleep 2', 'background': True, 'timeout': 20000}
@@ -109,7 +233,12 @@ def main():
     parser.add_argument('--cold-restart-specialist', action='store_true')
     parser.add_argument('--warm-reload-specialist', action='store_true')
     parser.add_argument('--plugin', type=Path, help='plugin directory to load (defaults to the source tree)')
+    parser.add_argument('--context-placement', choices=('system', 'tail'),
+                        help='plugin contextPlacement option; tail exercises the temporary research-state message')
+    parser.add_argument('--request-dump', type=Path, help='write every provider request body to this JSON file')
     parser.add_argument('--background-node', action='store_true', help='exercise a native background shell and completion wake')
+    parser.add_argument('--wait-finish', action='store_true',
+                        help='script an accepted coordinator wait and assert the tool-free finishing request')
     args = parser.parse_args()
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
@@ -127,11 +256,13 @@ def main():
         parser.error('--warm-reload-specialist requires --specialist and is otherwise standalone')
     ResearchProvider.actions = []
     ResearchProvider.requests = []
+    ResearchProvider.bodies = []
     ResearchProvider.pause_node = args.pause_node
     ResearchProvider.use_specialist = args.specialist
     ResearchProvider.hold_specialist = args.stop_during_specialist or args.warm_reload_specialist or args.cold_restart_specialist
     ResearchProvider.hold_node = args.lost_kickoff_response or args.cold_restart_node
     ResearchProvider.background_node = args.background_node
+    ResearchProvider.wait_finish = args.wait_finish
     ResearchProvider.node_waiting.clear()
     ResearchProvider.node_gate.clear()
     ResearchProvider.coordinator_gate.clear()
@@ -157,7 +288,8 @@ def main():
         config = root / 'config' / 'opencode'
         config.mkdir()
         plugin = (args.plugin or Path(__file__).resolve().parents[1] / 'plugin').resolve()
-        plugins = [str(plugin)]
+        plugin_options = {'contextPlacement': args.context_placement} if args.context_placement else {}
+        plugins = [{'package': str(plugin), 'options': plugin_options}]
         if args.warm_reload_specialist:
             trigger = root / 'reload-trigger'
             trigger.mkdir()
@@ -172,11 +304,12 @@ export default {id:"ari-reload-probe",async setup(ctx){
    catch(e){writeFileSync(process.env.ARI_RELOAD_RESULT,"error:"+String(e));}},50);
  return ()=>clearInterval(timer);}};
 ''')
-            plugins.append(str(trigger))
+            plugins.append({'package': str(trigger), 'options': {}})
         (config / 'opencode.jsonc').write_text(json.dumps({
             'plugins': plugins, 'model': 'ari-probe/probe',
             'providers': {'ari-probe': {'name': 'isolated test', 'env': ['ARI_PROBE_KEY'],
                 'package': '@opencode/ai/providers/openai-compatible',
+                'compatibility': {'cacheFormat': 'anthropic'},
                 'settings': {'baseURL': f'http://127.0.0.1:{fake.server_port}/v1'},
                 'models': {'probe': {'name': 'probe', 'limit': {'context': 200000, 'output': 1024}}}}},
         }))
@@ -464,6 +597,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     node_count = db.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
                     intent_states = db.execute("SELECT kind,state FROM workflow_intents WHERE kind IN ('node_launch','node_finish') ORDER BY kind").fetchall()
                     sessions = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions ORDER BY role').fetchall()
+                    role_sessions = db.execute('SELECT role,session_id FROM workflow_sessions ORDER BY role').fetchall()
                     auth_states = db.execute("SELECT kind,state FROM workflow_intents WHERE kind IN ('execution_start','turn_authorization') ORDER BY kind,state").fetchall()
                     specialist_states = db.execute('SELECT state,exit_verified FROM specialist_tasks').fetchall()
                     specialist_launches = db.execute("SELECT state FROM workflow_intents WHERE kind='specialist_launch'").fetchall()
@@ -479,6 +613,31 @@ export default {id:"ari-reload-probe",async setup(ctx){
                           'background_states': [row[0] for row in shells],
                           'execution_binding_sources': [row[0] for row in binding_sources],
                           'used_external_model': False}
+                if args.request_dump:
+                    args.request_dump.write_text(json.dumps(ResearchProvider.bodies, indent=2))
+                if args.context_placement:
+                    persisted = ''
+                    for role, session in role_sessions:
+                        if role not in {'main', 'node_core', 'specialist'}:
+                            continue
+                        _, context = request(base, f'/api/session/{session}/context', password)
+                        persisted += json.dumps(context.get('data', []))
+                    result['context_placement'] = context_placement_checks(
+                        ResearchProvider.bodies, args.context_placement, persisted)
+                    checks = result['context_placement']
+                    if args.context_placement == 'tail' and not context_placement_ok(checks):
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('Tail context placement did not reach the wire as expected')
+                    if args.context_placement == 'tail' and checks.get('node_finishing_requests', 0) < 1:
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('The scripted node finish did not produce a tool-free finishing request')
+                    if args.wait_finish:
+                        if checks.get('wait_finishing_requests', 0) < 1:
+                            print(json.dumps(result, sort_keys=True))
+                            raise RuntimeError('The scripted accepted wait did not produce a tool-free finishing request')
+                        if ResearchProvider.actions.count('wait') != 1:
+                            print(json.dumps(result, sort_keys=True))
+                            raise RuntimeError('The scripted model repeated the wait or never called it once')
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
                         (specialist_states != [('completed', 1)] or specialist_launches != [('submitted',)]) or ResearchProvider.pause_node and
                         (state != 'paused' or reservations_at_pause != reservations_final)):

@@ -11,13 +11,15 @@
 - [当前实施计划](<./Remediation implementation plan auto-research-opencode.md>)：工作包和依赖。
 - [E1/E2 详细开发计划](<./E1 E2 detailed development plan auto-research-opencode.md>)：接口、事务与验收。
 - [E3 详细开发计划](<./E3 detailed development plan auto-research-opencode.md>)：多范围、预算、异步比较、组合与结项。
+- [提示缓存重启计划](<./Prompt cache stabilization development plan.md>)：基于原始分析，先做默认关闭的 TypeScript 上下文放置优化；旧 WP-00～WP-08 开发方案已撤回。
+- [PR #35 评审修复计划](<./Prompt cache PR 35 review remediation plan.md>)：修复数组所有权和测试缺口，核实辅助请求与推理转发，并限定 tail 模式的等待收尾；渲染器重构继续延后。
 
 E1／E2／E3 已接入开发源码并通过工程回归；[E3 验证记录](./evidence/e3-multiroute/README.md)区分本地工程、隔离宿主与真实模型效果。真实模型配对效果仍未验证；严格确认性验证不属于本轮范围。
 
 ## 验证与历史
 
 - [E1 工程验证](./evidence/e1-exploration/README.md) 与 [E2 工程验证](./evidence/e2-conclusion/README.md)。
-- [上下文实施记录](./evidence/r1-context/README.md)、[写入及运行时实施记录](./evidence/r2-runtime/README.md) 与 [R2 开发记录](<./R2 development plan auto-research-opencode.md>)。
+- [上下文实施记录](./evidence/r1-context/README.md)、[写入及运行时实施记录](./evidence/r2-runtime/README.md) 与 [R2 开发记录](<./R2 development plan auto-research-opencode.md>)。[科研上下文放置冒烟记录](./evidence/context-cache/README.md) 记录了 `contextPlacement: "tail"` 的假宿主与隔离宿主工程验证，[真实 API 配对记录](./evidence/context-cache/step3/README.md) 记录一次 `system`/`tail` 的真实模型对比；默认仍为 `"system"`。
 - [运行控制验证](./evidence/runtime-control/README.md) 与 [协调者边界验证](./evidence/runtime-control/round2/README.md)。
 - [匿名历史核验摘要](./evidence/exploration-20261101/public-summary.json) 与 [已废止路线图归档](./archive/README.md)。
 

@@ -1,0 +1,84 @@
+{
+  "state": "complete",
+  "node_count": 3,
+  "task_states": [
+    "finished",
+    "cancelled",
+    "finished"
+  ],
+  "specialists": [
+    "completed"
+  ],
+  "publications": 4,
+  "observations": {
+    "sessions": {
+      "ses_cache_4d2912673d8242da8b797b1c7be880d1": {
+        "requests": 191,
+        "input": 483401,
+        "cache_read": 10663296,
+        "cache_write": 0,
+        "output": 20873,
+        "reasoning": 34297,
+        "cost": 0.0,
+        "cost_known": 191
+      },
+      "ses_research_df08e871ecb440c1b661200b3f639e9b": {
+        "requests": 23,
+        "input": 60737,
+        "cache_read": 657792,
+        "cache_write": 0,
+        "output": 14715,
+        "reasoning": 2531,
+        "cost": 0.0,
+        "cost_known": 23
+      },
+      "ses_research_0c47af4e075ca667c73d9b903ea3b4ab": {
+        "requests": 19,
+        "input": 20550,
+        "cache_read": 136448,
+        "cache_write": 0,
+        "output": 6207,
+        "reasoning": 10487,
+        "cost": 0.0,
+        "cost_known": 19
+      },
+      "ses_research_d3577a67069b495081d2b5662eb3d97f": {
+        "requests": 42,
+        "input": 177950,
+        "cache_read": 2142976,
+        "cache_write": 0,
+        "output": 27204,
+        "reasoning": 15658,
+        "cost": 0.0,
+        "cost_known": 42
+      }
+    },
+    "totals": {
+      "requests": 275,
+      "input": 742638,
+      "cache_read": 13600512,
+      "cache_write": 0,
+      "output": 68999,
+      "reasoning": 62973,
+      "prompt": 14343150,
+      "hit_ratio": 0.9482235073885443,
+      "cost": 0.0,
+      "cost_known": 275
+    },
+    "model_requests": {},
+    "coverage_gaps": {}
+  },
+  "placement": "tail",
+  "model": "gateway/volcengine/deepseek-v4.1-flash",
+  "goal": "Using Python 3 on this machine, measure the median wall-clock time of summing the integers 1 through 1,000,000 with a for loop versus sum(range(1, 1000001)), 15 repetitions each, in the same process. Publish a short report with the script, both medians, and the raw timings. Ask an independent reviewer to check that the two conditions are comparable.",
+  "context_policy": "memory-r1-v1",
+  "exploration": "off",
+  "budgets": {
+    "max_turns": 24,
+    "max_nodes": 3,
+    "wall_seconds": 1800,
+    "max_tokens": 20000000
+  },
+  "root": "/var/folders/bk/3f4npkcs6l30twg9ph23c2jh0000gn/T/ari-cache-tail-6p3e1jhb",
+  "log": "/var/folders/bk/3f4npkcs6l30twg9ph23c2jh0000gn/T/ari-cache-tail-6p3e1jhb/server.log"
+}

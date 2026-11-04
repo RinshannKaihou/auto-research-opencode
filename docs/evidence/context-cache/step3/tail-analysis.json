@@ -1,0 +1,374 @@
+{
+  "state": "complete",
+  "nodes": [
+    {
+      "node_id": "X-001",
+      "status": "closed"
+    },
+    {
+      "node_id": "X-002",
+      "status": "closed"
+    },
+    {
+      "node_id": "X-003",
+      "status": "closed"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "T-bc0addc5b5051607fc6e",
+      "node_id": "X-001",
+      "state": "finished",
+      "error": null
+    },
+    {
+      "task_id": "T-fea794e5d2607decc28b",
+      "node_id": "X-002",
+      "state": "cancelled",
+      "error": null
+    },
+    {
+      "task_id": "T-1a71cf0694ab51a218b0",
+      "node_id": "X-003",
+      "state": "finished",
+      "error": null
+    }
+  ],
+  "specialists": [
+    {
+      "task_id": "S-9166909279cf74f74703",
+      "node_id": "X-001",
+      "state": "completed",
+      "exit_verified": 1
+    }
+  ],
+  "sessions": {
+    "ses_cache_4d2912673d8242da8b797b1c7be880d1": {
+      "requests": 191,
+      "input": 483401,
+      "cache_read": 10663296,
+      "cache_write": 0,
+      "output": 20873,
+      "reasoning": 34297,
+      "prompt": 11146697,
+      "hit_ratio": 0.9566328034214978,
+      "role": "main",
+      "node_id": null,
+      "pause_reason": "complete"
+    },
+    "ses_research_df08e871ecb440c1b661200b3f639e9b": {
+      "requests": 23,
+      "input": 60737,
+      "cache_read": 657792,
+      "cache_write": 0,
+      "output": 14715,
+      "reasoning": 2531,
+      "prompt": 718529,
+      "hit_ratio": 0.9154703567984034,
+      "role": "node_core",
+      "node_id": "X-001",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_0c47af4e075ca667c73d9b903ea3b4ab": {
+      "requests": 19,
+      "input": 20550,
+      "cache_read": 136448,
+      "cache_write": 0,
+      "output": 6207,
+      "reasoning": 10487,
+      "prompt": 156998,
+      "hit_ratio": 0.8691066128230933,
+      "role": "specialist",
+      "node_id": "X-001",
+      "pause_reason": null
+    },
+    "ses_research_d3577a67069b495081d2b5662eb3d97f": {
+      "requests": 42,
+      "input": 177950,
+      "cache_read": 2142976,
+      "cache_write": 0,
+      "output": 27204,
+      "reasoning": 15658,
+      "prompt": 2320926,
+      "hit_ratio": 0.92332801648997,
+      "role": "node_core",
+      "node_id": "X-003",
+      "pause_reason": "segment_complete"
+    }
+  },
+  "by_role": {
+    "main": {
+      "requests": 191,
+      "input": 483401,
+      "cache_read": 10663296,
+      "cache_write": 0,
+      "output": 20873,
+      "reasoning": 34297,
+      "prompt": 11146697,
+      "hit_ratio": 0.9566328034214978
+    },
+    "node_core": {
+      "requests": 65,
+      "input": 238687,
+      "cache_read": 2800768,
+      "cache_write": 0,
+      "output": 41919,
+      "reasoning": 18189,
+      "prompt": 3039455,
+      "hit_ratio": 0.9214704609872494
+    },
+    "specialist": {
+      "requests": 19,
+      "input": 20550,
+      "cache_read": 136448,
+      "cache_write": 0,
+      "output": 6207,
+      "reasoning": 10487,
+      "prompt": 156998,
+      "hit_ratio": 0.8691066128230933
+    }
+  },
+  "totals": {
+    "requests": 275,
+    "input": 742638,
+    "cache_read": 13600512,
+    "cache_write": 0,
+    "output": 68999,
+    "reasoning": 62973,
+    "prompt": 14343150,
+    "hit_ratio": 0.9482235073885443
+  },
+  "observations": {
+    "failures": {
+      "research_propose:ValidationError": 2,
+      "research_delegate:Error": 1,
+      "research_close_node:ConflictError": 12,
+      "research_record:ValidationError": 1,
+      "research_query:ValidationError": 1,
+      "research_conclude:ConflictError": 1,
+      "research_finish:ConflictError": 1
+    },
+    "model_requests": {
+      "primary": 276,
+      "compaction": 1
+    },
+    "coverage_gaps": {},
+    "provider_retries": 0
+  },
+  "stable": {
+    "ses_cache_4d2912673d8242da8b797b1c7be880d1": {
+      "requests": 192,
+      "digests": 3,
+      "distinct": 3,
+      "changes": 2,
+      "stable_chars_max": 2646,
+      "volatile_chars_max": 8396
+    },
+    "ses_research_df08e871ecb440c1b661200b3f639e9b": {
+      "requests": 23,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 4411,
+      "volatile_chars_max": 5930
+    },
+    "ses_research_0c47af4e075ca667c73d9b903ea3b4ab": {
+      "requests": 19,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 0,
+      "volatile_chars_max": 0
+    },
+    "ses_research_d3577a67069b495081d2b5662eb3d97f": {
+      "requests": 42,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 5341,
+      "volatile_chars_max": 6581
+    }
+  },
+  "publications": [
+    {
+      "publication_id": "P-001",
+      "node_id": "X-001",
+      "status": "partial",
+      "summary": "Same-process benchmark on Python 3.11.4 (CPython, Apple M5 Max, macOS 26.5.1 arm64): median of 15 interleaved repetitions is 13.125 ms for the explicit for-loop sum and 4.662 ms for sum(range(1,1000001)), ratio ~2.8x. Both conditions returned 500000500000 before and during timing. Published: script (scratch/bench_sum.py), report with full script + all 30 raw timings (output/report.md), raw JSON (output/raw_results.json). Medians independently reproducible from JSON. Pending: independent comparability review.",
+      "created_at": "2026-11-04T04:40:05.712859+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Single-process benchmark, 15 interleaved reps per condition, CPython 3.11.4 on Apple M5 Max. For loop 13.125 ms median, builtin sum 4.662 ms median, ~2.8x. Both sums verified 500000500000; all 30 raw timings and the full script are in the report.\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Results\", \"items\": [\"Median A (for loop) 13.125 ms; median B (sum(range)) 4.662 ms; ratio 2.8x.\", \"Spreads are tight: A 12.887-13.273 ms, B 4.557-4.831 ms.\", \"Correctness: both conditions returned 500000500000 before and during timing.\"]}, {\"heading\": \"Method\", \"items\": [\"15 timed reps per condition in one process, alternating A,B / B,A per repetition.\", \"perf_counter wraps only the summation; one untimed warm-up of each ran first.\", \"Environment recorded; medians recomputable from all_s in the JSON.\"]}, {\"heading\": \"Limits\", \"items\": [\"One machine, one interpreter build, one session; no replication yet.\", \"Independent comparability review still pending at this partial stage.\"]}], \"title\": \"For-loop vs sum(range) median: 13.125 ms vs 4.662 ms\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "raw_data",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Machine-readable raw results: environment block, per-condition all_s lists (15 each), stats, interleaving order log.\"}",
+          "source_path": "output/raw_results.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"note\": \"Short report: environment, medians/min/max/mean/stdev, all 30 raw timings, full script text, method notes.\"}",
+          "source_path": "output/report.md"
+        },
+        {
+          "item_id": "script",
+          "kind": "code",
+          "content": "{\"format\": \"python3\", \"note\": \"Self-contained benchmark script; run with python3 bench_sum.py.\"}",
+          "source_path": "scratch/bench_sum.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-002",
+      "node_id": "X-001",
+      "status": "complete",
+      "summary": "Same-process benchmark, CPython 3.11.4 (Clang 13.0.0 build) on macOS 26.5.1 arm64, Apple M5 Max, 18 logical cores. Design: 15 timed repetitions per condition, interleaved with alternating order (AB, BA, ...), one untimed warm-up of each first, time.perf_counter wrapping only the summation call, no I/O during timing, single process with no per-run subprocess. Condition A (explicit for loop, s=0; for i in range(1,1000001): s+=i) median = 12.548 ms (min 12.389, max 13.075, mean 12.603, stdev 0.191). Condition B (sum(range(1,1000001))) median = 4.637 ms (min 4.558, max 4.832, mean 4.656, stdev 0.084). Median ratio A/B = 2.71x. Paired per-repetition difference A-B = 7.946 ms with 95% CI [7.823, 8.069] ms, so the gap is far outside noise. Both conditions returned 500000500000 before timing and after every timed run. An earlier run of the same design on this machine gave 13.125 ms vs 4.662 ms (ratio 2.82x), so the ordering and rough magnitude replicate while the absolute for-loop time moved by about 4%. A blind independent comparability review (frozen script, report and JSON) judged the conditions comparable with caveats and confirmed both medians recompute exactly from the raw lists; its main caveats (no per-rep timestamps, I/O between paired measurements, overstated timer-scope wording) were fixed in the published version, while the odd rep count leaves an 8/7 first-position imbalance and no CPU frequency/load telemetry was collected. Published artifacts: output/report.md (report with full script and all 30 raw timings), output/raw_results.json, output/run_log.txt, scratch/bench_sum.py.",
+      "created_at": "2026-11-04T04:43:06.597655+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"CPython 3.11.4 on Apple M5 Max, 18 logical cores, one process, 15 interleaved reps per condition: explicit for-loop sum median 12.548 ms, builtin sum(range(1,1000001)) median 4.637 ms, ratio 2.71x. Both sums verified 500000500000. An earlier run of the same design gave 13.125 and 4.662 ms. Blind comparability review: comparable with caveats.\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Results\", \"items\": [\"Median A (for loop) 12.548 ms, median B (sum(range)) 4.637 ms, ratio 2.71x.\", \"Paired difference A-B: 7.946 ms, 95% CI [7.823, 8.069] ms, so the gap is not noise.\", \"Both conditions returned 500000500000 before and after every timed run.\"]}, {\"heading\": \"Replication\", \"items\": [\"A first run with the same design gave 13.125 ms vs 4.662 ms (ratio 2.82x).\", \"Second run moved the ratio only from 2.82x to 2.71x; the ordering is stable across runs.\"]}, {\"heading\": \"Method\", \"items\": [\"Single process, 15 timed reps per condition; order alternates AB/BA every repetition.\", \"perf_counter wraps only the summation call; no printing during timing; outputs buffered.\", \"Per-run wall-clock stamps recorded so the interleaving is auditable.\"]}, {\"heading\": \"Limits\", \"items\": [\"Single machine and interpreter build; no CPU affinity, frequency or background-load control.\", \"15 is odd, so A leads 8 pairs and B leads 7; residual position bias is small but not zero.\", \"Two runs on one host only; no cross-machine or cross-session replication.\"]}], \"title\": \"For-loop vs sum(range): 12.548 ms vs 4.637 ms median\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "raw_data",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Raw results: environment, all_s lists (15+15), stats, paired difference, per-rep rows, epoch stamps.\"}",
+          "source_path": "output/raw_results.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"note\": \"Final report: environment, medians and spreads, paired CI, all 30 raw timings, full script text, method notes.\"}",
+          "source_path": "output/report.md"
+        },
+        {
+          "item_id": "run_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Plain-text run log with the correctness check, per-rep lines and final medians.\"}",
+          "source_path": "output/run_log.txt"
+        },
+        {
+          "item_id": "script",
+          "kind": "code",
+          "content": "{\"format\": \"python3\", \"note\": \"Self-contained benchmark script; python3 bench_sum.py regenerates all outputs.\"}",
+          "source_path": "scratch/bench_sum.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-003",
+      "node_id": "X-003",
+      "status": "complete",
+      "summary": "Independent comparability review of P-002 (node X-003, separate from producer X-001). Verdict: comparable, with minor non-threatening caveats. The ~2.7x for-loop vs builtin-sum gap is supported.\n\n1) Recomputation from pub/P-002#raw_data (15+15 timings, recomputed independently with statistics.median/fmean/stdev and a manual t CI): A median 12.548041 ms (reported 12.548), B median 4.636959 ms (4.637), ratio 2.7061x (2.71), A min/max/stdev 12.388709/13.075250/0.191349 ms, B 4.557625/4.832166/0.083890 ms, paired diff mean 7.946153 ms with 95% CI [7.822900, 8.069405] ms. All six reported values match. Both correctness values equal 500000500000; the per_rep table has 15 rows and 30 timings total, and its A_ms/B_ms equal all_s*1000; the script embedded in the report is byte-identical to pub/P-002#script; the report's 3-dp timing table matches the JSON; reconstructing order from the per-run wall-clock stamps yields exactly AB,BA,...,AB over one 0.254 s monotonic span, matching the log.\n\n2) Comparability audit, explicit verdicts, 11/11 PASS: same N=1,000,000; identical range bounds range(1,n+1); same result both conditions; single process with 0 subprocess sites in main (only sysctl in env_info before timing); same timer time.perf_counter on all call sites; 4 timed windows each containing exactly one statement (va=sum_for_loop(N) or vb=sum_builtin(N)) with asserts/appends/stamps/stats/printing outside; untimed warm-up of each; exactly 15 timed reps each (REPS=15 plus runtime asserts); AB/BA alternation implemented and observed 8/7; only the summation strategy differs; no print/open/input in any timed window; environment recorded.\n\n3) Independent replication: byte-identical copy of pub/P-002#script run in 3 fresh python3 processes (CPython 3.11.4, v3.11.4:d2340ef257, Clang 13.0.0, macOS 26.5.1 25F80 arm64, Apple M5 Max, 18 logical cores). Medians A/B: 12.679/4.766 (2.66x), 12.594/4.617 (2.73x), 12.662/4.624 (2.74x); paired CIs 7.864 [7.728,7.999], 7.986 [7.876,8.096], 8.015 [7.929,8.100] ms; all runs returned 500000500000. Ordering reproduced in 45/45 rerun pairs, per-pair ratio 2.54-2.84.\n\n4) Residual biases, all judged non-threatening: 8/7 first-position imbalance (order effect 0.117 ms for A, 0.066 ms for B, ~1% of A, and it slightly favours B so the ratio is conservative); no CPU frequency/load/thermal telemetry (interleaved 0.26 s span, per-pair ratio 2.61-2.82); GC enabled but no GC-tracked allocations in either hot path; single warm-up and rep 1 slowest for both (makes B look slower, again conservative); one Python call plus one range construction inside both windows (symmetric); absolute ms machine-specific. In the original data A>B in 15/15 pairs (sign test p=6.1e-5, Cohen's dz~35.7).\n\nLimitations: single machine and interpreter build; 15 reps adequate for a gap this large but thin for distributional claims; no frequency/load telemetry or OS isolation; the review verifies the measurement as published and does not apportion A's time between dispatch and integer allocation, nor inspect the C sum implementation; reruns were on the same machine shortly after the original.\n\nArtifacts in output/: review_report.md, recompute_stats.json, comparability_audit.json, rerun_summary.json, rerun_raw_runs.json (90 rerun timings), verify_stats.py, audit_script.py. Suggested next step: the project can treat P-002's medians as independently verified on this machine; if portability matters, rerun on another interpreter build or with CPU telemetry.",
+      "created_at": "2026-11-04T04:46:07.418237+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Recomputed all P-002 statistics from the raw timings (exact match), audited 11 comparability points (11/11 pass), and reproduced the ordering and magnitude in 3 fresh processes: 2.66x, 2.73x, 2.74x. Verdict: comparable with minor caveats; the ~2.7x gap is supported.\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Results\", \"items\": [\"Recomputed A median 12.548041 ms, B median 4.636959 ms, ratio 2.7061x, paired diff 7.946153 ms CI [7.822900, 8.069405] - all match the report\", \"11/11 comparability checks pass, including identical range bounds, one timer, timer scope limited to the summation, 15 reps each and observed AB/BA alternation\", \"Three fresh-process reruns of the byte-identical script gave 2.66x, 2.73x and 2.74x with A>B in all 45 pairs\"]}, {\"heading\": \"Limitations\", \"items\": [\"Single machine and CPython 3.11.4 build; the ratio is not a portability claim\", \"No CPU frequency, load or thermal telemetry; absolute milliseconds may drift between runs\", \"15 repetitions resolve this gap but are thin for distributional claims\"]}, {\"heading\": \"Residual biases\", \"items\": [\"8/7 first-position split creates a ~0.1 ms order effect that slightly favours B, so the ratio is conservative\", \"GC left enabled but neither hot path allocates GC-tracked objects\", \"One untimed warm-up per condition; rep 1 is slowest for both, which again makes B look slower\"]}], \"title\": \"Independent review: P-002 for-loop vs builtin sum is comparable\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "audit_script",
+          "kind": "code",
+          "content": "{}",
+          "source_path": "output/audit_script.py"
+        },
+        {
+          "item_id": "comparability_audit",
+          "kind": "data",
+          "content": "{}",
+          "source_path": "output/comparability_audit.json"
+        },
+        {
+          "item_id": "recompute_stats",
+          "kind": "data",
+          "content": "{}",
+          "source_path": "output/recompute_stats.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{}",
+          "source_path": "output/review_report.md"
+        },
+        {
+          "item_id": "rerun_raw_runs",
+          "kind": "data",
+          "content": "{}",
+          "source_path": "output/rerun_raw_runs.json"
+        },
+        {
+          "item_id": "rerun_summary",
+          "kind": "data",
+          "content": "{}",
+          "source_path": "output/rerun_summary.json"
+        },
+        {
+          "item_id": "verify_stats_script",
+          "kind": "code",
+          "content": "{}",
+          "source_path": "output/verify_stats.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-004",
+      "node_id": null,
+      "status": "complete",
+      "summary": "Final report: on this machine (CPython 3.11.4, macOS 26.5.1 arm64, Apple M5 Max, 18 logical cores), summing 1..1,000,000 in a single process with 15 interleaved repetitions per condition gives a median of 12.548 ms for the explicit for loop and 4.637 ms for sum(range(1, 1000001)), a ratio of 2.71x (paired A-B difference 7.946 ms, 95% CI [7.823, 8.069] ms). Both conditions returned 500000500000. All 30 raw timings, the full script and the method notes are in the attached report; raw seconds and statistics are in raw_results.json.\n\nIndependent review (node X-003, separate session): recomputed every statistic from the raw lists (exact match), passed 11/11 comparability checks (same N and range bounds, one process with no per-run subprocess, same perf_counter timer with scope limited to the summation, untimed warm-up for both, 15 reps each, AB/BA alternation observed, no I/O in timed windows), and reproduced the ordering in 3 fresh-process reruns (medians 12.679/4.766, 12.594/4.617, 12.662/4.624 ms; ratios 2.66x, 2.73x, 2.74x; A>B in 45/45 pairs). Verdict: comparable with minor non-threatening caveats; the ~2.7x gap is supported. An earlier run of the same design gave 13.125 ms vs 4.662 ms (2.82x), so the ordering and magnitude replicate across runs and sessions.\n\nLimits: one machine and interpreter build, 15 reps, no CPU frequency/load telemetry or OS isolation; absolute milliseconds are time-specific, while the ratio is the supported claim.",
+      "created_at": "2026-11-04T04:46:48.208887+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Single process, 15 interleaved reps per condition, CPython 3.11.4 on Apple M5 Max: for-loop sum 12.548 ms median vs builtin sum(range) 4.637 ms, ratio 2.71x. All 30 raw timings and the script are attached. A separate reviewer recomputed the statistics exactly, passed 11/11 comparability checks, and reproduced 2.66-2.74x in three fresh runs.\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Results\", \"items\": [\"Median A (for loop) 12.548 ms, median B (sum(range(1,1000001))) 4.637 ms, ratio 2.71x.\", \"Paired difference A-B 7.946 ms, 95% CI [7.823, 8.069] ms; A>B in all 15 original pairs.\", \"Both conditions returned 500000500000 before and after every timed run.\"]}, {\"heading\": \"Independent review\", \"items\": [\"Statistics recomputed from the raw lists match exactly; all 30 timings present.\", \"11/11 comparability checks pass: same N/bounds, one process, same timer and scope, 15 reps each, AB/BA alternation, no I/O in timed windows.\", \"Three fresh-process reruns gave ratios 2.66x, 2.73x and 2.74x, with A>B in 45/45 pairs.\"]}, {\"heading\": \"Method\", \"items\": [\"15 timed reps per condition in one process, alternating A,B / B,A each repetition.\", \"perf_counter wraps only the summation; one untimed warm-up of each first; output buffered.\", \"An earlier run of the same design gave 13.125 ms vs 4.662 ms (2.82x).\"]}, {\"heading\": \"Limitations\", \"items\": [\"One machine and interpreter build; the ratio is not a portability claim.\", \"No CPU frequency, load or thermal telemetry; absolute ms are time-specific.\", \"15 reps are enough for this effect size but not for fine distributional claims.\"]}], \"title\": \"For loop 12.548 ms vs sum(range) 4.637 ms, independently reviewed\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "raw_data",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Raw all_s lists (15+15), per-rep rows, statistics, paired CI, environment, timestamps.\"}",
+          "source_path": "workspaces/branch-4a461ad8e745/output/raw_results.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"note\": \"Final measurement report: environment, both medians and spreads, paired 95% CI, all 30 raw timings, full script text, method notes.\"}",
+          "source_path": "workspaces/branch-4a461ad8e745/output/report.md"
+        },
+        {
+          "item_id": "review_report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"note\": \"Independent comparability review: recomputation, 11-point audit, 3 fresh-process reruns, residual-bias analysis, limitations.\"}",
+          "source_path": "workspaces/branch-60f400779058/output/review_report.md"
+        },
+        {
+          "item_id": "review_rerun",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Reviewer rerun summary: per-run A/B medians, ratios, ranges, paired CIs.\"}",
+          "source_path": "workspaces/branch-60f400779058/output/rerun_summary.json"
+        },
+        {
+          "item_id": "run_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Plain-text run log: correctness check, 15 per-rep lines, final medians.\"}",
+          "source_path": "workspaces/branch-4a461ad8e745/output/run_log.txt"
+        },
+        {
+          "item_id": "script",
+          "kind": "code",
+          "content": "{\"format\": \"python3\", \"note\": \"Self-contained single-process benchmark; 15 interleaved reps per condition, perf_counter around the summation only.\"}",
+          "source_path": "workspaces/branch-4a461ad8e745/scratch/bench_sum.py"
+        }
+      ]
+    }
+  ]
+}

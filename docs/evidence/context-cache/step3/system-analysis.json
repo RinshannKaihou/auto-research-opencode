@@ -1,0 +1,754 @@
+{
+  "state": "complete",
+  "nodes": [
+    {
+      "node_id": "X-001",
+      "status": "open"
+    },
+    {
+      "node_id": "X-002",
+      "status": "open"
+    },
+    {
+      "node_id": "X-003",
+      "status": "open"
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "T-8ce7bb423ba6cbda224c",
+      "node_id": "X-001",
+      "state": "finished",
+      "error": null
+    },
+    {
+      "task_id": "T-e06de045be4095422c37",
+      "node_id": "X-002",
+      "state": "finished",
+      "error": null
+    },
+    {
+      "task_id": "T-053364ebab5143876120",
+      "node_id": "X-003",
+      "state": "finished",
+      "error": null
+    }
+  ],
+  "specialists": [
+    {
+      "task_id": "S-21660a1f0c8ab5345b32",
+      "node_id": "X-001",
+      "state": "completed",
+      "exit_verified": 1
+    },
+    {
+      "task_id": "S-f3c4f960d153970cc53a",
+      "node_id": "X-002",
+      "state": "completed",
+      "exit_verified": 1
+    },
+    {
+      "task_id": "S-51d1c9e4302ad42a764b",
+      "node_id": "X-003",
+      "state": "completed",
+      "exit_verified": 1
+    },
+    {
+      "task_id": "S-c2c8f828ed7f270de278",
+      "node_id": "X-003",
+      "state": "completed",
+      "exit_verified": 1
+    }
+  ],
+  "sessions": {
+    "ses_cache_9cf92982bf784504b119ce0835bf4cc2": {
+      "requests": 29,
+      "input": 548996,
+      "cache_read": 628864,
+      "cache_write": 0,
+      "output": 10471,
+      "reasoning": 7481,
+      "prompt": 1177860,
+      "hit_ratio": 0.533903859541881,
+      "role": "main",
+      "node_id": null,
+      "pause_reason": "complete"
+    },
+    "ses_research_ca3b222dd9cf4ebaae593f14db4f4f6e": {
+      "requests": 30,
+      "input": 276521,
+      "cache_read": 797440,
+      "cache_write": 0,
+      "output": 18632,
+      "reasoning": 1154,
+      "prompt": 1073961,
+      "hit_ratio": 0.7425223076070733,
+      "role": "node_core",
+      "node_id": "X-001",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_157072d25585b8d488f86eee28e37ae4": {
+      "requests": 6,
+      "input": 29660,
+      "cache_read": 53632,
+      "cache_write": 0,
+      "output": 5668,
+      "reasoning": 11561,
+      "prompt": 83292,
+      "hit_ratio": 0.643903376074533,
+      "role": "specialist",
+      "node_id": "X-001",
+      "pause_reason": null
+    },
+    "ses_research_3df814e0aa104ec98a4b2403ddafdfd4": {
+      "requests": 45,
+      "input": 623853,
+      "cache_read": 2304384,
+      "cache_write": 0,
+      "output": 35243,
+      "reasoning": 15417,
+      "prompt": 2928237,
+      "hit_ratio": 0.7869526954273168,
+      "role": "node_core",
+      "node_id": "X-002",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_99f27fdfbf453928699e0e7f7d39ad73": {
+      "requests": 10,
+      "input": 59649,
+      "cache_read": 252416,
+      "cache_write": 0,
+      "output": 2959,
+      "reasoning": 17093,
+      "prompt": 312065,
+      "hit_ratio": 0.8088571291237402,
+      "role": "specialist",
+      "node_id": "X-002",
+      "pause_reason": null
+    },
+    "ses_research_1ccc3bb8294a402a835e068127fda908": {
+      "requests": 95,
+      "input": 756897,
+      "cache_read": 4900352,
+      "cache_write": 0,
+      "output": 41946,
+      "reasoning": 18184,
+      "prompt": 5657249,
+      "hit_ratio": 0.8662075860546354,
+      "role": "node_core",
+      "node_id": "X-003",
+      "pause_reason": "segment_complete"
+    },
+    "ses_research_a35467c46503445a411c89759c2e9707": {
+      "requests": 6,
+      "input": 20290,
+      "cache_read": 37376,
+      "cache_write": 0,
+      "output": 1997,
+      "reasoning": 8307,
+      "prompt": 57666,
+      "hit_ratio": 0.6481462213435993,
+      "role": "specialist",
+      "node_id": "X-003",
+      "pause_reason": null
+    },
+    "ses_research_8fcffc28aa44b2946745eea89abd2774": {
+      "requests": 5,
+      "input": 20243,
+      "cache_read": 30464,
+      "cache_write": 0,
+      "output": 1597,
+      "reasoning": 8253,
+      "prompt": 50707,
+      "hit_ratio": 0.6007849014928905,
+      "role": "specialist",
+      "node_id": "X-003",
+      "pause_reason": null
+    }
+  },
+  "by_role": {
+    "main": {
+      "requests": 29,
+      "input": 548996,
+      "cache_read": 628864,
+      "cache_write": 0,
+      "output": 10471,
+      "reasoning": 7481,
+      "prompt": 1177860,
+      "hit_ratio": 0.533903859541881
+    },
+    "node_core": {
+      "requests": 170,
+      "input": 1657271,
+      "cache_read": 8002176,
+      "cache_write": 0,
+      "output": 95821,
+      "reasoning": 34755,
+      "prompt": 9659447,
+      "hit_ratio": 0.8284300333135013
+    },
+    "specialist": {
+      "requests": 27,
+      "input": 129842,
+      "cache_read": 373888,
+      "cache_write": 0,
+      "output": 12221,
+      "reasoning": 45214,
+      "prompt": 503730,
+      "hit_ratio": 0.7422388978222461
+    }
+  },
+  "totals": {
+    "requests": 226,
+    "input": 2336109,
+    "cache_read": 9004928,
+    "cache_write": 0,
+    "output": 118513,
+    "reasoning": 87450,
+    "prompt": 11341037,
+    "hit_ratio": 0.7940127520966557
+  },
+  "observations": {
+    "failures": {
+      "research_propose:ValidationError": 2,
+      "research_publish:ValidationError": 2,
+      "research_record:ValidationError": 1
+    },
+    "model_requests": {
+      "primary": 226,
+      "compaction": 1
+    },
+    "coverage_gaps": {},
+    "provider_retries": 0
+  },
+  "stable": {
+    "ses_cache_9cf92982bf784504b119ce0835bf4cc2": {
+      "requests": 30,
+      "digests": 3,
+      "distinct": 3,
+      "changes": 7,
+      "stable_chars_max": 2646,
+      "volatile_chars_max": 8300
+    },
+    "ses_research_ca3b222dd9cf4ebaae593f14db4f4f6e": {
+      "requests": 30,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 5082,
+      "volatile_chars_max": 6059
+    },
+    "ses_research_157072d25585b8d488f86eee28e37ae4": {
+      "requests": 6,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 0,
+      "volatile_chars_max": 0
+    },
+    "ses_research_3df814e0aa104ec98a4b2403ddafdfd4": {
+      "requests": 45,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 5708,
+      "volatile_chars_max": 6087
+    },
+    "ses_research_99f27fdfbf453928699e0e7f7d39ad73": {
+      "requests": 10,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 4218,
+      "volatile_chars_max": 6440
+    },
+    "ses_research_1ccc3bb8294a402a835e068127fda908": {
+      "requests": 95,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 8708,
+      "volatile_chars_max": 3215
+    },
+    "ses_research_a35467c46503445a411c89759c2e9707": {
+      "requests": 6,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 0,
+      "volatile_chars_max": 0
+    },
+    "ses_research_8fcffc28aa44b2946745eea89abd2774": {
+      "requests": 5,
+      "digests": 1,
+      "distinct": 1,
+      "changes": 0,
+      "stable_chars_max": 0,
+      "volatile_chars_max": 0
+    }
+  },
+  "publications": [
+    {
+      "publication_id": "P-001",
+      "node_id": "X-001",
+      "status": "complete",
+      "summary": "Measured median wall-clock time to sum 1..1,000,000 in one process with 15 interleaved repetitions per condition (one warmup excluded, all calls asserted to return 500000500000): explicit for loop = 12.5895 ms (run medians 12.512583 / 12.617208 / 12.589500), builtin sum(range(1,1000001)) = 4.6613 ms (4.701542 / 4.661333 / 4.648208), ratio loop/builtin = 2.701x. CPython 3.11.4, Apple M5 Max, macOS 26.5.1 arm64. Raw per-repetition timings retained for all three processes.",
+      "created_at": "2026-11-04T04:50:35.077919+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"On CPython 3.11.4 / Apple M5 Max / macOS 26.5.1 arm64: explicit for-loop sum of 1..1,000,000 medians at 12.5895 ms, builtin sum(range(1,1000001)) at 4.6613 ms, ratio 2.701x. Three processes, 15 interleaved reps each, warmups excluded, all calls asserted to 500000500000.\", \"primary_item_id\": \"report\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Measured medians\", \"items\": [\"loop_sum: 12.5895 ms (median of run medians; 12.5126, 12.6172, 12.5895)\", \"builtin_sum: 4.6613 ms (4.7015, 4.6613, 4.6482)\", \"ratio loop/builtin = 2.701x; per-run 2.661x, 2.707x, 2.708x\", \"No overlap between conditions: slowest builtin 4.908 ms vs fastest loop 12.389 ms\"]}, {\"heading\": \"Limitations\", \"items\": [\"Single machine, interpreter build and n; no generalization claimed\", \"Other processes not suspended, GC not disabled, frequency not pinned; interleaving only shares the noise\", \"Several builtin samples repeat to ~6 decimals near a 4.557 ms floor, suggesting timer quantization\", \"Medians are point estimates from 15 samples; no confidence interval\"]}], \"title\": \"For loop vs builtin sum: median timings for 1..1,000,000\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "combined_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All three runs plus cross-run medians and pooled 45-sample medians.\"}",
+          "source_path": "output/bench_results_combined.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Report: method, environment, per-run medians table, all 90 raw timings, acceptance-criteria check, anomalies.\"}",
+          "source_path": "output/report.md"
+        },
+        {
+          "item_id": "run1_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run1.json"
+        },
+        {
+          "item_id": "run1_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 1.\"}",
+          "source_path": "output/bench_run1.txt"
+        },
+        {
+          "item_id": "run2_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run2.json"
+        },
+        {
+          "item_id": "run2_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 2.\"}",
+          "source_path": "output/bench_run2.txt"
+        },
+        {
+          "item_id": "run3_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run3.json"
+        },
+        {
+          "item_id": "run3_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 3.\"}",
+          "source_path": "output/bench_run3.txt"
+        },
+        {
+          "item_id": "script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Self-contained benchmark; run with python3 bench_sum.py --json-out PATH.\"}",
+          "source_path": "scratch/bench_sum.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-002",
+      "node_id": "X-001",
+      "status": "complete",
+      "summary": "Revised final report (supersedes P-001 report text). Median wall-clock time to sum 1..1,000,000 in one process, 15 interleaved repetitions per condition, one warmup excluded, every call asserted to return 500000500000: explicit for loop = 12.5895 ms (run medians 12.512583 / 12.617208 / 12.589500); builtin sum(range(1,1000001)) = 4.6613 ms (4.701542 / 4.661333 / 4.648208). Ratio loop/builtin = 2.701x by median-of-medians, 2.707x by median of per-run ratios, 2.699x pooled over all 45 samples. CPython 3.11.4, Apple M5 Max, macOS 26.5.1 arm64. An independent blind reviewer given only the published files returned PASS on comparability and PASS on internal consistency, matching every recomputable number to 6 dp; its corrections (three explicit ratio definitions; 6-dp repeats are print rounding, not proven timer quantization) are applied. Remaining gaps are attestation-only: warmup count, interleaved order and one-process-per-run rest on the script and summary strings rather than independently evidenced artifacts.",
+      "created_at": "2026-11-04T04:53:03.819328+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"CPython 3.11.4 / Apple M5 Max / macOS 26.5.1 arm64: explicit for-loop sum of 1..1,000,000 medians at 12.5895 ms, builtin sum(range(1,1000001)) at 4.6613 ms (15 interleaved reps, warmups excluded, all calls asserted to 500000500000, three processes). Ratio definitions span 2.699-2.707x. Independent blind review: PASS on comparability and consistency.\", \"primary_item_id\": \"report\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Measured medians\", \"items\": [\"loop_sum 12.5895 ms; run medians 12.5126, 12.6172, 12.5895\", \"builtin_sum 4.6613 ms; run medians 4.7015, 4.6613, 4.6482\", \"Ratio 2.701x (median-of-medians), 2.707x (median of per-run ratios), 2.699x (pooled 45 samples)\", \"Conditions never overlap: slowest builtin 4.908 ms vs fastest loop 12.389 ms\"]}, {\"heading\": \"Review outcome\", \"items\": [\"Blind independent reviewer: PASS on comparability, PASS on internal consistency, all recomputable numbers matched to 6 dp\", \"Review corrections applied: three ratio definitions now explicit; 6-dp repeats reframed as print rounding rather than timer quantization\"]}, {\"heading\": \"Limitations\", \"items\": [\"Single machine, interpreter build and n; no generalization claimed\", \"No process isolation, GC or frequency control; interleaving only shares the noise\", \"Warmup count, interleaved order and one-process-per-run rest on code plus summary strings, not independently attested artifacts\", \"Medians are point estimates from 15 samples; no confidence interval\"]}], \"title\": \"For loop vs builtin sum: median timings for 1..1,000,000\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "combined_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All three runs plus cross-run medians and pooled 45-sample medians.\"}",
+          "source_path": "output/bench_results_combined.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Revised report: method, environment, per-run medians, three explicit ratio definitions, all 90 raw timings, independent review outcome, acceptance-criteria check, anomalies.\"}",
+          "source_path": "output/report.md"
+        },
+        {
+          "item_id": "run1_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run1.json"
+        },
+        {
+          "item_id": "run1_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 1.\"}",
+          "source_path": "output/bench_run1.txt"
+        },
+        {
+          "item_id": "run2_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run2.json"
+        },
+        {
+          "item_id": "run2_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 2.\"}",
+          "source_path": "output/bench_run2.txt"
+        },
+        {
+          "item_id": "run3_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\"}",
+          "source_path": "output/bench_run3.json"
+        },
+        {
+          "item_id": "run3_txt",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout of process 3.\"}",
+          "source_path": "output/bench_run3.txt"
+        },
+        {
+          "item_id": "script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Self-contained benchmark; python3 bench_sum.py --json-out PATH.\"}",
+          "source_path": "scratch/bench_sum.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-003",
+      "node_id": "X-002",
+      "status": "complete",
+      "summary": "Independent review of P-002. (A) COMPARABILITY: PASS-with-conditions — same n, same sequence, same single process, same perf_counter bracketing on both sides, 15 timed reps + 1 excluded warmup, no I/O in the timed region, and A,B interleaving that does not favour either side (tested A,B vs B,A vs blocked: 2.7964 / 2.8147 / 2.7494). Condition: the report's claim that interleaving makes drift \"affect both conditions equally\" is false in magnitude — running the published script verbatim under +8 busy processes inflated loop by 17.5-18.4% but builtin by only 10.3-12.7%, moving the ratio +4.3% and +7.4% in two experiments. (B) INTERNAL CONSISTENCY: PASS — all 90 timings, per-run medians/min/max/ratios, median-of-medians ratio (2.700836868), median of per-run ratios (2.706781093) and pooled 45-sample medians (12.582583004 / 4.661125015, ratio 2.699473403) recompute exactly; raw->RESULT_JSON->combined.json is bit-identical; rep labels 1..15 complete with no duplicates; 13.040666 ms retained at run1 loop rep11 as the run-1 max (+4.22%). FRESH RE-RUN: 3 fresh processes of the unmodified script (sha256 verified) gave 12.544125 / 4.620417 ms, ratio 2.7149 (+0.52% vs published; loop -0.36%, builtin -0.88%) — the ~2.7x ratio reproduces. No arithmetic error found. Defects: (1) medium — \"drift affects both conditions equally\" overstated, quantified above; (2) medium — the 0.3% agreement across three ratio definitions is aggregation choice, not uncertainty (bootstrap 95% CI of pooled ratio 2.673-2.719; per-run ratios 2.661-2.731; up to 2.90 under load); (3) low — headline is a cross-run pairing (run3 loop / run2 builtin) where pooled 2.6995 is cleaner; (4) low — duplicated \"Anomalies and limitations\" heading; (5) low — warmup count, A,B order and one-process-per-run rest on code/summary strings only (no PID/timestamps), as the report concedes; (6) low — bench_run1..3.json are referenced but absent from the frozen set (content recoverable from RESULT_JSON lines); (7) very low — \"asserted ... before it is accepted\" is not literally true (append precedes assert). Also confirmed: range construction is on BOTH sides (0.000334 ms, 0.007% of the builtin time), perf_counter pair overhead 0.000125 ms, GC toggle moves the ratio -0.21%.",
+      "created_at": "2026-11-04T05:01:14.556751+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"复核 P-002：可比性结论为「有条件通过」，内部一致性为「通过」。我用原始 90 个计时样本精确重算全部数字与比值，并用 3 个全新进程重跑原脚本（比值 2.7149，较发表值 +0.52%），另做顺序、GC、range 构造与受控负载实验。未发现算术错误；两处结论超出数据：交错运行并不能让漂移「同等」影响两侧（加负载后比值上移 4.3%–7.4%），且三个比值定义之间 0.3% 的一致性是聚合选择而非测量不确定度。\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"判决\", \"items\": [\"可比性：有条件通过 —— 设计上是公平的同口径对比，但「漂移同等影响两侧」一句在量级上不成立。\", \"内部一致性：通过 —— 全部中位数、极值、三种比值定义与合并中位数均精确重算一致，原始文本→JSON→合并 JSON 逐位相同，重复标签无缺失，13.040666 ms 异常值保留且描述正确。\", \"复现：3 个全新进程得 12.544125 / 4.620417 ms，比值 2.7149（+0.52%），~2.7 倍比值复现。\"]}, {\"heading\": \"主要缺陷与须改正之处\", \"items\": [\"中：加 8 个忙进程后 loop 变慢 17.5%–18.4%，builtin 仅 10.3%–12.7%，比值上移 4.3% 与 7.4% —— 交错只能共享时间上的漂移，不能等比共享暴露。\", \"中：0.3% 是同一批样本的聚合差异；合并比值自助法 95% 区间为 2.673–2.719，单次运行 2.661–2.731，负载下可达 2.90。\", \"低：头条比值跨进程配对（run3 的 loop ÷ run2 的 builtin）；低：重复的「Anomalies and limitations」标题；低：warmup/顺序/单进程仅有代码与摘要字符串佐证；低：bench_run1..3.json 未随文档发布；极低：「assert 在接收前」与代码顺序不符。\"]}, {\"heading\": \"已排除的威胁\", \"items\": [\"range 构造在两侧都存在（0.000334 ms，占 builtin 的 0.007%），不是单侧不对称。\", \"perf_counter 成对开销 0.000125 ms；关闭 GC 仅使比值变化 −0.21%。\", \"A,B 与 B,A 及分块两种顺序的比值 2.7964 / 2.8147 / 2.7494，顺序未系统性偏袒任一侧。\"]}, {\"heading\": \"限制\", \"items\": [\"单机、单解释器（CPython 3.11.4 / macOS 26.5.1 / arm64 / Apple M5 Max / 18 核）、单一大小的 n。\", \"复核时环境负载 3.0–3.6，未固定 CPU 频率或隔离核心；负载实验用的是中等负载，真实敏感性可能更大。\"]}], \"title\": \"独立复核：for 循环与 sum(range) 计时条件可比性及数值复现\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "experiments_script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Fresh re-runs, order sensitivity, decomposition, GC probe.\"}",
+          "source_path": "scratch/review_experiments.py"
+        },
+        {
+          "item_id": "fresh_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Three fresh re-runs of the published script, order sensitivity, cost decomposition, GC probe.\"}",
+          "source_path": "output/review_fresh_experiments.json"
+        },
+        {
+          "item_id": "fresh_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Console output of the fresh re-run and probe session.\"}",
+          "source_path": "output/review_fresh_experiments.log"
+        },
+        {
+          "item_id": "fresh_rerun1",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout, fresh process 1.\"}",
+          "source_path": "output/fresh_rerun1.log"
+        },
+        {
+          "item_id": "fresh_rerun2",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout, fresh process 2.\"}",
+          "source_path": "output/fresh_rerun2.log"
+        },
+        {
+          "item_id": "fresh_rerun3",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Verbatim stdout, fresh process 3.\"}",
+          "source_path": "output/fresh_rerun3.log"
+        },
+        {
+          "item_id": "load1_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Controlled-load experiment 1: 3 quiet + 3 loaded runs of the published script, both ratio definitions.\"}",
+          "source_path": "output/review_load_sensitivity1.json"
+        },
+        {
+          "item_id": "load1_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Console output, load experiment 1.\"}",
+          "source_path": "output/review_load_sensitivity1.log"
+        },
+        {
+          "item_id": "load2_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Controlled-load experiment 2, independent replicate.\"}",
+          "source_path": "output/review_load_sensitivity2.json"
+        },
+        {
+          "item_id": "load2_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Console output, load experiment 2.\"}",
+          "source_path": "output/review_load_sensitivity2.log"
+        },
+        {
+          "item_id": "load_script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Controlled-load experiment; takes an optional tag argument.\"}",
+          "source_path": "scratch/load_sensitivity.py"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Two verdicts (A comparability PASS-with-conditions, B internal consistency PASS), full recomputation table, fresh re-run, order/GC/decomposition/load probes, 7 ordered defects with required corrections, attestation table.\"}",
+          "source_path": "output/report.md"
+        },
+        {
+          "item_id": "script_rerun",
+          "kind": "script",
+          "content": "{\"format\": \"python\", \"note\": \"Verbatim copy of the published benchmark (sha256 823881526bbf...7b5d) used for the fresh re-runs and load experiments.\"}",
+          "source_path": "scratch/bench_sum_rerun.py"
+        },
+        {
+          "item_id": "selfcheck_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"17 automated checks that every figure quoted in report.md matches the JSON artifacts.\"}",
+          "source_path": "output/report_selfcheck.log"
+        },
+        {
+          "item_id": "summary_script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Consolidates all review runs into one table with both ratio definitions.\"}",
+          "source_path": "scratch/summarize.py"
+        },
+        {
+          "item_id": "summary_table",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All 25 independent process runs with both ratio definitions and observed ratio ranges.\"}",
+          "source_path": "output/review_summary_table.json"
+        },
+        {
+          "item_id": "uncertainty_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Bootstrap CIs of the pooled ratio, 6-dp duplicate audit, perf_counter resolution.\"}",
+          "source_path": "output/review_uncertainty.log"
+        },
+        {
+          "item_id": "verify_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Machine-readable recomputation: per-run medians/min/max, cross-run ratios under all three definitions, fail list (empty).\"}",
+          "source_path": "output/verify_recomputation.json"
+        },
+        {
+          "item_id": "verify_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Recomputation console output: per-run stats, aggregate ratios, label/overlap/outlier checks, report-table comparison, verdict.\"}",
+          "source_path": "output/verify_recomputation.log"
+        },
+        {
+          "item_id": "verify_script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Independent recomputation and report-table parser; run with python3 scratch/verify.py.\"}",
+          "source_path": "scratch/verify.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-004",
+      "node_id": "X-003",
+      "status": "complete",
+      "summary": "Final corrected deliverable (node X-003), assembled without re-measuring. The explicit for loop summing 1..1,000,000 takes ~2.70x as long as sum(range(1,1000001)) on this machine (CPython 3.11.4, Apple M5 Max, macOS 26.5.1): per-run medians 12.512583 / 12.617208 / 12.589500 ms (loop) vs 4.701542 / 4.661333 / 4.648208 ms (builtin); pooled 45-sample-per-side ratio 2.6995 with a percentile-bootstrap 95% CI of 2.673-2.719 (±0.9%), headlined as ≈2.70x and explicitly a light-load point estimate; per-run ratios 2.661/2.707/2.708, fresh independent re-run 2.7149 (+0.52% vs published), controlled +8-process load 2.82 and 2.90. No overlap in any run (slowest builtin 4.908167 ms vs fastest loop 12.388875 ms, 2.52x apart). Elapsed-time measurement only, no causal claim. All seven P-003 review corrections are applied: the false \"drift affects both conditions equally\" sentence is replaced by the in-time-not-proportionally wording with the measured 4.3%/7.4% ratio inflation; the 0.3% agreement is reframed as aggregation choice and replaced by the bootstrap CI; the pooled ratio replaces the cross-run pairing as headline with the pairing explained; the duplicated \"Anomalies and limitations\" heading is merged into a single Limitations section; attestation gaps (warmup exclusion, A,B order, one-process-per-run) are stated; \"asserted before it is accepted\" is corrected to record-then-assert; and the three per-run JSONs are attached, closing the packaging defect. The deliverable is self-contained in final/: report.md, bench_sum.py (sha256 823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773, byte-identical to the frozen script), raw_timings.json (all 90 timings plus per-run, cross-run, bootstrap and review-probe values), bench_run1..3.json, selfcheck.py and its log. selfcheck.py runs 25 mechanical checks and all pass: 90 raw timings present and matching, every prose number traceable to raw_timings.json within its printed precision, script hash match, all seven corrections present, no duplicated heading. One new finding during assembly: exactly one 6-decimal duplicate exists among the 90 values (run 1 builtin reps 5 and 8, 5.8e-8 ms apart at full precision), so the text now says so and attributes it to print rounding rather than timer quantization. This publication supersedes P-002's report text and incorporates P-003's corrections. Limits: single machine/interpreter/n; no frequency pinning, core isolation, GC or thermal control; the CI covers one session only and not load- or session-induced spread; medians are point estimates from 15 samples.",
+      "created_at": "2026-11-04T05:06:43.370222+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Corrected final report. Summing 1..1,000,000 with an explicit for loop took ~2.70x as long as sum(range(1,1000001)) on this machine: medians 12.5895 vs 4.6613 ms, pooled ratio 2.6995 (95% CI 2.673-2.719), a light-load point estimate (2.82-2.90 under load). Includes the frozen script, all 90 timings, the independent review verdicts and every correction applied.\", \"primary_item_id\": \"report\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Measured result\", \"items\": [\"Loop medians 12.512583 / 12.617208 / 12.589500 ms; builtin 4.701542 / 4.661333 / 4.648208 ms.\", \"Pooled 45-sample-per-side ratio 2.6995, 95% bootstrap CI 2.673-2.719, stated as ≈2.70x with no causal claim.\", \"Distributions never overlap: slowest builtin 4.908167 ms vs fastest loop 12.388875 ms (2.52x apart).\"]}, {\"heading\": \"Review outcome\", \"items\": [\"Comparability PASS with conditions; internal consistency PASS; no arithmetic error found.\", \"Three fresh processes reproduced it: 12.544125 / 4.620417 ms, ratio 2.7149 (+0.52%).\", \"Ratio is load-sensitive: 2.82 and 2.90 with 8 extra busy processes; loop degrades 17-18% vs builtin 10-13%.\"]}, {\"heading\": \"Corrections applied\", \"items\": [\"Drift claim replaced: interleaving shares drift in time, not proportionally.\", \"0.3% agreement reframed as aggregation choice; bootstrap CI and loaded values now carry the uncertainty.\", \"Pooled ratio headlined instead of the cross-run pairing; duplicate heading merged.\", \"Attestation gaps stated, record-then-assert wording fixed, per-run JSONs attached.\"]}, {\"heading\": \"Limits\", \"items\": [\"Single machine, interpreter build and n; no frequency pinning, core isolation, GC or thermal control.\", \"CI covers one session; load and session spread is larger than the quoted interval.\", \"Medians are point estimates from 15 samples per condition per run.\"]}], \"title\": \"Final: for loop vs sum(range) is 2.70x slower\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "bench_run1",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 1 results, same shape as the script's --json-out; reconstructed from combined JSON (bit-identical to the RESULT_JSON log payload).\"}",
+          "source_path": "final/bench_run1.json"
+        },
+        {
+          "item_id": "bench_run2",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 2 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run2.json"
+        },
+        {
+          "item_id": "bench_run3",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 3 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run3.json"
+        },
+        {
+          "item_id": "raw_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All 90 timings (full precision), per-run median/min/max/ratio, cross-run medians, pooled ratio + percentile bootstrap CI (seed 20261104), separation, review probe values and provenance.\"}",
+          "source_path": "final/raw_timings.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Corrected final report: answer table, script + sha256, method as executed, all 90 raw timings, per-run statistics, independent review verdicts and probes, the seven applied corrections, limitations, artifacts, self-check.\"}",
+          "source_path": "final/report.md"
+        },
+        {
+          "item_id": "script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Verbatim copy of the frozen P-002 benchmark; python3 final/bench_sum.py --json-out PATH.\", \"sha256\": \"823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773\"}",
+          "source_path": "final/bench_sum.py"
+        },
+        {
+          "item_id": "selfcheck_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Output of selfcheck.py: 25 checks, 0 failed.\"}",
+          "source_path": "final/selfcheck.log"
+        },
+        {
+          "item_id": "selfcheck_py",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Mechanical re-verification: 25 checks over report.md vs raw_timings.json, script hash, corrections, headings, duplicate 6-dp group.\"}",
+          "source_path": "final/selfcheck.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-005",
+      "node_id": "X-003",
+      "status": "complete",
+      "summary": "Final corrected deliverable, v2 (node X-003); supersedes P-004 after a blind audit of v1 found three real defects. Result unchanged: summing 1..1,000,000 with an explicit for loop takes ~2.70x as long as sum(range(1,1000001)) on this machine (CPython 3.11.4, Apple M5 Max, macOS 26.5.1). Per-run medians 12.512583 / 12.617208 / 12.589500 ms (loop) vs 4.701542 / 4.661333 / 4.648208 ms (builtin); pooled 45-sample-per-side ratio 2.6995 (percentile-bootstrap 95% CI 2.673-2.719, ±0.9%), headlined as ≈2.70x and explicitly a light-load point estimate; per-run ratios 2.661/2.707/2.708, fresh independent re-run 2.7149 (+0.52%), controlled +8-process load 2.82 (exp 1) and 2.90 (exp 2). No overlap in any run (slowest builtin 4.908167 ms vs fastest loop 12.388875 ms, 2.52x apart). Elapsed-time measurement only, no causal claim. All seven P-003 corrections are applied and visible. P-004's blind audit then found three defects in v1, all fixed here: (1) the load-probe percentages were crossed - v1 said builtin +10.3%/+12.7% where the artifacts pair exp1 17.5/12.7 and exp2 18.4/10.3, corrected in both places and now stored as labelled per-experiment objects; (2) the duplicate-value paragraph made an inverted timer-resolution argument, replaced with the plain 8th-decimal print-rounding statement; (3) the abbreviated checksum tail read \"…7b5d\" instead of \"…5773\", corrected. Also from the audit: the timer-resolution figure is now labelled an environment fact (get_clock_info, re-checked live) rather than an artifact value; the report notes that the frozen script's docstring still carries the superseded drift rationale, kept byte-identical for provenance and explicitly marked as superseded; and the pooled row, not the cross-run row, is the bolded one in the answer table. final/ is self-contained: report.md, bench_sum.py (sha256 823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773, byte-identical to the frozen script), raw_timings.json (90 timings, per-run/cross-run stats, bootstrap CI, labelled load experiments, probes, timer), bench_run1..3.json, selfcheck.py and selfcheck.log. selfcheck.py runs 30 mechanical checks, 0 failed: 90 raw timings present and matching, every prose number traceable to raw_timings.json within its printed precision, script hash match, all seven corrections plus the three audit fixes, no duplicated heading, exactly one 6-dp duplicate group and it is correctly described. Limits: single machine/interpreter/n; no frequency pinning, core isolation, GC or thermal control; the CI covers one session only, not load- or session-induced spread (which is larger, up to ~+7% at a moderate load); medians are point estimates from 15 samples; warmup exclusion, A,B order and one-process-per-run rest on script plus summary strings.",
+      "created_at": "2026-11-04T05:09:55.059052+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Corrected final report (v2). Summing 1..1,000,000 with an explicit for loop took ~2.70x as long as sum(range(1,1000001)): medians 12.5895 vs 4.6613 ms, pooled ratio 2.6995 (95% CI 2.673-2.719), a light-load point estimate (2.82-2.90 under load). Frozen script, all 90 timings, review verdicts, every correction applied.\", \"primary_item_id\": \"report\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Measured result\", \"items\": [\"Loop medians 12.512583 / 12.617208 / 12.589500 ms; builtin 4.701542 / 4.661333 / 4.648208 ms.\", \"Pooled 45-sample-per-side ratio 2.6995, 95% bootstrap CI 2.673-2.719, stated as ≈2.70x with no causal claim.\", \"Distributions never overlap: slowest builtin 4.908167 ms vs fastest loop 12.388875 ms (2.52x apart).\"]}, {\"heading\": \"Review outcome\", \"items\": [\"Comparability PASS with conditions; internal consistency PASS; no arithmetic error in the measurements.\", \"Three fresh processes reproduced it: 12.544125 / 4.620417 ms, ratio 2.7149 (+0.52%).\", \"Ratio is load-sensitive: 2.82 and 2.90 with 8 extra busy processes; exp1 loop +17.5% vs builtin +12.7%, exp2 +18.4% vs +10.3%.\"]}, {\"heading\": \"Corrections applied\", \"items\": [\"Drift claim replaced (shares drift in time, not proportionally); pooled ratio headlined; duplicate heading merged.\", \"Attestation gaps stated, record-then-assert wording fixed, per-run JSONs attached.\", \"Blind audit of v1 found three defects, all fixed here: crossed load-inflation percentages, an inverted timer-resolution argument, a wrong checksum tail.\"]}, {\"heading\": \"Limits\", \"items\": [\"Single machine, interpreter build and n; no frequency pinning, core isolation, GC or thermal control.\", \"CI covers one session; load and session spread is larger than the quoted interval.\", \"Medians are point estimates from 15 samples per condition per run.\"]}], \"title\": \"Final v2: for loop vs sum(range) is 2.70x\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "bench_run1",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 1 results, same shape as the script's --json-out; reconstructed from combined JSON (bit-identical to the RESULT_JSON log payload).\"}",
+          "source_path": "final/bench_run1.json"
+        },
+        {
+          "item_id": "bench_run2",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 2 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run2.json"
+        },
+        {
+          "item_id": "bench_run3",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 3 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run3.json"
+        },
+        {
+          "item_id": "raw_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All 90 timings (full precision), per-run median/min/max/ratio, cross-run medians, pooled ratio + percentile bootstrap CI (seed 20261104), separation, labelled load experiments, review probe values, timer resolution with provenance.\"}",
+          "source_path": "final/raw_timings.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Corrected final report v2: answer table, script + sha256, method as executed, all 90 raw timings, per-run statistics, independent review verdicts and probes, the seven review corrections, the three blind-audit fixes, limitations, artifacts, self-check.\"}",
+          "source_path": "final/report.md"
+        },
+        {
+          "item_id": "script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Verbatim copy of the frozen P-002 benchmark; python3 final/bench_sum.py --json-out PATH. Its docstring keeps the original design rationale, which the report marks as superseded.\", \"sha256\": \"823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773\"}",
+          "source_path": "final/bench_sum.py"
+        },
+        {
+          "item_id": "selfcheck_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Output of selfcheck.py: 30 checks, 0 failed.\"}",
+          "source_path": "final/selfcheck.log"
+        },
+        {
+          "item_id": "selfcheck_py",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Mechanical re-verification: 30 checks over report.md vs raw_timings.json, script hash, corrections, headings, duplicate 6-dp group, and the three audit fixes.\"}",
+          "source_path": "final/selfcheck.py"
+        }
+      ]
+    },
+    {
+      "publication_id": "P-006",
+      "node_id": "X-003",
+      "status": "complete",
+      "summary": "Final corrected deliverable, v3 (node X-003); supersedes P-005. Only the duplicate-value paragraph changed since v2: it no longer claims the 6-dp duplicate is print rounding while also quoting a 41.7 ns clock resolution. It now states the fact plainly - run 1 builtin reps 5 and 8 both print 4.557375 ms, at full precision 4.557375039439648 vs 4.5573749812319875 ms (5.8e-8 ms apart, 8th decimal), that gap is far below the nominal 41.7 ns resolution so it is not a resolvable timing difference, and the duplicate is a printing artifact of the 6-dp table with no sample lost or merged. No measurement, statistic or other sentence was touched. Result unchanged: summing 1..1,000,000 with an explicit for loop takes ~2.70x as long as sum(range(1,1000001)) on this machine (CPython 3.11.4, Apple M5 Max, macOS 26.5.1). Per-run medians 12.512583 / 12.617208 / 12.589500 ms (loop) vs 4.701542 / 4.661333 / 4.648208 ms (builtin); cross-run medians 12.5895 / 4.6613 ms; pooled 45-sample-per-side ratio 2.6995 with a percentile-bootstrap 95% CI of 2.673-2.719 (±0.9%), headlined as ≈2.70x and explicitly a light-load point estimate; per-run ratios 2.661/2.707/2.708, fresh independent re-run 12.544125 / 4.620417 ms = 2.7149 (+0.52%), controlled +8-process load 2.82 (exp 1) and 2.90 (exp 2). No overlap in any run (slowest builtin 4.908167 ms vs fastest loop 12.388875 ms, 2.52x apart). Elapsed-time measurement only, no causal claim. All seven P-003 corrections remain applied and visible, as do the three v1 audit fixes (crossed load-inflation pairs, timer-resolution attribution, checksum tail 5773). final/ is self-contained: report.md, bench_sum.py (sha256 823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773, byte-identical to the frozen script), raw_timings.json (90 timings, per-run/cross-run stats, bootstrap CI, labelled load experiments, probes, timer), bench_run1..3.json, selfcheck.py and selfcheck.log. selfcheck.py runs 30 mechanical checks, 0 failed, including the updated 9b check that the paragraph calls the duplicate a printing artifact and does not attribute it to timer quantization; a 31st run separately confirms every prose numeral still traces to raw_timings.json. Limits: single machine/interpreter/n; no frequency pinning, core isolation, GC or thermal control; the CI covers one session only, not load- or session-induced spread (larger, up to ~+7% at moderate load); medians are point estimates from 15 samples; warmup exclusion, A,B order and one-process-per-run rest on script plus summary strings.",
+      "created_at": "2026-11-04T05:12:33.623048+00:00",
+      "items": [
+        {
+          "item_id": "__research_display",
+          "kind": "research-display",
+          "content": "{\"overview\": \"Corrected final report (v3). Summing 1..1,000,000 with an explicit for loop took ~2.70x as long as sum(range(1,1000001)): medians 12.5895 vs 4.6613 ms, pooled ratio 2.6995 (95% CI 2.673-2.719), a light-load point estimate (2.82-2.90 under load). Frozen script, all 90 timings, review verdicts, every correction applied.\", \"primary_item_id\": \"report\", \"schema\": \"publication-display/v1\", \"sections\": [{\"heading\": \"Measured result\", \"items\": [\"Loop medians 12.512583 / 12.617208 / 12.589500 ms; builtin 4.701542 / 4.661333 / 4.648208 ms.\", \"Pooled 45-sample-per-side ratio 2.6995, 95% bootstrap CI 2.673-2.719, stated as ≈2.70x with no causal claim.\", \"Distributions never overlap: slowest builtin 4.908167 ms vs fastest loop 12.388875 ms (2.52x apart).\"]}, {\"heading\": \"Review outcome\", \"items\": [\"Comparability PASS with conditions; internal consistency PASS; no arithmetic error in the measurements.\", \"Three fresh processes reproduced it: 12.544125 / 4.620417 ms, ratio 2.7149 (+0.52%).\", \"Ratio is load-sensitive: 2.82 and 2.90 with 8 extra busy processes; exp1 loop +17.5% vs builtin +12.7%, exp2 +18.4% vs +10.3%.\"]}, {\"heading\": \"Corrections applied\", \"items\": [\"Drift claim replaced (shares drift in time, not proportionally); pooled ratio headlined; duplicate heading merged.\", \"Attestation gaps stated, record-then-assert wording fixed, per-run JSONs attached.\", \"Blind audit fixes: crossed load-inflation percentages, wrong checksum tail, and the duplicate-value paragraph no longer contradicts the quoted timer resolution.\"]}, {\"heading\": \"Limits\", \"items\": [\"Single machine, interpreter build and n; no frequency pinning, core isolation, GC or thermal control.\", \"CI covers one session; load and session spread is larger than the quoted interval.\", \"Medians are point estimates from 15 samples per condition per run.\"]}], \"title\": \"Final v3: for loop vs sum(range) is 2.70x\"}",
+          "source_path": null
+        },
+        {
+          "item_id": "bench_run1",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 1 results, same shape as the script's --json-out; reconstructed from combined JSON (bit-identical to the RESULT_JSON log payload).\"}",
+          "source_path": "final/bench_run1.json"
+        },
+        {
+          "item_id": "bench_run2",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 2 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run2.json"
+        },
+        {
+          "item_id": "bench_run3",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"Per-run 3 results, same shape as the script's --json-out; reconstructed from combined JSON.\"}",
+          "source_path": "final/bench_run3.json"
+        },
+        {
+          "item_id": "raw_json",
+          "kind": "data",
+          "content": "{\"format\": \"json\", \"note\": \"All 90 timings (full precision), per-run median/min/max/ratio, cross-run medians, pooled ratio + percentile bootstrap CI (seed 20261104), separation, labelled load experiments, review probe values, timer and provenance.\"}",
+          "source_path": "final/raw_timings.json"
+        },
+        {
+          "item_id": "report",
+          "kind": "report",
+          "content": "{\"format\": \"markdown\", \"summary\": \"Corrected final report v3: answer table, script + sha256, method as executed, all 90 raw timings, per-run statistics, independent review verdicts and probes, the seven applied corrections, limitations, artifacts, self-check.\"}",
+          "source_path": "final/report.md"
+        },
+        {
+          "item_id": "script",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Verbatim copy of the frozen P-002 benchmark; python3 final/bench_sum.py --json-out PATH.\", \"sha256\": \"823881526bbf000d0b1033863eb868ad838b40ee72128408b5dc86ac4bc55773\"}",
+          "source_path": "final/bench_sum.py"
+        },
+        {
+          "item_id": "selfcheck_log",
+          "kind": "data",
+          "content": "{\"format\": \"text\", \"note\": \"Output of selfcheck.py: 30 checks, 0 failed.\"}",
+          "source_path": "final/selfcheck.log"
+        },
+        {
+          "item_id": "selfcheck_py",
+          "kind": "artifact",
+          "content": "{\"format\": \"python\", \"note\": \"Mechanical re-verification: 30 checks over report.md vs raw_timings.json - 90 timings, prose-number traceability, script hash, all seven corrections plus the three audit fixes, headings, duplicate 6-dp group and its description.\"}",
+          "source_path": "final/selfcheck.py"
+        }
+      ]
+    }
+  ]
+}
