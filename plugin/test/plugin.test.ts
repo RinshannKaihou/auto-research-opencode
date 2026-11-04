@@ -77,6 +77,9 @@ function fakeHost(
   const models: any[] = []
   const permissions = new Map<string, any[]>()
   const events = new EventStream()
+  const prompts: any[] = []
+  const running = new Set<string>()
+  const queuedPrompts = new Map<string, { messageID: string; text: string; files?: any[] }[]>()
   let subscriptions = 0
   // A session is busy from a resuming message until its turn ends; wait() resolves then.
   // Reloading the plugin does not reset the native host's sessions or history.
@@ -87,6 +90,7 @@ function fakeHost(
     const content = text ? [{ type: "assistant", content: [{ type: "text", text }] }] : []
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), ...content, { type: "idle", outcome }])
     busy.delete(sessionID)
+    running.delete(sessionID)
     // Production OpenCode 2.2.5 has no session.busy. The fallback reads events.
     // Captured traces have session.execution.started and its execution end, not session.status.
     if (!exposeSessionBusy) signalIdle(sessionID, outcome)
@@ -169,7 +173,35 @@ function fakeHost(
   }
   /** The model of `sessionID` ends its turn with a final text reply. */
   const reply = (sessionID: string, text: string, outcome = "succeeded") => endTurn(sessionID, text, outcome)
-  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, subscriptions: () => subscriptions, rpc: () => handlers }
+  /**
+   * A real user prompt: the host runs the prompt hook, then honours the final
+   * delivery value. A queued prompt is held until the host's next step.
+   */
+  const prompt = async (sessionID: string, text: string, messageID: string, files?: any[]) => {
+    const input: any = { sessionID, messageID, prompt: { text, ...(files ? { files } : {}) }, delivery: 'steer' }
+    await hooks.get('prompt')?.(input)
+    prompts.push({ sessionID, messageID, text, delivery: input.delivery, files: files ?? [] })
+    if (running.has(sessionID) && input.delivery === 'queue') {
+      queuedPrompts.set(sessionID, [...(queuedPrompts.get(sessionID) ?? []), { messageID, text, files }])
+      return input.delivery as string
+    }
+    // Steering, or an idle session: the host admits the input now.
+    transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []),
+      { type: 'user', id: messageID, text, ...(files ? { files } : {}) }])
+    events.push({ type: 'session.inbox.delivered', data: { sessionID, inboxID: messageID } })
+    return input.delivery as string
+  }
+  /** The host delivers one held prompt at its next step boundary. */
+  const deliverQueued = (sessionID: string) => {
+    const next = queuedPrompts.get(sessionID)?.shift()
+    if (!next) return undefined
+    transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []),
+      { type: 'user', id: next.messageID, text: next.text, ...(next.files ? { files: next.files } : {}) }])
+    events.push({ type: 'session.inbox.delivered', data: { sessionID, inboxID: next.messageID } })
+    return next
+  }
+  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, prompt, deliverQueued,
+    prompts, queuedPrompts, running, subscriptions: () => subscriptions, rpc: () => handlers }
 }
 
 function modelRequest(sessionID: string) {
@@ -212,6 +244,10 @@ function simulateDeadHost(): void {
 
 beforeEach(() => {
   nativeSessions.clear()
+  // Process-local controller state belongs to one test; only a warm rebind
+  // inside a test may inherit it.
+  const controllers = (globalThis as any)[Symbol.for("auto-research.controller.v1")] as Map<string, any> | undefined
+  controllers?.clear()
   dir = mkdtempSync(join(tmpdir(), "ari-opencode-"))
   project = join(dir, "project")
   mkdirSync(project)
@@ -239,9 +275,11 @@ async function load(options: { python?: string; directory?: string; placement?: 
   const command = (action: string, sessionID: string | null, args: any = {}) =>
     host.rpc().command({ action, sessionID: sessionID ?? undefined, directory: project, args })
   const turn = {
-    start: (sessionID: string) => host.events.push({ type: "session.execution.started", data: { sessionID } }),
-    end: (sessionID: string, outcome = "succeeded", extra: any = {}) =>
-      host.events.push({ type: `session.execution.${outcome}`, data: { sessionID, ...extra } }),
+    start: (sessionID: string) => { host.running.add(sessionID); host.events.push({ type: "session.execution.started", data: { sessionID } }) },
+    end: (sessionID: string, outcome = "succeeded", extra: any = {}) => {
+      host.running.delete(sessionID)
+      host.events.push({ type: `session.execution.${outcome}`, data: { sessionID, ...extra } })
+    },
   }
   const summary = () => host.rpc().board({ view: "summary", directory: project })
   const page = (collection: string) => host.rpc().board({ view: "page", directory: project, fields: { collection } })
@@ -4608,7 +4646,7 @@ describe('context placement', () => {
     } finally { spy.mockRestore() }
   })
 
-  test('a node turn without drain authorization keeps its refusal in the system prompt', async () => {
+  test('a node turn without drain authorization keeps its refusal in the full system prompt', async () => {
     const host = await load({ placement: 'tail' })
     await host.command('auto', 'ses_main', { goal: 'drain boundary fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
@@ -4624,8 +4662,12 @@ describe('context placement', () => {
     const request = modelRequest(child)
     await host.hooks.get('context')!(request)
     expect(systemText(request)).toContain('no active drain authorization')
+    // An unverifiable authorization keeps the safe full-system context: no
+    // temporary tail and no placement-only hint.
+    expect(systemText(request)).toContain('## recent_node_notes')
     expect(Object.keys(request.tools)).not.toContain('shell')
-    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(false)
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
   })
 
   test('pausing keeps control instructions in the system prompt under tail placement', async () => {
@@ -4662,6 +4704,21 @@ describe('tail wait completion', () => {
   function waitResult(taskID: string) {
     return { role: 'tool', content: [{ type: 'tool-result', id: 'wait-call', name: 'research_wait',
       result: { type: 'text', value: JSON.stringify({ waiting: [taskID], message: '本轮结束后进入等待' }) } }] }
+  }
+
+  /** The plugin's process-local state, read through the shared controller registry. */
+  function lifecycleState(sessionID: string): any {
+    const registry = (globalThis as any)[Symbol.for('auto-research.controller.v1')] as Map<string, any> | undefined
+    // The newest attachment for this session owns the live state; older test
+    // attachments stay in the process-wide registry.
+    for (const entry of [...(registry?.values() ?? [])].reverse()) {
+      if (entry?.state?.turns?.has(sessionID)) return entry.state
+    }
+    return undefined
+  }
+
+  function currentMarker(sessionID: string): any {
+    return lifecycleState(sessionID)?.waitFinishes?.get(sessionID)
   }
 
   async function acceptedWait(host: Awaited<ReturnType<typeof load>>) {
@@ -5026,5 +5083,414 @@ describe('tail wait completion', () => {
     expect(systemText(request)).toContain('## recent_node_notes')
     expect(systemText(request)).not.toContain('A research wait was accepted')
     expect(lastMessageText(request)).not.toContain('<research_state>')
+  })
+
+  test('a transient drain error keeps the accepted node finish and stays read-only', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const call = Research.prototype.call
+    let failing = true
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (failing && method === 'runtime_drain_check') throw new Error('injected drain outage')
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      // A repeated transient failure must not dissolve the accepted barrier.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const request = modelRequest(node)
+        request.messages = finishHistory() as any
+        await host.hooks.get('context')!(request)
+        expect(Object.keys(request.tools).sort()).toEqual(['read', 'research_query'])
+        expect(systemText(request)).toContain('no active drain authorization')
+        expect(systemText(request)).toContain('## recent_node_notes')
+        expect(systemText(request)).not.toContain('A research finish was accepted')
+        expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+        expect(currentMarker(node)).toMatchObject({ kind: 'finish' })
+      }
+      // The original accepted finish is still the one that resumes.
+      failing = false
+      const request = modelRequest(node)
+      request.messages = finishHistory() as any
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(systemText(request)).toContain('A research finish was accepted')
+      expect(systemText(request)).toContain('after this execution ends')
+      const status = await host.command('status', 'ses_main')
+      expect(status.state.workflow.tasks.find((task: any) => task.session_id === node).state).toBe('running')
+      expect(host.said('ses_main').some((item) => item.text.includes('节点 X-001'))).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+
+  test('a verified non-matching authoritative state only removes the marker it inspected', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      const result = await (call as any).call(this, method, ...args)
+      return method === 'node_finish_pending' && result ? { ...result, turn_token: 'another-execution' } : result
+    })
+    try {
+      const request = modelRequest(node)
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).not.toContain('A research finish was accepted')
+      expect(currentMarker(node)).toBeUndefined()
+    } finally { spy.mockRestore() }
+  })
+
+  test('a new execution during preparation never commits the old finishing decision', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const call = Research.prototype.call
+    let started!: () => void
+    const startedSignal = new Promise<void>(resolve => { started = resolve })
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'runtime_execution_start') started()
+      return (call as any).call(this, method, ...args)
+    })
+    const memory = Research.prototype.memory
+    const memorySpy = spyOn(Research.prototype, 'memory').mockImplementation(async function(this: Research, ...args: any[]) {
+      host.turn.start('ses_main')
+      await startedSignal
+      return (memory as any).call(this, ...args)
+    })
+    try {
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).not.toContain('A research wait was accepted')
+      expect(Object.keys(request.tools).sort()).toEqual(['read', 'research_query'])
+      expect(systemText(request)).toContain('## recent_node_notes')
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    } finally {
+      memorySpy.mockRestore()
+      spy.mockRestore()
+    }
+  })
+
+  test('an appended session event during preparation keeps the safe context', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const call = Research.prototype.call
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const handlerEntered = new Promise<void>(resolve => { entered = resolve })
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'runtime_execution_bind') { entered(); await gate }
+      return (call as any).call(this, method, ...args)
+    })
+    const memory = Research.prototype.memory
+    const memorySpy = spyOn(Research.prototype, 'memory').mockImplementation(async function(this: Research, ...args: any[]) {
+      host.events.push({ type: 'session.inbox.delivered', data: { sessionID: 'ses_main', inboxID: 'msg_late_delivery' } })
+      await handlerEntered
+      return (memory as any).call(this, ...args)
+    })
+    try {
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).not.toContain('A research wait was accepted')
+      expect(Object.keys(request.tools).sort()).toEqual(['read', 'research_query'])
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    } finally {
+      release()
+      memorySpy.mockRestore()
+      spy.mockRestore()
+    }
+  })
+
+  test('a user prompt during an accepted wait is queued, preserved and never enters the old request', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const notes: any[] = []
+    const call = Research.prototype.call
+    const noteSpy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'note') notes.push(args)
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      expect(await host.prompt('ses_main', 'new user instruction', 'msg_user_wait')).toBe('queue')
+      expect(host.prompts.at(-1)).toMatchObject({ messageID: 'msg_user_wait', delivery: 'queue' })
+      expect(host.queuedPrompts.get('ses_main')).toEqual([{ messageID: 'msg_user_wait', text: 'new user instruction' }])
+      // Nothing was filed while the prompt was still queued.
+      expect(notes).toHaveLength(0)
+
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).toContain('A research wait was accepted')
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(JSON.stringify(request.system)).not.toContain('new user instruction')
+      expect(JSON.stringify(request.messages)).not.toContain('new user instruction')
+      expect(notes).toHaveLength(0)
+
+      // The host delivers the held prompt at its next step.
+      expect(host.deliverQueued('ses_main')).toMatchObject({ messageID: 'msg_user_wait', text: 'new user instruction' })
+      await until(() => (lifecycleState('ses_main').queuedGuidance.get('ses_main') ?? []).every((item: any) => item.delivered),
+        'queued guidance delivery mark')
+      // Still queued behind the same execution: no note yet.
+      expect(notes).toHaveLength(0)
+
+      host.turn.end('ses_main')
+      host.turn.start('ses_main')
+      const next = modelRequest('ses_main')
+      await host.hooks.get('context')!(next)
+      expect(systemText(next)).not.toContain('A research wait was accepted')
+      expect(JSON.stringify(next.messages)).toContain('new user instruction')
+      expect(notes).toHaveLength(1)
+      expect(notes[0]![1].body).toContain('new user instruction')
+      expect(notes[0]![2]).toBe('guidance:ses_main:msg_user_wait')
+      // Filing once is the contract: a repeated event must not add a note.
+      const repeated = modelRequest('ses_main')
+      await host.hooks.get('context')!(repeated)
+      expect(notes).toHaveLength(1)
+    } finally { noteSpy.mockRestore() }
+  })
+
+  test('a prompt in the finish acceptance window is queued and a failure leaves no routing', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host, false)
+    const call = Research.prototype.call
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const requestEntered = new Promise<void>(resolve => { entered = resolve })
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'node_finish_request') { entered(); await gate }
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      const accepted = host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+      await requestEntered
+      expect(await host.prompt(node, 'arrived in the window', 'msg_finish_window')).toBe('queue')
+      release()
+      await accepted
+      expect(currentMarker(node)).toMatchObject({ kind: 'finish' })
+      // The queued input is still held, not merged into the finishing request.
+      const request = modelRequest(node)
+      request.messages = finishHistory() as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).toContain('A research finish was accepted')
+      expect(JSON.stringify(request.messages)).not.toContain('arrived in the window')
+    } finally { spy.mockRestore() }
+  })
+
+  test('a failed finish clears its in-flight registration and leaves no marker', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host, false)
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'node_finish_request') throw new Error('injected finish outage')
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      await expect(host.call('research_finish', node, { state: 'finished', summary: 'node result' })).rejects.toThrow()
+      expect(lifecycleState(node).terminalCalls.get(node)).toBeUndefined()
+      expect(currentMarker(node)).toBeUndefined()
+      expect(await host.prompt(node, 'after the failure', 'msg_after_failure')).toBe('steer')
+      const request = modelRequest(node)
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toContain('research_query')
+      expect(systemText(request)).not.toContain('A research finish was accepted')
+      expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    } finally { spy.mockRestore() }
+  })
+
+  test('a failed sibling terminal call does not clear an accepted wait', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'sibling terminal fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const results = await Promise.allSettled([
+      host.call('research_wait', 'ses_main', { task_ids: [task.task_id] }),
+      host.call('research_wait', 'ses_main', { task_ids: ['T_unknown'] }),
+    ])
+    expect(results.map(row => row.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(lifecycleState('ses_main').terminalCalls.get('ses_main')).toBeUndefined()
+    expect(currentMarker('ses_main')?.kind).toBeUndefined()
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+  })
+
+  test('system mode queues nothing and keeps its guidance timing', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'system handoff fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+    const notes: any[] = []
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'note') notes.push(args)
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      expect(await host.prompt('ses_main', 'system guidance', 'msg_system')).toBe('steer')
+      expect(notes).toHaveLength(1)
+      expect(notes[0]![1].body).toContain('system guidance')
+      expect(host.queuedPrompts.get('ses_main')).toBeUndefined()
+    } finally { spy.mockRestore() }
+  })
+
+  test('a session outside research keeps its prompt untouched', async () => {
+    const host = await load({ placement: 'tail' })
+    expect(await host.prompt('ses_plain', 'ordinary note', 'msg_plain')).toBe('steer')
+    expect(host.queuedPrompts.get('ses_plain')).toBeUndefined()
+  })
+
+  test('an older preparation never removes a marker installed while it awaited', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    const replacement = { execution: 'newer-execution', waiting: [], kind: 'finish' as const }
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      const result = await (call as any).call(this, method, ...args)
+      if (method === 'node_finish_pending') lifecycleState(node).waitFinishes.set(node, replacement)
+      return result
+    })
+    try {
+      const request = modelRequest(node)
+      request.messages = finishHistory() as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).not.toContain('A research finish was accepted')
+      expect(currentMarker(node)).toBe(replacement)
+    } finally { spy.mockRestore() }
+  })
+
+  test('a finished node cannot regain shell access through a new user execution', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host)
+    host.turn.end(node)
+    await until(() => host.said('ses_main').some((item) => !item.resume && item.text.includes('节点 X-001')),
+      'node finish committed')
+    host.turn.start(node)
+    const request = modelRequest(node)
+    await host.hooks.get('context')!(request)
+    // The closed work segment stays authoritative for new work.
+    await expect(host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: node, id: 'after-finish', input: {} }))
+      .rejects.toBeDefined()
+  })
+
+  test('a marker installed during preparation invalidates the old decision', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'late marker fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const memory = Research.prototype.memory
+    const memorySpy = spyOn(Research.prototype, 'memory').mockImplementation(async function(this: Research, ...args: any[]) {
+      // A wait is accepted while this preparation is still awaiting memory.
+      await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+      return (memory as any).call(this, ...args)
+    })
+    try {
+      expect(currentMarker('ses_main')).toBeUndefined()
+      const request = modelRequest('ses_main')
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools).sort()).toEqual(['read', 'research_query'])
+      expect(systemText(request)).toContain('## recent_node_notes')
+      expect(systemText(request)).not.toContain('A research wait was accepted')
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+      expect(currentMarker('ses_main')?.kind).toBeUndefined()
+    } finally { memorySpy.mockRestore() }
+  })
+
+  test('an attachment-only user prompt is queued during an accepted wait', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const notes: any[] = []
+    const call = Research.prototype.call
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'note') notes.push(args)
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      const files = [{ uri: 'file:///tmp/note.txt', name: 'note.txt', mime: 'text/plain' }]
+      expect(await host.prompt('ses_main', '', 'msg_attachment', files)).toBe('queue')
+      expect(host.queuedPrompts.get('ses_main')).toEqual([{ messageID: 'msg_attachment', text: '', files }])
+      expect(notes).toHaveLength(0)
+
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(systemText(request)).toContain('A research wait was accepted')
+      expect(JSON.stringify(request.messages)).not.toContain('note.txt')
+    } finally { spy.mockRestore() }
+  })
+
+  test('an in-flight terminal call from an earlier execution does not queue a new execution', async () => {
+    const host = await load({ placement: 'tail' })
+    const node = await nodeAtFinish(host, false)
+    const tokenA = lifecycleState(node).turns.get(node)
+    const call = Research.prototype.call
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const requestEntered = new Promise<void>(resolve => { entered = resolve })
+    const spy = spyOn(Research.prototype, 'call').mockImplementation(async function(this: Research, method: string, ...args: any[]) {
+      if (method === 'node_finish_request') { entered(); await gate }
+      return (call as any).call(this, method, ...args)
+    })
+    try {
+      const accepted = host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+      await requestEntered
+      host.turn.end(node)
+      host.turn.start(node)
+      await until(() => lifecycleState(node).turns.get(node) !== tokenA, 'the next execution')
+      expect(await host.prompt(node, 'input for the new execution', 'msg_new_execution')).toBe('steer')
+      expect(host.queuedPrompts.get(node)).toBeUndefined()
+      release()
+      await accepted.catch(() => {})
+      // The late result cannot latch the new execution.
+      expect(currentMarker(node)).toBeUndefined()
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  })
+
+  test('a delivered attachment-only prompt also replaces the finishing instruction', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const files = [{ uri: 'file:///tmp/note.txt', name: 'note.txt', mime: 'text/plain' }]
+    expect(await host.prompt('ses_main', '', 'msg_attachment_step', files)).toBe('queue')
+    expect(host.deliverQueued('ses_main')).toMatchObject({ messageID: 'msg_attachment_step', text: '' })
+    await until(() => (lifecycleState('ses_main').queuedInputs.get('ses_main') ?? []).every((item: any) => item.delivered),
+      'queued input delivery mark')
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id),
+      { role: 'user', content: [{ type: 'attachment', name: 'note.txt' }] }] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A user message arrived while this terminal action was still pending')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    expect((lifecycleState('ses_main').queuedGuidance.get('ses_main') ?? [])).toHaveLength(0)
+  })
+
+  test('a delivered queued prompt replaces the finishing instruction on its step', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    expect(await host.prompt('ses_main', 'late instruction', 'msg_late_step')).toBe('queue')
+    host.deliverQueued('ses_main')
+    await until(() => (lifecycleState('ses_main').queuedGuidance.get('ses_main') ?? []).every((item: any) => item.delivered),
+      'queued guidance delivery mark')
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id),
+      { role: 'user', content: [{ type: 'text', text: 'late instruction' }] }] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A user message arrived while this terminal action was still pending')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    // The barrier is unchanged: the accepted finish still commits at execution end.
+    expect(currentMarker('ses_main')?.kind).toBeUndefined()
   })
 })

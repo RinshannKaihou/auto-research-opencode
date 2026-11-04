@@ -81,6 +81,11 @@ export default Plugin.define({
     const failedEvents = new Map<string, any[]>()
     const shellCalls = lifecycle.state.shellCalls ??= new Map()
     const shellSeen = lifecycle.state.shellSeen ??= new Set()
+    const terminalCalls: Map<string, Set<{ execution?: string }>> = lifecycle.state.terminalCalls ??= new Map()
+    const queuedGuidance: Map<string, { id: string; text: string; execution?: string; delivered?: boolean }[]> =
+      lifecycle.state.queuedGuidance ??= new Map()
+    const queuedInputs: Map<string, { id: string; execution?: string; delivered?: boolean }[]> =
+      lifecycle.state.queuedInputs ??= new Map()
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
       'session.inbox.enqueued', 'session.inbox.delivered', 'session.execution.interrupted', 'session.tool.failed'])
@@ -92,6 +97,74 @@ export default Plugin.define({
       const markers = lifecycle.state.waitFinishes
       const marker = markers?.get(sessionID)
       if (marker && (execution === undefined || marker.execution === execution)) markers!.delete(sessionID)
+    }
+    const GUIDANCE_QUEUE_LIMIT = 16
+    /** Register one terminal call before it awaits the service; the caller removes exactly this entry. */
+    const beginTerminalCall = (sessionID: string, execution: string | undefined) => {
+      const token: { execution?: string } = { execution }
+      const calls = terminalCalls.get(sessionID) ?? new Set<{ execution?: string }>()
+      calls.add(token)
+      terminalCalls.set(sessionID, calls)
+      return token
+    }
+    const endTerminalCall = (sessionID: string, token: { execution?: string }) => {
+      const calls = terminalCalls.get(sessionID)
+      if (!calls) return
+      calls.delete(token)
+      if (!calls.size) terminalCalls.delete(sessionID)
+    }
+    /**
+     * A terminal action covers this execution only: an accepted marker in it, or
+     * a call still awaiting the service that was registered for it. A late call
+     * from an earlier execution keeps its own registration but no longer routes
+     * input in a later one.
+     */
+    const terminalWindow = (sessionID: string) => {
+      const execution = engine.executionToken(sessionID)
+      const calls = terminalCalls.get(sessionID)
+      if (calls) for (const token of calls) if (token.execution === execution) return true
+      const marker = lifecycle.state.waitFinishes?.get(sessionID)
+      return !!marker && execution === marker.execution
+    }
+    const rememberQueuedGuidance = (sessionID: string, id: string, text: string, execution: string | undefined) => {
+      if (!id) return
+      const records = queuedGuidance.get(sessionID) ?? []
+      if (records.some(item => item.id === id)) return
+      records.push({ id, text, execution })
+      queuedGuidance.set(sessionID, records.slice(-GUIDANCE_QUEUE_LIMIT))
+    }
+    const markQueuedGuidanceDelivered = (sessionID: string, id: string) => {
+      for (const item of queuedGuidance.get(sessionID) ?? []) if (item.id === id) item.delivered = true
+    }
+    /** Track a queued user input that may carry no text at all. */
+    const rememberQueuedInput = (sessionID: string, id: string, execution: string | undefined) => {
+      if (!id) return
+      const records = queuedInputs.get(sessionID) ?? []
+      if (records.some(item => item.id === id)) return
+      records.push({ id, execution })
+      queuedInputs.set(sessionID, records.slice(-GUIDANCE_QUEUE_LIMIT))
+    }
+    const markQueuedInputDelivered = (sessionID: string, id: string) => {
+      for (const item of queuedInputs.get(sessionID) ?? []) if (item.id === id) item.delivered = true
+    }
+    const deliveredInputHere = (sessionID: string, execution: string | undefined) =>
+      (queuedInputs.get(sessionID) ?? []).some(item => item.delivered && item.execution === execution)
+    /**
+     * The host may still deliver a queued prompt as the next step of the same
+     * execution. The note therefore waits for a different execution, so the old
+     * turn's wire body never carries the pending instruction through memory.
+     */
+    const flushQueuedGuidance = async (sessionID: string) => {
+      const records = queuedGuidance.get(sessionID)
+      if (!records?.length) return
+      const execution = engine.executionToken(sessionID)
+      const ready = records.filter(item => item.delivered && item.execution !== execution)
+      if (!ready.length) return
+      queuedGuidance.set(sessionID, records.filter(item => !ready.includes(item)))
+      for (const item of ready) {
+        try { await research.call('note', sessionID, guidanceNote(item.text), `guidance:${sessionID}:${item.id}`) }
+        catch { /* A finished work segment has no writable note target; the native message is still persisted. */ }
+      }
     }
     let observeSpecialist: ((event: any) => void) | undefined
     const queueEvent = (event: any) => {
@@ -170,6 +243,9 @@ export default Plugin.define({
       session=>{
         nativeObservations.forget(session)
         lifecycle.state.waitFinishes?.delete(session)
+        terminalCalls.delete(session)
+        queuedGuidance.delete(session)
+        queuedInputs.delete(session)
         for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
       },
     )
@@ -590,29 +666,37 @@ export default Plugin.define({
         case "wait": {
           const taskIDs = (args.task_ids ?? []).map(String)
           const execution = engine.executionToken(sessionID)
-          const result: any = await engine.wait(sessionID, taskIDs)
-          // Tail mode finishes the accepted wait on the next primary request.
-          // A failed wait throws above and a newer execution never reuses the
-          // late result of an older one.
-          if (contextPlacement === 'tail' && execution !== undefined
-              && engine.executionToken(sessionID) === execution) {
-            const waiting = Array.isArray(result?.waiting) ? result.waiting.map(String) : []
-            if (waiting.length) {
-              const markers = lifecycle.state.waitFinishes ??= new Map()
-              markers.set(sessionID, { execution, waiting })
+          // Register before awaiting the service so user input that arrives in
+          // the acceptance window is queued instead of steering this call.
+          const terminal = beginTerminalCall(sessionID, execution)
+          try {
+            const result: any = await engine.wait(sessionID, taskIDs)
+            // Tail mode finishes the accepted wait on the next primary request.
+            // A failed wait throws above and a newer execution never reuses the
+            // late result of an older one.
+            if (contextPlacement === 'tail' && execution !== undefined
+                && engine.executionToken(sessionID) === execution) {
+              const waiting = Array.isArray(result?.waiting) ? result.waiting.map(String) : []
+              if (waiting.length) {
+                const markers = lifecycle.state.waitFinishes ??= new Map()
+                markers.set(sessionID, { execution, waiting })
+              }
             }
-          }
-          return result
+            return result
+          } finally { endTerminalCall(sessionID, terminal) }
         }
         case "finish": {
           const execution = engine.executionToken(sessionID)
-          const result = await engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
-          if (contextPlacement === 'tail' && execution !== undefined
-              && engine.executionToken(sessionID) === execution) {
-            const markers = lifecycle.state.waitFinishes ??= new Map()
-            markers.set(sessionID, { execution, waiting: [], kind: 'finish' })
-          }
-          return result
+          const terminal = beginTerminalCall(sessionID, execution)
+          try {
+            const result = await engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
+            if (contextPlacement === 'tail' && execution !== undefined
+                && engine.executionToken(sessionID) === execution) {
+              const markers = lifecycle.state.waitFinishes ??= new Map()
+              markers.set(sessionID, { execution, waiting: [], kind: 'finish' })
+            }
+            return result
+          } finally { endTerminalCall(sessionID, terminal) }
         }
         case "conclude":
           return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID,
@@ -715,11 +799,26 @@ export default Plugin.define({
         if (!main) throw new Error('Research controller owner is unavailable')
         await ensureController(root, main)
         let finishing: 'wait' | 'finish' | undefined
+        let readOnly = false
+        let fullSystem = false
         // Both terminal actions share the existing execution-scoped lifetime.
         // Switching to system mode discards either kind across a warm rebind.
         const markers = lifecycle.state.waitFinishes
         if (contextPlacement !== 'tail') markers?.delete(request.sessionID)
-        const candidate = contextPlacement === 'tail' ? markers?.get(request.sessionID) : undefined
+        // Consume events that already arrived before recording the boundary this
+        // preparation belongs to. Anything appended later invalidates it.
+        await waitEvents(request.sessionID)
+        // A queued guidance note is filed only for the execution after the one
+        // it was queued behind, so the old turn never sees it through memory.
+        await flushQueuedGuidance(request.sessionID)
+        const gapAtStart = gapVersion
+        const executionAtStart = engine.executionToken(request.sessionID)
+        // The marker is compared before and after preparation in every case,
+        // including "none at start, installed during an await".
+        const markerAtStart = contextPlacement === 'tail' ? lifecycle.state.waitFinishes?.get(request.sessionID) : undefined
+        const candidate = markerAtStart
+        let markerUsed: typeof candidate
+        let markerCleared = false
         if (role === "main") {
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
@@ -754,7 +853,7 @@ export default Plugin.define({
           // control from old tool results. A warm rebind to system mode must
           // discard a marker left by a tail attachment.
           if (candidate) {
-            const execution = engine.executionToken(request.sessionID)
+            const execution = executionAtStart
             const waiting = Array.isArray(state.workflow?.session?.waiting)
               ? state.workflow.session.waiting.map(String) : []
             const matches = candidate.kind !== 'finish' && execution !== undefined && execution === candidate.execution
@@ -763,11 +862,16 @@ export default Plugin.define({
               && waiting.every((id: string) => candidate.waiting.includes(id))
             if (matches) {
               finishing = 'wait'
-            } else markers!.delete(request.sessionID)
+              markerUsed = candidate
+            }
+            // Only the marker this request inspected may be dropped.
+            else if (markers?.get(request.sessionID) === candidate) {
+              markers.delete(request.sessionID)
+              markerCleared = true
+            }
           }
         }
         if (role === 'node_core') {
-          await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
             let shellWake = engine.isShellWake(request.sessionID)
             if (!shellWake) {
@@ -775,13 +879,18 @@ export default Plugin.define({
               const lastInput = transcript?.slice(-64).findLast((item: any) => item?.type === 'user' || item?.type === 'synthetic')
               shellWake = lastInput?.type === 'synthetic' && lastInput.metadata?.source === 'shell'
             }
-            for (const name of Object.keys(request.tools)) {
-              if (shellWake || !COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
+            // A transient authorization failure is not proof that an accepted
+            // finish expired. Keep the marker for a stable retry, stay read-only
+            // and never fall back to a working tail request.
+            readOnly = true
+            fullSystem = true
+            if (shellWake) for (const name of Object.keys(request.tools)) delete request.tools[name]
+            else for (const name of Object.keys(request.tools)) {
+              if (!COORDINATOR_NATIVE_READS.has(name) && name !== 'research_query') delete request.tools[name]
             }
             request.system.push({ type: 'text', text: shellWake
               ? 'A background completion arrived while execution is paused or unverified. Stop this response and report that explicit recovery is required.'
               : 'This node turn has no active drain authorization. Read existing material only until the user resumes or execution is reconciled.' })
-            if (candidate) markers!.delete(request.sessionID)
           } else if (candidate) {
             const execution = engine.executionToken(request.sessionID)
             // The service remains authoritative: never infer a finish from
@@ -790,13 +899,17 @@ export default Plugin.define({
               ? await research.call<any>('node_finish_pending', request.sessionID) : undefined
             if (execution !== undefined && pending?.turn_token === execution
                 && engine.executionToken(request.sessionID) === execution
-                && markers?.get(request.sessionID) === candidate) finishing = 'finish'
-            else if (markers?.get(request.sessionID) === candidate) markers.delete(request.sessionID)
+                && markers?.get(request.sessionID) === candidate) {
+              finishing = 'finish'
+              markerUsed = candidate
+            } else if (markers?.get(request.sessionID) === candidate) {
+              markers.delete(request.sessionID)
+              markerCleared = true
+            }
           }
         }
         // Keep every sibling result. Provider acceptance of this tool-free
         // request with tool history is a required, route-specific native gate.
-        if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
         const deadline=performance.now()+2000
         // Delivery checks read the persistent history and the original text;
         // the temporary tail is not part of either.
@@ -805,11 +918,41 @@ export default Plugin.define({
           ? research.observeEvidence(request.sessionID,history,Math.max(0,deadline-performance.now()))
           : Promise.resolve([])
         const text = await research.memory(request.sessionID)
+        if (text && (role==='main' || role==='node_core')) {
+          await research.delivered(request.sessionID,text,history,deadline-performance.now())
+        }
+        const issues = await evidence
+        // Wait for events that were already queued (including this message's own
+        // delivery). The wait only covers the chain that existed at call time, so
+        // the synchronous check below still tests whether another one was appended.
+        await within(waitEvents(request.sessionID).then(() => true), 1000)
+        // Nothing below awaits. A finishing decision, a tool set or an old
+        // authorization only applies to the boundary it was prepared from:
+        // attachment, execution, marker identity and the session event chain.
+        // The marker is read again from the shared map, so a terminal action
+        // that installed the very first marker during an await (including
+        // "none at start") also invalidates this preparation.
+        const markerNow = contextPlacement === 'tail' ? lifecycle.state.waitFinishes?.get(request.sessionID) : undefined
+        const markerStable = markerCleared ? markerNow === undefined : markerNow === markerAtStart
+        const boundaryStable = lifecycle.current() && !eventGap && !failedEvents.has(request.sessionID)
+          && gapVersion === gapAtStart && !eventChains.has(request.sessionID)
+          && engine.executionToken(request.sessionID) === executionAtStart
+          && markerStable
+          && (finishing === undefined || markerNow === markerUsed)
+        if (!boundaryStable && (role === 'main' || role === 'node_core')) {
+          finishing = undefined
+          readOnly = true
+          fullSystem = true
+        }
+        if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
+        else if (readOnly) for (const name of Object.keys(request.tools)) {
+          if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
+        }
         // In tail mode the stable blocks stay in the system prompt and the
         // volatile ones travel in one temporary message after the history.
-        // The stale notice and the blockless control fallbacks keep the old
-        // system placement: they change the safety text itself.
-        let tailMode = !finishing && contextPlacement === 'tail' && !!text
+        // The stale notice, the blockless control fallbacks and an unstable
+        // boundary keep the old system placement: they change the safety text.
+        let tailMode = !finishing && !fullSystem && contextPlacement === 'tail' && !!text
           && text.startsWith('Research context:\n') && !text.includes(STALE_CONTEXT_MARKER)
         let stable = text ?? ''
         const tail: string[] = []
@@ -826,18 +969,22 @@ export default Plugin.define({
             tailMode = false
           }
         }
-        if (text) {
-          if (stable) request.system.push({ type: "text", text: stable })
-          if (role==='main' || role==='node_core') await research.delivered(request.sessionID,text,history,deadline-performance.now())
-        }
-        const issues = await evidence
+        if (text && stable) request.system.push({ type: "text", text: stable })
         if (issues.length) {
           const warning = `Evidence delivery was not fully confirmed (${issues.join(', ')}). Re-read the affected pages and retry.`
           if (tailMode) tail.push(warning)
           else request.system.push({type:'text',text:warning})
         }
         if (finishing) {
-          request.system.push({ type: 'text', text: finishing === 'finish'
+          // A queued real user message may have been delivered into this same
+          // execution at the host's next step. The finishing barrier stays (no
+          // tools), but the old "end without work" instruction no longer covers
+          // that request: the user gets a text answer, and the pending result is
+          // still committed when the execution ends.
+          const queuedHere = deliveredInputHere(request.sessionID, executionAtStart)
+          request.system.push({ type: 'text', text: queuedHere
+            ? 'A user message arrived while this terminal action was still pending. This execution is finishing and no tools are available: answer that message in text without starting new work. The engine commits the pending result after this response ends.'
+            : finishing === 'finish'
             ? 'A research finish was accepted in this execution. End this response without further work; ' +
               'the engine will commit the node result and notify the coordinator after this execution ends. Do not call tools.'
             : 'A research wait was accepted in this execution. Acknowledge that the coordinator is waiting and end this response; ' +
@@ -862,13 +1009,36 @@ export default Plugin.define({
     await ctx.session.hook("context", injectContext)
 
     // A message the user types into a research session is guidance: record it
-    // and let it reach the model; the loop keeps going afterwards.
+    // and let it reach the model; the loop keeps going afterwards. While an
+    // accepted terminal action, or one still awaiting the service, owns this
+    // execution, the host queues the input instead of steering the finishing
+    // request. The guidance note then waits for delivery and for the execution
+    // after it, so the old turn's context never carries the pending text.
     await ctx.session.hook("prompt", async (input) => {
       try {
         if (!lifecycle.current()) return
         if (!research.isAssociated(input.sessionID)) return
-        const text = String((input.prompt as any)?.text ?? "").trim()
-        if (!text || text.startsWith("/")) return
+        const prompt = (input.prompt ?? {}) as { text?: unknown; files?: unknown }
+        const text = String(prompt.text ?? "").trim()
+        // A slash command keeps its own entry and priority.
+        if (text.startsWith("/")) return
+        const attachments = Array.isArray(prompt.files) ? prompt.files.length : 0
+        const role = research.roleOf(input.sessionID)
+        const messageID = String(input.messageID ?? "")
+        // Decide before the first await: the host gets the final delivery
+        // value in the same synchronous turn this hook returns. A message with
+        // only an attachment is still a real user input and must be held too.
+        if (messageID && contextPlacement === 'tail' && (role === 'main' || role === 'node_core')
+            && (text.length > 0 || attachments > 0) && terminalWindow(input.sessionID)) {
+          input.delivery = 'queue'
+          // The queued input is tracked on its own so an attachment-only
+          // delivery still marks the step that carries it. Only text becomes a
+          // note; an attachment still reaches the next request through history.
+          rememberQueuedInput(input.sessionID, messageID, engine.executionToken(input.sessionID))
+          if (text) rememberQueuedGuidance(input.sessionID, messageID, text, engine.executionToken(input.sessionID))
+          return
+        }
+        if (!text) return
         await research.call("note", input.sessionID, guidanceNote(text))
       } catch {
         // Without an open work segment there is nowhere to file the note; the message still goes through.
@@ -963,7 +1133,12 @@ export default Plugin.define({
           }
         }
       }
-      else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
+      else if (type === 'session.inbox.delivered') {
+        const inboxID = String((data as any)?.inboxID ?? '')
+        await engine.inboxDelivered(sessionID, inboxID, sequence)
+        markQueuedInputDelivered(sessionID, inboxID)
+        markQueuedGuidanceDelivered(sessionID, inboxID)
+      }
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
         const ending = engine.executionToken(sessionID)

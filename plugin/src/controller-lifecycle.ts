@@ -25,6 +25,24 @@ export interface RuntimeState {
   specialistResearch: Set<string>
   /** Tail-mode terminal actions. Keep the warm-state key and default kind for older attachments. */
   waitFinishes?: Map<string, { execution: string; waiting: string[]; kind?: "wait" | "finish" }>
+  /**
+   * One entry per terminal tool call that is still awaiting the service. Each
+   * call owns its own object so a failed sibling cannot clear a successful
+   * call's registration or its accepted marker. Used only to route new user
+   * input; it never means the tool succeeded.
+   */
+  terminalCalls?: Map<string, Set<{ execution?: string }>>
+  /**
+   * User guidance whose input was queued. The note is attempted only once the
+   * native message was delivered and the execution it was queued behind ended.
+   */
+  queuedGuidance?: Map<string, { id: string; text: string; execution?: string; delivered?: boolean }[]>
+  /**
+   * Every user input queued behind a terminal action, with or without text. Kept
+   * apart from `queuedGuidance` so an attachment-only delivery still marks the
+   * step that carries it; it never becomes a note.
+   */
+  queuedInputs?: Map<string, { id: string; execution?: string; delivered?: boolean }[]>
   shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean; refused?: boolean; createdAt?: number; eligibleAt?: number }>
   shellDelivered?: Set<string>
   shellSeen?: Set<string>
