@@ -40,6 +40,8 @@ export interface SessionHost {
   interrupt(sessionID: string): Promise<void>
   /** Resolves once the session is idle again, however its turn ended. */
   wait(sessionID: string): Promise<void>
+  /** True when the session is in a turn. Absent means the caller cannot tell. */
+  busy?(sessionID: string): boolean | Promise<boolean>
   /** The session's messages; the record of a finished turn ends with `{ type: "idle", outcome }`. */
   messages(sessionID: string): Promise<any[]>
   /** Read-only context during controller reconciliation, before it becomes ready. */

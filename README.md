@@ -1,6 +1,6 @@
 # Auto Research · OpenCode V2 自主研究插件
 
-**当前版本：v0.2.1**（2026-11-03），实验版本。已审阅一次真实模型研究实例；v0.1.1 针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+**当前版本：v0.2.2**（2026-11-04），实验版本。已审阅一次真实模型研究实例；v0.1.1 针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 当前源码包含 R1／R2、运行控制修复和 E1／E2／E3，数据库使用 schema 16。R2 已完成窄写工具、已交付基线 CAS、候选／审阅义务、关系与采用记录、持久自主调度预算及调用观测。E1／E2 提供显式启用的探索循环与证据结项，E3 扩展多范围、共同计划投入、异步比较、组合与恢复；本轮验证见 [E3 工程记录](docs/evidence/e3-multiroute/README.md)，真实模型质量／成本配对效果未验证。使用方式见 [plugin/README.md](plugin/README.md)。R2 和运行控制验证与边界分别见 [R2 实施记录](docs/evidence/r2-runtime/README.md)和[运行控制验证记录](docs/evidence/runtime-control/README.md)。
 
@@ -143,7 +143,7 @@ opencode --auto
 
 - 专家能读节点工作目录和研究记录，不能运行命令、改文件或写研究记录，也不能再叫别人。
 - 盲评专家只看得到分配给它的材料，看不到材料来源、项目目标和节点结论。
-- 每个节点同时最多 2 位专家，每位最多 10 分钟。
+- 每个节点同时最多 2 位专家。专家连续 5 分钟没有新的推进会停下；一直有推进时，最长工作 60 分钟。
 - 专家的完整报告存进研究记录，节点自己判断采不采用。
 
 详见 [plugin/README.md](plugin/README.md#节点内专家)。
@@ -159,7 +159,8 @@ opencode --auto
     "options": {
       "concurrency": 1,
       "specialistFanout": 2,
-      "specialistTimeoutMs": 600000,
+      "specialistStallMs": 300000,
+      "specialistTimeoutMs": 3600000,
       "python": "/path/to/python3"
     }
   }
@@ -170,7 +171,8 @@ opencode --auto
 |---|---|---|
 | `concurrency` | 1 | 同时运行的节点数。大于 1 还没有充分测试 |
 | `specialistFanout` | 2 | 每个节点同时最多几位专家 |
-| `specialistTimeoutMs` | 600000 | 每位专家的时间上限（毫秒），超时后收回已写的部分，记为"未完成" |
+| `specialistStallMs` | 300000 | 专家多久没有新的推进就停下（毫秒）。推进包括流式推理、文字、工具调用开始或结束，以及工具输出。停下后补问一次，收回标明未核实的摘要；没有可用文字时记为没有新的推进、没有可用报告，并保留子会话。补问因事件流、暂停、停止或预算没有发出时，同时保留停滞或时间上限的原句和该原因。失败的一轮把已有文字标明未核实后归档，状态不是完成，开场进度句不成为完整报告；取消的一轮不归档开场进度句。成功结束但文字出现在后续工具调用之前时，按顺序保留启动后的助手文字，并标明可能只是进度说明。无法确认退出时记为未核实，不用更早的进度句当报告 |
+| `specialistTimeoutMs` | 3600000 | 专家连续工作的绝对时间上限（毫秒）。即使一直有推进，到点也会停下。补问和记录方式与停滞相同，原因记为达到时间上限 |
 | `contextPlacement` | `"system"` | 科研上下文的位置。`"tail"` 把随账本变化的块放进本次请求末尾的临时 `<research_state>` 消息，系统提示保持稳定；默认保持原行为 |
 | `python` | `python3` | 管理研究记录所用的 Python（3.11 或更高） |
 | `registryPath` | `~/.local/share/auto-research-opencode/registry.sqlite3` | 记录"哪个会话属于哪个项目"的登记表 |
@@ -246,7 +248,7 @@ R2 修复写入契约、审阅任务生命周期和受管自动推进，不自�
 - **DSH 版已停止维护**：DSH 版停在 0.6.11，不再开发。两边的代码从此各自维护，新功能只进这个仓库。
 - **接管 DSH 建的项目**：在项目目录里用 `/research takeover` 接管，项目必须先在 DSH 里停下。接管是**单向**的：原来的 DSH 主会话会被移出项目，之后由 OpenCode 继续。同一个项目不要同时在 DSH 和 OpenCode 里打开。
 
-| | DSH 版 0.6.11 | OpenCode 版 v0.2.1 |
+| | DSH 版 0.6.11 | OpenCode 版 v0.2.2 |
 |---|---|---|
 | 宿主与界面 | DSH 网页版，浏览器里的 Research 工作台 | OpenCode V2 终端界面，全屏看板加侧栏和状态条 |
 | 开始研究 | `/research init <目标>`，再 `/research auto` | 一条 `/research auto <目标>`，在首页就能用 |
@@ -266,7 +268,10 @@ R2 修复写入契约、审阅任务生命周期和受管自动推进，不自�
 make test          # Python 测试 + 插件测试 + 类型检查
 make test-python   # 只跑 Python 测试
 make test-plugin   # 只跑插件测试（假宿主 + 真实 Python）
+make verify-specialist-lifecycle  # 漂移检查，然后 TLC
 ```
+
+`make test` 不跑 TLC，也不跑漂移检查。`make verify-specialist-lifecycle` 两样都跑：先比对指纹，再跑 TLC。
 
 改完插件代码后，要执行 `opencode service restart`，正在用的 OpenCode 才会加载新代码。插件的工作机制、工具和角色见 [plugin/README.md](plugin/README.md)。
 
