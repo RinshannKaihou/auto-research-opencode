@@ -93,6 +93,16 @@ def test_one_tool_free_finishing_request_is_accounted_for():
     assert probe.context_placement_ok(checks) is True
 
 
+def test_a_finishing_request_with_a_missing_tool_result_is_rejected():
+    bad = finishing()
+    bad["messages"] = bad["messages"][:-1]
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), bad], "tail", "")
+    assert checks["finishing_requests"] == 1
+    assert checks["tool_pairing_ok"] is False
+    assert probe.context_placement_ok(checks) is False
+
+
 def test_a_finishing_request_with_a_tail_is_rejected():
     bad = finishing()
     bad["messages"] = bad["messages"] + [tail()]

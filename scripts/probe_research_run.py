@@ -86,8 +86,8 @@ def context_placement_checks(bodies, placement, persisted_context):
         'tail_follows_every_regular_tool_continuation': all(_has_tail(body) for body in regular_continuations),
         'finishing_requests_have_no_tools_and_no_tail': all(
             not body.get('tools') and not _has_tail(body) for body in finishing),
-        'tool_pairing_ok': all(_tool_pairing_ok(body['messages'][:-1])
-                               for body in research if body not in finishing),
+        'tool_pairing_ok': all(_tool_pairing_ok(
+            body['messages'][:-1] if _has_tail(body) else body['messages']) for body in research),
         'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
         'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in tails),
         'boundary_before_tail': all(

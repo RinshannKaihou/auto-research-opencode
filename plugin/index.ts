@@ -87,6 +87,12 @@ export default Plugin.define({
     let notifyEventState = () => {}
     const markGap = () => { eventGap = true; gapVersion++; notifyEventState() }
     const waitEvents = (sessionID: string) => eventChains.get(sessionID) ?? Promise.resolve()
+    /** Drop a wait marker only for the execution it belongs to (or for cleanup). */
+    const clearWaitFinish = (sessionID: string, execution?: string) => {
+      const markers = lifecycle.state.waitFinishes
+      const marker = markers?.get(sessionID)
+      if (marker && (execution === undefined || marker.execution === execution)) markers!.delete(sessionID)
+    }
     let observeSpecialist: ((event: any) => void) | undefined
     const queueEvent = (event: any) => {
       observeSpecialist?.(event)
@@ -701,7 +707,6 @@ export default Plugin.define({
         if (!main) throw new Error('Research controller owner is unavailable')
         await ensureController(root, main)
         let finishing = false
-        let waitMarker: { execution: string; waiting: string[] } | undefined
         if (role === "main") {
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
@@ -733,9 +738,11 @@ export default Plugin.define({
           }
           // An accepted wait finishes on the next primary request of the same
           // execution. This marker is process-local and never reconstructs
-          // control from old tool results.
+          // control from old tool results. A warm rebind to system mode must
+          // discard a marker left by a tail attachment.
           const markers = lifecycle.state.waitFinishes
-          const candidate = markers?.get(request.sessionID)
+          if (markers && contextPlacement !== 'tail') markers.delete(request.sessionID)
+          const candidate = contextPlacement === 'tail' ? markers?.get(request.sessionID) : undefined
           if (candidate) {
             const execution = engine.executionToken(request.sessionID)
             const waiting = Array.isArray(state.workflow?.session?.waiting)
@@ -746,7 +753,6 @@ export default Plugin.define({
               && waiting.every((id: string) => candidate.waiting.includes(id))
             if (matches) {
               finishing = true
-              waitMarker = candidate
             } else markers!.delete(request.sessionID)
           }
         }
@@ -818,11 +824,6 @@ export default Plugin.define({
         // when the history already carries a hint, and the tail must never be
         // written into the host's own message list.
         if (tail.length) request.messages = [...request.messages, researchStateMessage(tail) as any]
-        // One accepted wait yields one finishing request. A delayed report
-        // notification in the same execution leaves the marker alone.
-        if (waitMarker && lifecycle.state.waitFinishes?.get(request.sessionID) === waitMarker) {
-          lifecycle.state.waitFinishes!.delete(request.sessionID)
-        }
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
@@ -908,7 +909,12 @@ export default Plugin.define({
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
       if (main && research.inScope(root)) await ensureController(root, main)
       const sequence = typeof event.durable?.seq === 'number' ? event.durable.seq : undefined
-      if (type === "session.execution.started") await engine.started(sessionID, event.id, sequence)
+      if (type === "session.execution.started") {
+        await engine.started(sessionID, event.id, sequence)
+        const current = engine.executionToken(sessionID)
+        const marker = lifecycle.state.waitFinishes?.get(sessionID)
+        if (marker && marker.execution !== current) clearWaitFinish(sessionID, marker.execution)
+      }
       else if (type === 'session.inbox.enqueued') {
         const metadata = (data as any)?.item?.payload?.metadata
         // Register in execute.before: the notification can precede execute.after itself.
@@ -937,7 +943,11 @@ export default Plugin.define({
       else if (type === 'session.inbox.delivered') await engine.inboxDelivered(sessionID, String((data as any)?.inboxID ?? ''), sequence)
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
+        const ending = engine.executionToken(sessionID)
         await engine.ended(sessionID, outcome, event.id, sequence)
+        // Do not clear a marker that a newer execution installed while this
+        // terminal transition was being processed.
+        if (engine.executionToken(sessionID) === ending) clearWaitFinish(sessionID, ending)
       }
       nativeObservations.event(event)
     }

@@ -4674,7 +4674,7 @@ describe('tail wait completion', () => {
     return task
   }
 
-  test('an accepted wait produces one full-system, tool-free finishing request', async () => {
+  test('an accepted wait keeps finishing until the execution ends', async () => {
     const host = await load({ placement: 'tail' })
     const task = await acceptedWait(host)
     const history = [waitResult(task.task_id)]
@@ -4695,8 +4695,22 @@ describe('tail wait completion', () => {
     expect(systemText(request)).toContain('## checkpoint_recovery')
     expect(cacheHints(request)).toHaveLength(0)
 
-    // The marker is one-shot: a later execution gets the normal placement.
+    // A repeated preparation for the same active execution is still finishing.
+    const repeated = modelRequest('ses_main')
+    repeated.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(repeated)
+    expect(Object.keys(repeated.tools)).toHaveLength(0)
+    expect(systemText(repeated)).toContain('A research wait was accepted')
+
+    // A verified terminal transition clears the marker even before a new execution.
     host.turn.end('ses_main')
+    await Bun.sleep(100)
+    const afterEnd = modelRequest('ses_main')
+    await host.hooks.get('context')!(afterEnd)
+    expect(Object.keys(afterEnd.tools)).toContain('research_query')
+    expect(systemText(afterEnd)).not.toContain('A research wait was accepted')
+
+    // A later execution gets the normal placement too.
     host.turn.start('ses_main')
     await Bun.sleep(50)
     const next = modelRequest('ses_main')
@@ -4779,6 +4793,31 @@ describe('tail wait completion', () => {
     await second.hooks.get('context')!(next)
     expect(Object.keys(next.tools)).toContain('research_query')
     expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+  })
+
+  test('a warm rebind to system mode discards a tail wait marker', async () => {
+    const first = await load({ placement: 'tail' })
+    const task = await acceptedWait(first)
+    const system = await load()
+    const history = [waitResult(task.task_id)]
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await system.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    expect(request.messages).toBe(history)
+    expect(JSON.stringify(request.messages)).not.toContain('<research_state>')
+
+    // Switching back to tail must not resurrect the discarded marker.
+    const tail = await load({ placement: 'tail' })
+    const next = modelRequest('ses_main')
+    next.messages = [waitResult(task.task_id)] as any
+    await tail.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research wait was accepted')
   })
 
   test('a report notification does not clear the marker and the wake runs once', async () => {
