@@ -25,7 +25,7 @@ make verify-specialist-lifecycle
 
 `make test` does not run TLC or the drift check. `make verify-specialist-lifecycle` runs both: the drift check, then TLC. Drift exits 3 and TLC does not run.
 
-That runs TLC from the stable TLA+ release v1.7.4 (TLC 2.19 of 08 August 2024, rev `5a47802`, jar sha256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`) on `spec/specialist-child-lifecycle/SpecialistChildLifecycle.tla`. The first run downloads the jar into `spec/specialist-child-lifecycle/.cache/` (gitignored), checks the sha256, and checks that the jar's manifest tag is `v1.7.4` and that TLC's banner is `TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)`. Java and git must be on `PATH`. This clone must contain sync commit `fb1b19b9d33723f9a35cb87f23a2e198595a060b` and pre-#28 commit `8a2c6c9`. The five checks finish in a few seconds after the jar is cached. TLC is killed if one check exceeds 120 seconds.
+That runs TLC from the stable TLA+ release v1.7.4 (TLC 2.19 of 08 August 2024, rev `5a47802`, jar sha256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`) on `spec/specialist-child-lifecycle/SpecialistChildLifecycle.tla`. The first run downloads the jar into `spec/specialist-child-lifecycle/.cache/` (gitignored), checks the sha256, and checks that the jar's manifest tag is `v1.7.4` and that TLC's banner is `TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)`. Java and git must be on `PATH`. This clone must contain sync commit `46ec18141123b54c30acdebee6ef7437e2a566c0` and pre-#28 commit `8a2c6c9`. The five checks finish in a few seconds after the jar is cached. TLC is killed if one check exceeds 120 seconds.
 
 The script exits with its own status. GNU make prints that status as `Error N` and then exits 2 itself. Read the script's status and its first word (`DRIFT`, `COUNTEREXAMPLE`, `MODEL`, `SETUP`), not make's own exit code.
 
@@ -73,7 +73,7 @@ A pass prints `Checked invariant Safe` for the code on disk. If that sentence is
 
 ## Coverage
 
-Sync commit: `fb1b19b9d33723f9a35cb87f23a2e198595a060b`
+Sync commit: `46ec18141123b54c30acdebee6ef7437e2a566c0`
 
 Confirmed against the fingerprinted functions in `plugin/src/specialists.ts` and `plugin/index.ts` at that commit. `noteBusy` and `appearsBusy` at that commit are the bodies now fingerprinted. `host.wait`, `host.messages`, and the slice of `run` from `const exited =` through the `finishChild` call that receives `exited` are fingerprinted from that same commit. The rest of `run` is not. The script hashes each function's signature and body (not the comment above it), and that one slice, and compares the hash to `git show` of this commit. If any hash differs, the script exits 3.
 
