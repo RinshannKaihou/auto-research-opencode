@@ -35,6 +35,7 @@ These are observed values from one pair. Shorter tail sessions also lower uncach
 - Same probe with `--context-placement system`: completed; 6 requests, 4 markers at most.
 - `python3 scripts/probe_placement_boundary.py`: OpenCode 2.2.5 isolated host, local `ari-probe/probe` route; context hook only on primary requests, one compaction hook request without tail, completed summary and persisted history clean, mixed `research_query` + `research_wait` group preserved both results before the next request.
 - `bun test plugin/test/context-placement.test.ts`: reasoning/tool wire fixture passes against the installed OpenAI-compatible adapter.
+- Specialist lifecycle covered-function fingerprint check (`drift_problems(sync_commit())`): no drift. Full TLC was not rerun.
 - Tail wait-completion tests cover accepted, failed, mixed-group, stale-execution, warm-rebind, notification-before-finishing, wake-once, evidence-warning and system-mode cases.
 
 ## Remaining limitations
