@@ -2511,7 +2511,7 @@ describe("node specialists", () => {
     }
   }
 
-  test("a failed specialist turn does not archive the opening progress line", async () => {
+  test("a failed turn's opening line is archived unverified, not as a clean report", async () => {
     const host = await load({ hostSetup: openingBeforeIdle })
     await nodeAtWork(host)
     const pending = host.call("research_delegate", host.created[0]!, TASK)
@@ -2524,10 +2524,42 @@ describe("node specialists", () => {
       error: "专家会话以「failed」结束",
       child_session_id: child,
     })
-    expect(result.result.preview ?? "").toBe("")
-    expect(result.result.report_path).toBeUndefined()
-    expect(result.result.incomplete).toBeUndefined()
-    expect(JSON.stringify(result.result)).not.toContain(OPENING_LINE)
+    expect(result.state).not.toBe("completed")
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBe(true)
+    expect(result.result.preview).toContain("【未完成·未核实】")
+    expect(result.result.preview).toContain(OPENING_LINE)
+    expect(String(result.result.preview).startsWith("【未完成·未核实】")).toBe(true)
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    expect(archived).toMatchObject({ stop_reason: "failed", incomplete: true, unverified: true })
+    expect(archived.output[0].text.startsWith("【未完成·未核实】")).toBe(true)
+    expect(archived.output[0].text).toContain(OPENING_LINE)
+  })
+
+  test("a failed specialist turn archives its findings marked unverified", async () => {
+    const finding = "失败前写下的发现：有三处与原始计数不符。"
+    const host = await load()
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    host.reply(child, finding, "failed")
+    const result = await pending
+    expect(result.state).not.toBe("completed")
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "专家会话以「failed」结束",
+      child_session_id: child,
+    })
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBe(true)
+    expect(result.result.preview).toContain("【未完成·未核实】")
+    expect(result.result.preview).toContain(finding)
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    expect(archived.unverified).toBe(true)
+    expect(archived.incomplete).toBe(true)
+    expect(archived.output[0].text.startsWith("【未完成·未核实】")).toBe(true)
+    expect(archived.output[0].text).toContain(finding)
   })
 
   test("a parent cancel does not archive the opening progress line", async () => {
@@ -2579,6 +2611,137 @@ describe("node specialists", () => {
     expect(archived.unverified).toBeUndefined()
   })
 
+  test("a progress-only succeeded turn keeps assistant text written after the kickoff", async () => {
+    const finding = "沿途发现：八个事件里有三处与原始计数不符。"
+    const beforeKickoff = "启动前的旧文字不应进入报告。"
+    const host = await load({
+      hostSetup: (raw) => {
+        const native = raw.ctx.session.context
+        raw.ctx.session.context = async (input: { sessionID: string }) => {
+          const messages = [...await native(input)]
+          const idle = messages.at(-1)
+          const node = raw.created[0]
+          if (node && input.sessionID !== node && raw.created.includes(input.sessionID) && idle?.type === "idle") {
+            messages.pop()
+            messages.unshift({ type: "assistant", content: [{ type: "text", text: beforeKickoff }] })
+            messages.push(
+              { type: "assistant", content: [{ type: "text", text: finding }] },
+              {
+                type: "assistant",
+                content: [
+                  { type: "text", text: OPENING_LINE },
+                  {
+                    type: "tool",
+                    id: "call_read",
+                    name: "read",
+                    state: { status: "completed", input: { path: "notes.md" }, content: [{ type: "text", text: "file body" }] },
+                  },
+                ],
+              },
+              idle,
+            )
+          }
+          return messages
+        }
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    host.reply(child, "", "succeeded")
+    const result = await pending
+    expect(result.state).not.toBe("completed")
+    expect(result).toMatchObject({ state: "incomplete", exit_verified: true, child_session_id: child })
+    expect(result.result.incomplete).toBe(true)
+    expect(result.result.unverified).toBeUndefined()
+    const preview = String(result.result.preview)
+    expect(preview.startsWith("【可能只是进度说明】")).toBe(true)
+    expect(preview.indexOf(finding)).toBeGreaterThan(0)
+    expect(preview.indexOf(OPENING_LINE)).toBeGreaterThan(preview.indexOf(finding))
+    expect(preview).not.toContain(beforeKickoff)
+    const archived = JSON.parse(readFileSync(result.result.report_path, "utf8"))
+    const body = String(archived.output[0].text)
+    expect(archived.incomplete).toBe(true)
+    expect(archived.unverified).toBeUndefined()
+    expect(body.indexOf(finding)).toBeGreaterThan(0)
+    expect(body.indexOf(OPENING_LINE)).toBeGreaterThan(body.indexOf(finding))
+    expect(body).not.toContain(beforeKickoff)
+  })
+
+  function refuseSummary(host: Awaited<ReturnType<typeof load>>, error: Error) {
+    const original = host.ctx.session.synthetic
+    let resumes = 0
+    host.ctx.session.synthetic = async (input: any) => {
+      const node = host.created[0]
+      const summary = node && input.sessionID !== node && input.resume && ++resumes >= 2
+      if (summary) throw error
+      return original(input)
+    }
+  }
+
+  test("a refused cap summary keeps the cap sentence with the refusal", async () => {
+    const host = await load({ hostSetup: timeoutTranscript })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    host.events.end()
+    await Bun.sleep(30)
+    const result = await pending
+    expect(result.error).toContain("达到专家时间上限，没有可用报告")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+    expect(String(result.error).indexOf("达到专家时间上限，没有可用报告"))
+      .toBeLessThan(String(result.error).indexOf("事件流中断或需核对"))
+  })
+
+  test("a refused stall summary keeps the stall sentence with the refusal", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        raw.ctx.options.specialistStallMs = 200
+        raw.ctx.options.specialistTimeoutMs = 60_000
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    host.events.end()
+    const result = await pending
+    expect(result.error).toContain("专家一段时间没有新的推进，没有可用报告")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+    expect(String(result.error).indexOf("专家一段时间没有新的推进，没有可用报告"))
+      .toBeLessThan(String(result.error).indexOf("事件流中断或需核对"))
+    expect(result.error).not.toContain("达到专家时间上限")
+  })
+
+  test("a summary refusal matches research_events_need_check instead of the Chinese sentence", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        refuseSummary(raw, Object.assign(new Error("controller check refused the send"), { code: "research_events_need_check" }))
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    const result = await pending
+    expect(result.error).toContain("达到专家时间上限，没有可用报告")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+  })
+
+  test("the Chinese event-gap sentence without that code is not a summary refusal", async () => {
+    const host = await load({
+      hostSetup: (raw) => {
+        timeoutTranscript(raw)
+        refuseSummary(raw, new Error("研究事件需核对；停止和暂停仍可用，核对后可 /research resume"))
+      },
+    })
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    await specialist(host, 1)
+    const result = await pending
+    expect(result.error).toBe("达到专家时间上限，没有可用报告")
+    expect(result.error).not.toContain("事件流中断或需核对")
+  })
+
   test("a summary refused by an event-stream gap names the gap", async () => {
     const host = await load({ hostSetup: timeoutTranscript })
     await nodeAtWork(host)
@@ -2590,9 +2753,8 @@ describe("node specialists", () => {
     expect(result).toMatchObject({
       state: "incomplete",
       exit_verified: true,
-      error: "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。",
+      error: "达到专家时间上限，没有可用报告\n事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。",
     })
-    expect(result.error).not.toContain("没有可用报告")
     expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
     expect(result.result.report_path).toBeUndefined()
   })
@@ -2607,9 +2769,8 @@ describe("node specialists", () => {
     expect(result).toMatchObject({
       state: "incomplete",
       exit_verified: true,
-      error: "研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。",
+      error: "达到专家时间上限，没有可用报告\n研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。",
     })
-    expect(result.error).not.toContain("没有可用报告")
     expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
   })
 
@@ -2623,9 +2784,8 @@ describe("node specialists", () => {
     expect(result).toMatchObject({
       state: "incomplete",
       exit_verified: true,
-      error: "自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。",
+      error: "达到专家时间上限，没有可用报告\n自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。",
     })
-    expect(result.error).not.toContain("没有可用报告")
     expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
   })
 
