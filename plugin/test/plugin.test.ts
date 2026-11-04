@@ -4775,6 +4775,32 @@ describe('tail wait completion', () => {
     expect(systemText(request)).not.toContain('A research wait was accepted')
   })
 
+  test('a replayed older terminal event does not clear a newer wait marker', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'terminal replay fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    host.events.push({ id: 'older-terminal', type: 'session.execution.succeeded',
+      data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+
+    // Execution B accepts a wait; then execution A's terminal event is replayed.
+    host.turn.start('ses_main')
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+    host.events.push({ id: 'older-terminal', type: 'session.execution.succeeded',
+      data: { sessionID: 'ses_main' } })
+    await Bun.sleep(100)
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  })
+
   test('a warm rebind keeps the accepted wait for the same execution', async () => {
     const first = await load({ placement: 'tail' })
     const task = await acceptedWait(first)

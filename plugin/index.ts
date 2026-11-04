@@ -944,10 +944,11 @@ export default Plugin.define({
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {
         const outcome = type.slice('session.execution.'.length) as 'succeeded' | 'failed' | 'interrupted'
         const ending = engine.executionToken(sessionID)
-        await engine.ended(sessionID, outcome, event.id, sequence)
-        // Do not clear a marker that a newer execution installed while this
-        // terminal transition was being processed.
-        if (engine.executionToken(sessionID) === ending) clearWaitFinish(sessionID, ending)
+        const handled = await engine.ended(sessionID, outcome, event.id, sequence)
+        // Only a terminal event this handler actually processed may confirm
+        // that the marked execution ended. Replayed duplicates and no-op ends
+        // leave a newer execution's marker untouched.
+        if (handled && engine.executionToken(sessionID) === ending) clearWaitFinish(sessionID, ending)
       }
       nativeObservations.event(event)
     }

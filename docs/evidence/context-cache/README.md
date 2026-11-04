@@ -10,7 +10,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 - A lowering regression test against the installed Anthropic adapter: hints survive on nonblank text, system text and tool results, and are dropped on reasoning, tool-call and blank text parts. The helper therefore only selects nonblank text and tool-result parts, walking back to an earlier supported part or falling back to system placement. A trailing blank text part is covered explicitly and selects the earlier text. A hint on a dropped part still counts against the SDK's four-marker budget, so the limit check counts every schema-legal hint while selection stays narrowed.
 - Python tests for the probe checker: a missing tail on any research request, or a tail that splits a tool pair, fails the check; an auxiliary request without a tail is ignored.
 - Fake-host tests for a stable system prefix across node and coordinator ledger writes, checkpoint base delivery, evidence-warning placement, blind isolation, stale/blockless fallback, pause control text, unassociated sessions, and invalid option values.
-- Fake-host tests for tail wait completion: one tool-free full-system finishing request, repeated preparation before execution end, terminal clearing, failed waits, mixed wait/query groups, stale executions, warm rebinds, warm tail→system rollback, a report notification before finishing, wake-once, and the system-mode control.
+- Fake-host tests for tail wait completion: one tool-free full-system finishing request, repeated preparation before execution end, terminal clearing, replayed older terminal events, failed waits, mixed wait/query groups, stale executions, warm rebinds, warm tail→system rollback, a report notification before finishing, wake-once, and the system-mode control.
 - One isolated-host smoke run of `scripts/probe_research_run.py` with `--context-placement tail`, plus the `"system"` control, and the compaction/reasoning boundary fixture in [boundary/README.md](boundary/README.md).
 
 ## Commands and results
@@ -18,7 +18,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 `PYTHONDONTWRITEBYTECODE=1 make test` (run in the agent VM):
 
 - Python: 871 passed.
-- Bun: 306 passed, 0 failed.
+- Bun: 307 passed, 0 failed.
 - TypeScript: `tsc -p tsconfig.json --noEmit` clean.
 
 `python3 scripts/probe_research_run.py --context-placement tail --wait-finish --request-dump <temp file>`:

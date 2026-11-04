@@ -474,11 +474,13 @@ export class Engine {
     if (this.busy.has(sessionID)) this.ours.add(sessionID)
   }
 
-  ended(sessionID: string, outcome: Outcome, eventID?:string, eventSeq?: number): Promise<void> {
-    if (!this.current()) return Promise.resolve()
-    if (eventID && this.runtime.endedEvents.get(sessionID)?.includes(eventID)) return Promise.resolve()
+  ended(sessionID: string, outcome: Outcome, eventID?:string, eventSeq?: number): Promise<boolean> {
+    if (!this.current()) return Promise.resolve(false)
+    // Replayed terminal events are already recorded; they must not confirm a
+    // later execution's end or clear its wait marker.
+    if (eventID && this.runtime.endedEvents.get(sessionID)?.includes(eventID)) return Promise.resolve(false)
     const root = this.research.rootOf(sessionID)
-    if (!root || !this.drives(sessionID)) return Promise.resolve()
+    if (!root || !this.drives(sessionID)) return Promise.resolve(false)
     const pending = this.runtime.pendingEnds.get(sessionID) ?? {
       execution: this.turns.get(sessionID), turn: eventID ?? this.turns.get(sessionID) ?? randomUUID(), uncertain: false,
     }
@@ -499,7 +501,7 @@ export class Engine {
         try {
           if (claim.claimed || pending.uncertain) await this.afterTurn(sessionID, root, outcome,turn,execution)
         } catch (error) {
-          if (!this.current()) return
+          if (!this.current()) return false
           if ((error as any)?.code === 'runtime_budget_exhausted') {
             await this.say(sessionID, (error as Error).message).catch(() => {})
           } else pending.error = error
@@ -522,6 +524,7 @@ export class Engine {
       this.runtime.pendingEnds.delete(sessionID)
       this.shellWake.delete(sessionID)
       if (eventID) this.runtime.endedEvents.set(sessionID, [...(this.runtime.endedEvents.get(sessionID) ?? []), eventID].slice(-32))
+      return true
     })
   }
 
