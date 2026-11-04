@@ -1,6 +1,6 @@
 # auto-research-opencode · 自主研究插件（OpenCode V2）
 
-发布版本 v0.2.1（2026-11-03，实验版本）。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲当前插件怎么工作。
+发布版本 v0.2.2（2026-11-04，实验版本）。安装、更新、卸载和常见问题见[仓库根目录的 README](../README.md)；这份文档讲当前插件怎么工作。
 
 这是面向 OpenCode V2（兼容至 2.2.5，含；已在 2.2.5 与更早的 2.0.18 验证，中间版本未逐个复验，其后未测，不绑死某一宿主版本）的研究插件。**它会自动推进研究**：你给出研究目标后，插件驱动模型自己完成规划、派发、执行、综合和收尾。你可以随时插话指导，也可以暂停或停止。
 
@@ -156,7 +156,7 @@ OpenCode 每结束一轮都会发出一个事件，引擎读取研究记录后�
 | `/research recover delivery <report\|wake> <通知 ID> <delivered\|not-sent> <原因>` | 核对报告或唤醒消息是否被宿主接受，登记结果（需要确认） |
 | `/research retry <任务 ID> <原因>` | 对已核实退出的节点创建新执行（需要确认） |
 | `/research budget` | 查看持久限额、使用量和覆盖范围 |
-| `/research budget <turns\|nodes\|seconds\|tokens\|cost> <正整数\|off> <原因>` | 主会话显式修改限额，off 表示未启用；resume 不清账 |
+| `/research budget <turns\|nodes\|seconds\|tokens\|cost\|work> <正数\|off> <原因>` | 主会话显式修改限额，off 表示未启用；turns、nodes、seconds、tokens 为正整数，cost 与 work 可用正小数；resume 不清账 |
 | `/research board` | 打开只读看板：1 概览、2 研究、3 成果；v 切换所属内容 |
 | `/research context-policy [legacy\|r1]` | 主会话查看／切换上下文策略；后续模型请求生效，不重开项目 |
 | `/research init <目标>` | 只建立项目、不开始，适合先和模型讨论方案 |
