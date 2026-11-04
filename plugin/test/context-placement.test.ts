@@ -258,6 +258,19 @@ describe('markHistoryCacheBoundary', () => {
     expect(markHistoryCacheBoundary({ messages: [{ role: 'system', content: [{ type: 'compaction', provider: 'p' }] }] })).toBeUndefined()
   })
 
+  test('a hint on a part the protocol drops still spends the SDK budget', () => {
+    const messages = [
+      { role: 'assistant', content: [{ type: 'reasoning', text: 'why', encrypted: 'sig', cache: { type: 'ephemeral' } }] },
+      { role: 'user', content: [textPart('later')] },
+    ]
+    const system = [{ type: 'text', text: 'a', cache: { type: 'ephemeral' } }]
+    const tools = {
+      one: { description: 'one', input: {}, cache: { type: 'ephemeral' } },
+      two: { description: 'two', input: {}, cache: { type: 'ephemeral' } },
+    }
+    expect(markHistoryCacheBoundary({ messages, system, tools })).toBeUndefined()
+  })
+
   test('keeps an existing explicit hint and leaves the array alone', () => {
     const messages = [{ role: 'user', content: [{ type: 'text', text: 'hello', cache: { type: 'ephemeral' } }] }]
     expect(markHistoryCacheBoundary({ messages })).toBe(messages)

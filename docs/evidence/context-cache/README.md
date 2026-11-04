@@ -7,7 +7,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 ## What was checked
 
 - Unit tests for the split allowlist, the temporary `<research_state>` message, and the history cache hint.
-- A lowering regression test against the installed Anthropic adapter: hints survive on text, system text and tool results, and are dropped on reasoning and tool-call parts. The helper therefore only selects text and tool-result parts, walking back to an earlier supported part or falling back to system placement.
+- A lowering regression test against the installed Anthropic adapter: hints survive on text, system text and tool results, and are dropped on reasoning and tool-call parts. The helper therefore only selects text and tool-result parts, walking back to an earlier supported part or falling back to system placement. A hint on a dropped part still counts against the SDK's four-marker budget, so the limit check counts every schema-legal hint while selection stays narrowed.
 - Python tests for the probe checker: a missing tail on any research request, or a tail that splits a tool pair, fails the check; an auxiliary request without a tail is ignored.
 - Fake-host tests for a stable system prefix across node and coordinator ledger writes, checkpoint base delivery, evidence-warning placement, blind isolation, stale/blockless fallback, pause control text, unassociated sessions, and invalid option values.
 - One isolated-host smoke run of `scripts/probe_research_run.py` with `--context-placement tail`, plus the `"system"` control.
@@ -17,7 +17,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 `make test` (run in the agent VM):
 
 - Python: 851 passed.
-- Bun: 253 passed, 0 failed.
+- Bun: 254 passed, 0 failed.
 - TypeScript: `tsc -p tsconfig.json --noEmit` clean.
 
 `python3 scripts/probe_research_run.py --context-placement tail --request-dump <temp file>`:

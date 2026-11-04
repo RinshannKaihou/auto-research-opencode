@@ -111,6 +111,12 @@ interface CacheablePart {
  * usable boundary.
  */
 const LOWERED_CACHE_PARTS = new Set(['text', 'tool-result'])
+/**
+ * Hints the SDK counts before lowering. This is deliberately wider than
+ * LOWERED_CACHE_PARTS: the budget is spent by schema-legal hints even when a
+ * protocol later drops them, so the count must match the SDK's own.
+ */
+const COUNTED_CACHE_PARTS = new Set(['text', 'media', 'tool-call', 'tool-result', 'reasoning'])
 /** `@opencode/ai` counts manual hints against this cap before placing its own. */
 const CACHE_BREAKPOINT_LIMIT = 4
 
@@ -119,13 +125,18 @@ function isLoweredCachePart(part: unknown): part is CacheablePart {
     && LOWERED_CACHE_PARTS.has(String((part as CacheablePart).type))
 }
 
+function isCountedCachePart(part: unknown): part is CacheablePart {
+  return typeof part === 'object' && part !== null
+    && COUNTED_CACHE_PARTS.has(String((part as CacheablePart).type))
+}
+
 function hintCount(request: { system?: any[]; messages?: any[]; tools?: Record<string, any> }): number {
   let count = 0
   for (const tool of Object.values(request.tools ?? {})) if (tool?.cache !== undefined) count++
   for (const part of request.system ?? []) if (part?.cache !== undefined) count++
   for (const message of request.messages ?? []) {
     for (const part of Array.isArray(message?.content) ? message.content : []) {
-      if (isLoweredCachePart(part) && part.cache !== undefined) count++
+      if (isCountedCachePart(part) && part.cache !== undefined) count++
     }
   }
   return count
