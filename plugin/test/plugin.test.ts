@@ -10,7 +10,7 @@ import { associatedStatus } from "../src/format"
 import { StorageClient } from "../src/storage"
 import { Research } from "../src/research"
 import { keepsTool } from "../src/tools"
-import { SPECIALIST_STALL_MS, SPECIALIST_TIMEOUT_MS, STOP_GRACE_MS, SUMMARY_GRACE_MS, specialistGraceForTest, specialistProgressEvent } from "../src/specialists"
+import { SPECIALIST_STALL_MS, SPECIALIST_TIMEOUT_MS, STOP_GRACE_MS, SUMMARY_GRACE_MS, Specialists, specialistGraceForTest, specialistProgressEvent } from "../src/specialists"
 import { TOOL_NAMES } from "../src/tools"
 import { forgetControllerForTest } from "../src/controller-lifecycle"
 
@@ -61,7 +61,13 @@ class EventStream implements AsyncIterable<any> {
 const nativeSessions = new Map<string, {
   transcripts: Map<string, any[]>; busy: Set<string>; waiters: Map<string, (() => void)[]>
 }>()
-function fakeHost(registryPath: string, directory: string, python?: string) {
+function fakeHost(
+  registryPath: string,
+  directory: string,
+  python?: string,
+  exposeSessionBusy = true,
+  busySignal: "status" | "execution" = "status",
+) {
   const tools = new Map<string, any>()
   const hooks = new Map<string, Hook>()
   const synthetic: any[] = []
@@ -80,6 +86,9 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
     const content = text ? [{ type: "assistant", content: [{ type: "text", text }] }] : []
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), ...content, { type: "idle", outcome }])
     busy.delete(sessionID)
+    // Production OpenCode 2.2.5 has no session.busy. The fallback reads events.
+    // Captured traces have session.execution.started and its execution end, not session.status.
+    if (!exposeSessionBusy) signalIdle(sessionID, outcome)
     for (const resolve of waiters.get(sessionID) ?? []) resolve()
     waiters.delete(sessionID)
   }
@@ -114,6 +123,7 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
         if (input.resume) {
           busy.add(input.sessionID)
           events.push({ type: 'session.inbox.delivered', data: { sessionID: input.sessionID, inboxID: input.id } })
+          if (!exposeSessionBusy) signalBusy(input.sessionID)
         }
         return { id: input.id }
       },
@@ -136,6 +146,25 @@ function fakeHost(registryPath: string, directory: string, python?: string) {
         return { dispose: async () => {}, events: { emit: async () => {} } }
       },
     },
+  }
+  if (!exposeSessionBusy) delete ctx.session.busy
+  /** Busy and idle as the no-`session.busy` fallback sees them. `execution` matches captured traces. */
+  function signalBusy(sessionID: string) {
+    if (busySignal === "execution") {
+      events.push({ type: "session.execution.started", data: { sessionID } })
+      return
+    }
+    events.push({ type: "session.status", data: { sessionID, status: { type: "busy" } } })
+  }
+  function signalIdle(sessionID: string, outcome: string) {
+    if (busySignal === "execution") {
+      const ended = outcome === "succeeded" || outcome === "failed" || outcome === "interrupted"
+      events.push(ended
+        ? { type: `session.execution.${outcome}`, data: { sessionID } }
+        : { type: "session.idle", data: { sessionID } })
+      return
+    }
+    events.push({ type: "session.status", data: { sessionID, status: { type: "idle" } } })
   }
   /** The model of `sessionID` ends its turn with a final text reply. */
   const reply = (sessionID: string, text: string, outcome = "succeeded") => endTurn(sessionID, text, outcome)
@@ -195,8 +224,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-async function load(options: { python?: string; directory?: string; hostSetup?: (host: ReturnType<typeof fakeHost>) => void } = {}) {
-  const host = fakeHost(registry, options.directory ?? project, options.python)
+async function load(options: { python?: string; directory?: string; hostSetup?: (host: ReturnType<typeof fakeHost>) => void; sessionBusy?: boolean; busySignal?: "status" | "execution" } = {}) {
+  const host = fakeHost(registry, options.directory ?? project, options.python, options.sessionBusy !== false, options.busySignal ?? "status")
   options.hostSetup?.(host)
   cleanups.push((await plugin.setup(host.ctx)) as () => void)
   let calls = 0
@@ -2034,6 +2063,11 @@ describe("autonomous research", () => {
   })
 })
 
+/** What a default specialist is told about the stall window and the absolute cap. */
+function specialistLimitSentence(): string {
+  return `连续 ${SPECIALIST_STALL_MS / 60_000} 分钟没有新的推进会被停下；即使一直有推进，${SPECIALIST_TIMEOUT_MS / 60_000} 分钟后也会停下。请边做边把发现写进回复，这样停下时仍有可用文字。`
+}
+
 describe("node specialists", () => {
   const TASK = {
     label: "复核结论",
@@ -2108,6 +2142,7 @@ describe("node specialists", () => {
     expect(kickoff).toMatchObject({ resume: true })
     expect(kickoff.text).toContain("你是节点 X-001 的专家")
     expect(kickoff.text).toContain(`节点工作目录：${workspace}`)
+    expect(kickoff.text).toContain(specialistLimitSentence())
     const request = modelRequest(child)
     await host.hooks.get("context")!(request)
     expect(Object.keys(request.tools).sort()).toEqual(["read", "research_query", "research_read_input"])
@@ -2257,6 +2292,7 @@ describe("node specialists", () => {
     expect(rules.filter((rule) => rule.effect === "allow").map((rule) => rule.action)).toEqual(["research_read_input"])
     const kickoff = host.said(child).at(-1).text
     expect(kickoff).toContain("盲评专家")
+    expect(kickoff).toContain(specialistLimitSentence())
     expect(kickoff).toContain("input-1")
     expect(kickoff).not.toContain(pub.publication_id)
     expect(kickoff).not.toContain(workspace)
@@ -3151,6 +3187,317 @@ describe("node specialists", () => {
       expect(result.result.preview).not.toContain(OPENING_LINE)
     } finally {
       stopFeed()
+    }
+  })
+
+  test("a specialist finishes normally when the host has no session.busy", async () => {
+    const host = await load({ sessionBusy: false })
+    expect(host.ctx.session.busy).toBeUndefined()
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    expect(host.said(child).at(-1).text).toContain(specialistLimitSentence())
+    host.reply(child, "没有 session.busy 时的报告")
+    const result = await pending
+    expect(result).toMatchObject({ state: "completed", exit_verified: true, child_session_id: child })
+    expect(result.result.preview).toContain("没有 session.busy 时的报告")
+    expect(result.error).toBeFalsy()
+  })
+
+  test("a silent specialist still stops at the stall window when the host has no session.busy", async () => {
+    const host = await load({
+      sessionBusy: false,
+      hostSetup: (raw) => {
+        timeoutTranscript(raw, 8_000)
+        raw.ctx.options.specialistStallMs = 200
+        shortGrace(raw, 1_000, 40)
+      },
+    })
+    expect(host.ctx.session.busy).toBeUndefined()
+    await nodeAtWork(host)
+    const pending = host.call("research_delegate", host.created[0]!, TASK)
+    const child = await specialist(host, 1)
+    await until(() => host.said(child).length >= 2, "stall summary without session.busy", 4_000)
+    expect(host.said(child).at(-1).text).toContain("不要使用任何工具")
+    host.reply(child, "停滞前看到两处计数不一致。")
+    const result = await pending
+    expect(result).toMatchObject({
+      state: "incomplete",
+      exit_verified: true,
+      error: "专家一段时间没有新的推进，已收回部分报告",
+      child_session_id: child,
+    })
+    expect(result.result.preview).toContain("计数不一致")
+    expect(result.result.preview).not.toContain(OPENING_LINE)
+  })
+
+  test("progress still stops at the absolute cap when the host has no session.busy", async () => {
+    let stopFeed = () => {}
+    const host = await load({
+      sessionBusy: false,
+      hostSetup: (raw) => {
+        timeoutTranscript(raw, 250)
+        raw.ctx.options.specialistStallMs = 10_000
+        shortGrace(raw, 1_000, 40)
+        const original = raw.ctx.session.synthetic
+        raw.ctx.session.synthetic = async (input: any) => {
+          const result = await original(input)
+          const node = raw.created[0]
+          if (input.resume && node && input.sessionID !== node && String(input.text).includes("你是节点")) {
+            const feed = () => {
+              raw.events.push({
+                type: "session.reasoning.delta",
+                data: { sessionID: input.sessionID, delta: "仍在推理" },
+              })
+            }
+            feed()
+            const timer = setInterval(feed, 20)
+            stopFeed = () => clearInterval(timer)
+          }
+          return result
+        }
+      },
+    })
+    try {
+      expect(host.ctx.session.busy).toBeUndefined()
+      await nodeAtWork(host)
+      const pending = host.call("research_delegate", host.created[0]!, TASK)
+      const child = await specialist(host, 1)
+      await until(() => host.said(child).length >= 2, "absolute cap summary without session.busy", 4_000)
+      host.reply(child, "到绝对上限前的发现。")
+      const result = await pending
+      expect(result).toMatchObject({
+        state: "incomplete",
+        exit_verified: true,
+        error: "达到专家时间上限，已收回部分报告",
+        child_session_id: child,
+      })
+      expect(result.error).not.toContain("没有新的推进")
+      expect(result.result.preview).toContain("绝对上限")
+      expect(result.result.preview).not.toContain(OPENING_LINE)
+    } finally {
+      stopFeed()
+    }
+  })
+
+  test("a late summary stop without session.busy stays unverified from status events", async () => {
+    let releaseSend = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseSend = () => resolve()
+    })
+    const busyProbe = spyOn(Specialists.prototype, "appearsBusy")
+    const host = await load({
+      sessionBusy: false,
+      hostSetup: (raw) => {
+        timeoutTranscript(raw, 40)
+        shortGrace(raw, 40, 40)
+        const original = raw.ctx.session.synthetic
+        const nativeWait = raw.ctx.session.wait
+        const nativeInterrupt = raw.ctx.session.interrupt
+        let summaryStarted = false
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          const summary = node && input.sessionID !== node && input.resume && String(input.text).includes("不要使用任何工具")
+          if (!summary) return original(input)
+          summaryStarted = true
+          await original(input)
+          await gate
+          return { id: input.id }
+        }
+        raw.ctx.session.wait = async (input: { sessionID: string }) => {
+          if (summaryStarted && input.sessionID !== raw.created[0]) return
+          return nativeWait(input)
+        }
+        raw.ctx.session.interrupt = async (input: { sessionID: string }) => {
+          if (summaryStarted) {
+            raw.interrupted.push(input.sessionID)
+            return { interrupted: true }
+          }
+          return nativeInterrupt(input)
+        }
+      },
+    })
+    try {
+      expect(host.ctx.session.busy).toBeUndefined()
+      await nodeAtWork(host)
+      const pending = host.call("research_delegate", host.created[0]!, TASK)
+      const child = await specialist(host, 1)
+      const result = await pending
+      expect(busyProbe).toHaveBeenCalled()
+      expect(busyProbe.mock.results.some((item) => item.value === true)).toBe(true)
+      expect(host.said(child).some((item) => String(item.text).includes("不要使用任何工具"))).toBe(true)
+      expect(result).toMatchObject({
+        state: "unverified",
+        exit_verified: false,
+        error: "专家会话被中断后没有按时停下，退出未核实",
+        child_session_id: child,
+      })
+      expect(result.error).not.toBe("达到专家时间上限，没有可用报告")
+      expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+      expect(result.result.report_path).toBeUndefined()
+    } finally {
+      releaseSend()
+      busyProbe.mockRestore()
+    }
+  })
+
+  /** Event types the no-`session.busy` host emitted. `session.status` is absent from captured traces. */
+  function watchEventTypes(raw: { events: { push: (event: any) => void } }): string[] {
+    const seen: string[] = []
+    const push = raw.events.push.bind(raw.events)
+    raw.events.push = (event: any) => {
+      seen.push(event?.type)
+      push(event)
+    }
+    return seen
+  }
+
+  test("a late summary stop without session.busy stays unverified when only session.execution.started says busy", async () => {
+    let releaseSend = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseSend = () => resolve()
+    })
+    const busyProbe = spyOn(Specialists.prototype, "appearsBusy")
+    let seen: string[] = []
+    const host = await load({
+      sessionBusy: false,
+      busySignal: "execution",
+      hostSetup: (raw) => {
+        seen = watchEventTypes(raw)
+        timeoutTranscript(raw, 40)
+        shortGrace(raw, 40, 40)
+        const original = raw.ctx.session.synthetic
+        const nativeWait = raw.ctx.session.wait
+        const nativeInterrupt = raw.ctx.session.interrupt
+        let summaryStarted = false
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          const summary = node && input.sessionID !== node && input.resume && String(input.text).includes("不要使用任何工具")
+          if (!summary) return original(input)
+          summaryStarted = true
+          await original(input)
+          await gate
+          return { id: input.id }
+        }
+        raw.ctx.session.wait = async (input: { sessionID: string }) => {
+          if (summaryStarted && input.sessionID !== raw.created[0]) return
+          return nativeWait(input)
+        }
+        raw.ctx.session.interrupt = async (input: { sessionID: string }) => {
+          if (summaryStarted) {
+            raw.interrupted.push(input.sessionID)
+            return { interrupted: true }
+          }
+          return nativeInterrupt(input)
+        }
+      },
+    })
+    try {
+      expect(host.ctx.session.busy).toBeUndefined()
+      await nodeAtWork(host)
+      const pending = host.call("research_delegate", host.created[0]!, TASK)
+      const child = await specialist(host, 1)
+      const result = await pending
+      const answers = busyProbe.mock.calls.flatMap((call, index) => call[0] === child ? [busyProbe.mock.results[index]?.value] : [])
+      expect(seen).toContain("session.execution.started")
+      expect(seen).toContain("session.execution.interrupted")
+      expect(seen).not.toContain("session.status")
+      expect(answers).toContain(true)
+      expect(host.said(child).some((item) => String(item.text).includes("不要使用任何工具"))).toBe(true)
+      expect(result).toMatchObject({
+        state: "unverified",
+        exit_verified: false,
+        error: "专家会话被中断后没有按时停下，退出未核实",
+        child_session_id: child,
+      })
+      expect(result.error).not.toBe("达到专家时间上限，没有可用报告")
+      expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+      expect(result.result.report_path).toBeUndefined()
+    } finally {
+      releaseSend()
+      busyProbe.mockRestore()
+    }
+  })
+
+  test("an execution end after session.execution.started makes the no-busy fallback report not busy", async () => {
+    let releaseSend = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseSend = () => resolve()
+    })
+    let summaryChild = ""
+    let sawSummaryBusy = false
+    let clearedAfterBusy = false
+    const originalNoteBusy = Specialists.prototype.noteBusy
+    const noteBusy = spyOn(Specialists.prototype, "noteBusy").mockImplementation(function (this: Specialists, sessionID: string, status: unknown) {
+      if (sessionID === summaryChild && (status === "busy" || status === "retry")) sawSummaryBusy = true
+      if (sessionID === summaryChild && sawSummaryBusy && (status === "idle" || status === "deleted")) clearedAfterBusy = true
+      return originalNoteBusy.call(this, sessionID, status)
+    })
+    const busyProbe = spyOn(Specialists.prototype, "appearsBusy")
+    let seen: string[] = []
+    const host = await load({
+      sessionBusy: false,
+      busySignal: "execution",
+      hostSetup: (raw) => {
+        seen = watchEventTypes(raw)
+        timeoutTranscript(raw, 40)
+        shortGrace(raw, 500, 40)
+        const original = raw.ctx.session.synthetic
+        const nativeWait = raw.ctx.session.wait
+        const nativeInterrupt = raw.ctx.session.interrupt
+        let summaryStarted = false
+        raw.ctx.session.synthetic = async (input: any) => {
+          const node = raw.created[0]
+          const summary = node && input.sessionID !== node && input.resume && String(input.text).includes("不要使用任何工具")
+          if (!summary) return original(input)
+          summaryStarted = true
+          summaryChild = input.sessionID
+          await original(input)
+          raw.events.push({ type: "session.execution.succeeded", data: { sessionID: input.sessionID } })
+          const deadline = Date.now() + 300
+          while (!clearedAfterBusy && Date.now() < deadline) await Bun.sleep(10)
+          await gate
+          return { id: input.id }
+        }
+        raw.ctx.session.wait = async (input: { sessionID: string }) => {
+          if (summaryStarted && input.sessionID !== raw.created[0]) return
+          return nativeWait(input)
+        }
+        raw.ctx.session.interrupt = async (input: { sessionID: string }) => {
+          if (summaryStarted) {
+            raw.interrupted.push(input.sessionID)
+            return { interrupted: true }
+          }
+          return nativeInterrupt(input)
+        }
+      },
+    })
+    try {
+      expect(host.ctx.session.busy).toBeUndefined()
+      await nodeAtWork(host)
+      const pending = host.call("research_delegate", host.created[0]!, TASK)
+      const child = await specialist(host, 1)
+      const result = await pending
+      const answers = busyProbe.mock.calls.flatMap((call, index) => call[0] === child ? [busyProbe.mock.results[index]?.value] : [])
+      expect(seen).toContain("session.execution.started")
+      expect(seen).toContain("session.execution.succeeded")
+      expect(seen).not.toContain("session.status")
+      expect(sawSummaryBusy).toBe(true)
+      expect(clearedAfterBusy).toBe(true)
+      expect(answers).toEqual([false])
+      expect(result).toMatchObject({
+        state: "incomplete",
+        exit_verified: true,
+        error: "达到专家时间上限，没有可用报告",
+        child_session_id: child,
+      })
+      expect(result.error).not.toBe("专家会话被中断后没有按时停下，退出未核实")
+      expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
+      expect(result.result.report_path).toBeUndefined()
+    } finally {
+      releaseSend()
+      noteBusy.mockRestore()
+      busyProbe.mockRestore()
     }
   })
 
