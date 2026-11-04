@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { Effect } from 'effect'
+import { LLMRequest, Message } from '@opencode/ai/effect'
+import { AnthropicCompatible } from '@opencode/ai/providers/anthropic-compatible'
 import {
   STABLE_CONTEXT_BLOCKS,
   markHistoryCacheBoundary,
@@ -192,15 +195,61 @@ describe('markHistoryCacheBoundary', () => {
     expect(part.result).toEqual({ type: 'text', value: 'ok' })
   })
 
-  test('skips messages without a cacheable part', () => {
+  test('skips reasoning, tool-call and compaction parts and walks back to a lowered boundary', () => {
     const messages = [
-      { role: 'assistant', content: [{ type: 'reasoning', text: 'why', encrypted: 'sig' }] },
+      { role: 'user', content: [textPart('hello')] },
+      { role: 'assistant', content: [
+        { type: 'reasoning', text: 'why', encrypted: 'sig' },
+        { type: 'tool-call', id: 'call_1', name: 'research_note', input: {} },
+      ] },
       { role: 'system', content: [{ type: 'compaction', provider: 'p', encrypted: 'x' }] },
     ]
     const marked = markHistoryCacheBoundary({ messages })!
     expect((marked[0]!.content[0] as any).cache).toEqual({ type: 'ephemeral' })
-    expect((marked[0]!.content[0] as any).encrypted).toBe('sig')
+    expect(marked[1]).toBe(messages[1]!)
     expect((marked[1]!.content[0] as any).cache).toBeUndefined()
+    expect((marked[1]!.content[0] as any).encrypted).toBe('sig')
+    expect((marked[1]!.content[1] as any).cache).toBeUndefined()
+    expect(marked[2]).toBe(messages[2]!)
+  })
+
+  test('a tail of reasoning and tool calls alone has no lowered boundary', () => {
+    const messages = [
+      { role: 'assistant', content: [
+        { type: 'reasoning', text: 'why', encrypted: 'sig' },
+        { type: 'tool-call', id: 'call_1', name: 'research_note', input: {} },
+      ] },
+    ]
+    expect(markHistoryCacheBoundary({ messages })).toBeUndefined()
+  })
+
+  test('the installed Anthropic adapter keeps hints only on lowered boundary parts', async () => {
+    const hint = { type: 'ephemeral' as const }
+    const model = AnthropicCompatible.configure({ baseURL: 'http://127.0.0.1:1' }).model('claude-test')
+    const request = new LLMRequest({
+      model,
+      system: [{ type: 'text', text: 'sys', cache: hint }],
+      messages: [
+        new Message({ role: 'assistant', content: [
+          { type: 'reasoning', text: 'why', encrypted: 'sig', cache: hint },
+          { type: 'tool-call', id: 'call_1', name: 'research_note', input: {}, cache: hint },
+          { type: 'text', text: 'visible', cache: hint },
+        ] as any }),
+        new Message({ role: 'tool', content: [
+          { type: 'tool-result', id: 'call_1', name: 'research_note',
+            result: { type: 'text', value: 'ok' }, cache: hint },
+        ] as any }),
+      ],
+      tools: [],
+    })
+    const body: any = await Effect.runPromise(model.route.body.from(request as any))
+    const assistant = body.messages.find((message: any) => message.role === 'assistant')
+    const tool = body.messages.find((message: any) => message.role === 'user')
+    expect(assistant.content.find((part: any) => part.type === 'thinking').cache_control).toBeUndefined()
+    expect(assistant.content.find((part: any) => part.type === 'tool_use').cache_control).toBeUndefined()
+    expect(assistant.content.find((part: any) => part.type === 'text').cache_control).toEqual({ type: 'ephemeral' })
+    expect(tool.content[0].cache_control).toEqual({ type: 'ephemeral' })
+    expect(body.system[0].cache_control).toEqual({ type: 'ephemeral' })
   })
 
   test('returns undefined when no legal boundary exists', () => {

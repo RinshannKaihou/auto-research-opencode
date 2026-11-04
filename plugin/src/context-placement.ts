@@ -102,13 +102,21 @@ interface CacheablePart {
   [key: string]: unknown
 }
 
-const CACHEABLE_PARTS = new Set(['text', 'media', 'tool-call', 'tool-result', 'reasoning'])
+/**
+ * Part types whose cache hint survives request lowering. The installed
+ * Anthropic adapter keeps `cache_control` on text and tool results only: it
+ * rebuilds thinking and tool-use blocks without the hint, and the
+ * OpenAI-compatible chat adapter does the same. Media is not included because
+ * that adapter drops its hint too. Anything else is schema-legal but not a
+ * usable boundary.
+ */
+const LOWERED_CACHE_PARTS = new Set(['text', 'tool-result'])
 /** `@opencode/ai` counts manual hints against this cap before placing its own. */
 const CACHE_BREAKPOINT_LIMIT = 4
 
-function isCacheable(part: unknown): part is CacheablePart {
+function isLoweredCachePart(part: unknown): part is CacheablePart {
   return typeof part === 'object' && part !== null
-    && CACHEABLE_PARTS.has(String((part as CacheablePart).type))
+    && LOWERED_CACHE_PARTS.has(String((part as CacheablePart).type))
 }
 
 function hintCount(request: { system?: any[]; messages?: any[]; tools?: Record<string, any> }): number {
@@ -117,17 +125,18 @@ function hintCount(request: { system?: any[]; messages?: any[]; tools?: Record<s
   for (const part of request.system ?? []) if (part?.cache !== undefined) count++
   for (const message of request.messages ?? []) {
     for (const part of Array.isArray(message?.content) ? message.content : []) {
-      if (isCacheable(part) && part.cache !== undefined) count++
+      if (isLoweredCachePart(part) && part.cache !== undefined) count++
     }
   }
   return count
 }
 
 /**
- * Put the SDK's cache hint on the last legal content part of the persistent
- * history, so the breakpoint before an injected tail is reusable. Returns the
- * messages to use, or undefined when the request must fall back to the system
- * placement: no boundary exists, or the SDK marker budget is already spent.
+ * Put the SDK's cache hint on the last content part of the persistent history
+ * whose hint survives lowering, so the breakpoint before an injected tail is
+ * reusable. Returns the messages to use, or undefined when the request must
+ * fall back to the system placement: no lowered boundary exists, or the SDK
+ * marker budget is already spent.
  */
 export function markHistoryCacheBoundary(request: {
   system?: any[]
@@ -137,10 +146,10 @@ export function markHistoryCacheBoundary(request: {
   const messages = request.messages
   if (!Array.isArray(messages) || !messages.length) return undefined
   const messageIndex = messages.findLastIndex(message =>
-    Array.isArray(message?.content) && message.content.some(isCacheable))
+    Array.isArray(message?.content) && message.content.some(isLoweredCachePart))
   if (messageIndex < 0) return undefined
   const message = messages[messageIndex]
-  const partIndex = message.content.findLastIndex(isCacheable)
+  const partIndex = message.content.findLastIndex(isLoweredCachePart)
   const part = message.content[partIndex] as CacheablePart
   // An explicit hint here is already the reusable boundary; keep it as is.
   if (part.cache !== undefined) return messages

@@ -1,0 +1,67 @@
+"""The context-placement probe must fail when a research request lacks a tail."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+import probe_research_run as probe
+
+
+def body(messages, research=True):
+    tools = [{"type": "function", "function": {"name": "research_query"}}] if research else [
+        {"type": "function", "function": {"name": "read"}}]
+    return {"tools": tools, "messages": messages}
+
+
+def text_part():
+    return {"role": "user", "content": [
+        {"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}]}
+
+
+def tail():
+    return {"role": "user", "content": "\n".join([
+        "<research_state>", "Injected research state for this request, not user input.", "",
+        "## recent_node_notes", "[]", "</research_state>"])}
+
+
+def tool_call():
+    return {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "research_query", "arguments": "{}"}}]}
+
+
+def tool_result():
+    return {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
+
+
+def test_one_research_request_without_a_tail_fails():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), body([text_part()])], "tail", "")
+    assert checks["research_requests"] == 2
+    assert checks["tail_requests"] == 1
+    assert checks["all_research_requests_have_tail"] is False
+    assert checks["tail_is_last"] is False
+
+
+def test_every_research_request_with_a_tail_passes():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()])],
+        "tail", "")
+    assert checks["all_research_requests_have_tail"] is True
+    assert checks["tail_is_last"] is True
+    assert checks["tool_continuations"] == 1
+    assert checks["tail_follows_every_tool_continuation"] is True
+    assert checks["tool_pairing_ok"] is True
+
+
+def test_a_tail_that_splits_a_tool_pair_is_rejected():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tool_call(), tail()])], "tail", "")
+    assert checks["tool_pairing_ok"] is False
+
+
+def test_an_auxiliary_request_without_a_tail_is_ignored():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), body([{"role": "user", "content": "title"}], research=False)],
+        "tail", "")
+    assert checks["research_requests"] == 1
+    assert checks["all_research_requests_have_tail"] is True

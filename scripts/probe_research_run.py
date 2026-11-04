@@ -30,9 +30,27 @@ def _cache_markers(value):
     return json.dumps(value).count('cache_control')
 
 
+def _has_tail(body):
+    return bool(body.get('messages')) and _message_text(body['messages'][-1]).startswith('<research_state>')
+
+
+def _tool_pairing_ok(messages):
+    """Every assistant tool call is followed by its matching tool result."""
+    pending = []
+    for message in messages:
+        if message.get('role') == 'assistant':
+            for call in message.get('tool_calls') or []:
+                pending.append(call.get('id'))
+        elif message.get('role') == 'tool':
+            if not pending or message.get('tool_call_id') != pending.pop(0):
+                return False
+    return not pending
+
+
 def context_placement_checks(bodies, placement, persisted_context):
     """Checks the temporary research-state message and the cache breakpoints
-    the SDK actually put on the wire."""
+    the SDK actually put on the wire. In this controlled lifecycle every
+    research request must carry the tail, not merely one of them."""
     research = []
     for body in bodies:
         names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
@@ -42,20 +60,24 @@ def context_placement_checks(bodies, placement, persisted_context):
     if placement != 'tail':
         checks['max_cache_markers'] = max((_cache_markers(body) for body in research), default=0)
         return checks
-    tails = [body for body in research if body.get('messages')
-             and _message_text(body['messages'][-1]).startswith('<research_state>')]
+    tails = [body for body in research if _has_tail(body)]
+    tool_continuations = [body for body in research
+                          if len(body.get('messages') or []) > 1
+                          and body['messages'][-2].get('role') == 'tool']
     checks.update({
         'tail_requests': len(tails),
-        'tail_is_last': all(_message_text(body['messages'][-1]).startswith('<research_state>') for body in tails),
+        'all_research_requests_have_tail': len(tails) == len(research),
+        'tail_is_last': all(_has_tail(body) for body in research),
         'tail_absent_from_earlier_messages': all(
             not any('Injected research state' in _message_text(message) for message in body['messages'][:-1])
             for body in research),
-        'tail_follows_tool_results': any(
-            len(body['messages']) > 1 and body['messages'][-2].get('role') == 'tool' for body in tails),
+        'tool_continuations': len(tool_continuations),
+        'tail_follows_every_tool_continuation': all(_has_tail(body) for body in tool_continuations),
+        'tool_pairing_ok': all(_tool_pairing_ok(body['messages'][:-1]) for body in research),
         'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
-        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in tails),
+        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in research),
         'boundary_before_tail': all(
-            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in tails),
+            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in research),
         'persisted_history_has_tail': 'Injected research state' in persisted_context,
     })
     return checks
@@ -545,9 +567,13 @@ export default {id:"ari-reload-probe",async setup(ctx){
                         ResearchProvider.bodies, args.context_placement, persisted)
                     checks = result['context_placement']
                     if args.context_placement == 'tail' and (
-                            not checks['tail_requests'] or not checks['tail_is_last']
+                            not checks['research_requests']
+                            or not checks['all_research_requests_have_tail']
+                            or not checks['tail_is_last']
                             or not checks['tail_absent_from_earlier_messages']
-                            or not checks['tail_follows_tool_results']
+                            or not checks['tool_continuations']
+                            or not checks['tail_follows_every_tool_continuation']
+                            or not checks['tool_pairing_ok']
                             or not checks['tail_has_no_cache_marker']
                             or not checks['boundary_before_tail']
                             or checks['max_cache_markers'] > 4

@@ -7,6 +7,8 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 ## What was checked
 
 - Unit tests for the split allowlist, the temporary `<research_state>` message, and the history cache hint.
+- A lowering regression test against the installed Anthropic adapter: hints survive on text, system text and tool results, and are dropped on reasoning and tool-call parts. The helper therefore only selects text and tool-result parts, walking back to an earlier supported part or falling back to system placement.
+- Python tests for the probe checker: a missing tail on any research request, or a tail that splits a tool pair, fails the check; an auxiliary request without a tail is ignored.
 - Fake-host tests for a stable system prefix across node and coordinator ledger writes, checkpoint base delivery, evidence-warning placement, blind isolation, stale/blockless fallback, pause control text, unassociated sessions, and invalid option values.
 - One isolated-host smoke run of `scripts/probe_research_run.py` with `--context-placement tail`, plus the `"system"` control.
 
@@ -14,15 +16,15 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 
 `make test` (run in the agent VM):
 
-- Python: 847 passed.
-- Bun: 250 passed, 0 failed.
+- Python: 851 passed.
+- Bun: 253 passed, 0 failed.
 - TypeScript: `tsc -p tsconfig.json --noEmit` clean.
 
 `python3 scripts/probe_research_run.py --context-placement tail --request-dump <temp file>`:
 
 - The isolated lifecycle completed with actions `propose`, `dispatch`, `node_finish`; one node finished.
-- 7 provider requests in the final rerun (6 in the first run); every one carried research tools and a trailing `<research_state>` message.
-- `tail_is_last`: true. `tail_absent_from_earlier_messages`: true. `tail_follows_tool_results`: true.
+- The final rerun made 6 provider requests (earlier runs 6–7); every research request carried a trailing `<research_state>` message. `all_research_requests_have_tail` and `tail_is_last` are both required now, so a request without a tail fails the run.
+- `tail_absent_from_earlier_messages`: true. `tool_continuations`: 3, and `tail_follows_every_tool_continuation`: true for each one. `tool_pairing_ok`: true; no tool call is split from its result by the tail.
 - `boundary_before_tail`: true. `tail_has_no_cache_marker`: true. `max_cache_markers`: 4.
 - `persisted_history_has_tail`: false; the session context endpoint returned no injected state.
 
@@ -36,7 +38,7 @@ OpenCode 2.2.5 (`opencode serve`), private server on `127.0.0.1` with empty XDG 
 
 ## Outcome
 
-In this lifecycle the temporary message reached the final provider request, followed complete tool results, was not written into persisted history, and did not carry a cache marker. A reusable marker was present on the message before it, and the request stayed at the SDK's four-marker limit.
+In this lifecycle every research request carried the temporary message, each tool continuation kept its complete tool result before the tail, no tool pair was split, the message was not written into persisted history, and it did not carry a cache marker. A reusable marker was present on the message before it, and the request stayed at the SDK's four-marker limit.
 
 ## Limitations
 
