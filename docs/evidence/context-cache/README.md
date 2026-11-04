@@ -21,7 +21,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 `python3 scripts/probe_research_run.py --context-placement tail --request-dump <temp file>`:
 
 - The isolated lifecycle completed with actions `propose`, `dispatch`, `node_finish`; one node finished.
-- 6 provider requests, all 6 carrying research tools and a trailing `<research_state>` message.
+- 7 provider requests in the final rerun (6 in the first run); every one carried research tools and a trailing `<research_state>` message.
 - `tail_is_last`: true. `tail_absent_from_earlier_messages`: true. `tail_follows_tool_results`: true.
 - `boundary_before_tail`: true. `tail_has_no_cache_marker`: true. `max_cache_markers`: 4.
 - `persisted_history_has_tail`: false; the session context endpoint returned no injected state.
@@ -41,7 +41,7 @@ In this lifecycle the temporary message reached the final provider request, foll
 ## Limitations
 
 - One synthetic lifecycle and one node; no specialist in this run. The provider is scripted, so its usage fields are fixed and this record says nothing about cache reads, cache writes, cost, or report quality.
-- No title or compaction request occurred: all 6 tail requests and all 7 system requests were primary research requests. The earlier OpenCode 2.2.5 observation that auxiliary requests use their own hooks was not re-checked for those kinds here.
+- No title or compaction request occurred: all tail requests (6–7 per run) and all 7 system requests were primary research requests. The earlier OpenCode 2.2.5 observation that auxiliary requests use their own hooks was not re-checked for those kinds here.
 - The shared 12,000-character budget was not measured. Budget coupling can still change or drop a stable block when the volatile part grows; the smoke run does not quantify that.
 - The `"anthropic"` cache format was declared to observe marker lowering on the wire, not to certify any real provider's behavior.
 - No real-model trial, no shared-service restart, no default change.
