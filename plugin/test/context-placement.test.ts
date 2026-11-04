@@ -213,15 +213,31 @@ describe('markHistoryCacheBoundary', () => {
     expect(marked[2]).toBe(messages[2]!)
   })
 
-  test('a tail of reasoning, tool calls or media alone has no lowered boundary', () => {
+  test('a tail of reasoning, tool calls, media or blank text alone has no lowered boundary', () => {
     const messages = [
       { role: 'assistant', content: [
         { type: 'reasoning', text: 'why', encrypted: 'sig' },
         { type: 'tool-call', id: 'call_1', name: 'research_note', input: {} },
         { type: 'media', media: {} },
+        { type: 'text', text: '   \n\t ' },
       ] },
     ]
     expect(markHistoryCacheBoundary({ messages })).toBeUndefined()
+  })
+
+  test('a trailing blank text part falls back to the earlier text boundary', () => {
+    const inMessage = [{ role: 'assistant', content: [textPart('working'), textPart('   ')] }]
+    const marked = markHistoryCacheBoundary({ messages: inMessage })!
+    expect((marked[0]!.content[0] as any).cache).toEqual({ type: 'ephemeral' })
+    expect((marked[0]!.content[1] as any).cache).toBeUndefined()
+
+    const messages = [
+      { role: 'user', content: [textPart('working')] },
+      { role: 'assistant', content: [textPart('  \n ')] },
+    ]
+    const across = markHistoryCacheBoundary({ messages })!
+    expect((across[0]!.content[0] as any).cache).toEqual({ type: 'ephemeral' })
+    expect(across[1]).toBe(messages[1]!)
   })
 
   test('the installed Anthropic adapter keeps hints only on lowered boundary parts', async () => {
@@ -235,6 +251,7 @@ describe('markHistoryCacheBoundary', () => {
           { type: 'reasoning', text: 'why', encrypted: 'sig', cache: hint },
           { type: 'tool-call', id: 'call_1', name: 'research_note', input: {}, cache: hint },
           { type: 'text', text: 'visible', cache: hint },
+          { type: 'text', text: '   ', cache: hint },
         ] as any }),
         new Message({ role: 'tool', content: [
           { type: 'tool-result', id: 'call_1', name: 'research_note',
@@ -248,6 +265,7 @@ describe('markHistoryCacheBoundary', () => {
     const tool = body.messages.find((message: any) => message.role === 'user')
     expect(assistant.content.find((part: any) => part.type === 'thinking').cache_control).toBeUndefined()
     expect(assistant.content.find((part: any) => part.type === 'tool_use').cache_control).toBeUndefined()
+    expect(assistant.content.filter((part: any) => part.type === 'text')).toHaveLength(1)
     expect(assistant.content.find((part: any) => part.type === 'text').cache_control).toEqual({ type: 'ephemeral' })
     expect(tool.content[0].cache_control).toEqual({ type: 'ephemeral' })
     expect(body.system[0].cache_control).toEqual({ type: 'ephemeral' })

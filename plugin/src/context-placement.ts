@@ -104,25 +104,28 @@ interface CacheablePart {
 
 /**
  * Part types whose cache hint survives request lowering. The installed
- * Anthropic adapter keeps `cache_control` on text and tool results only: it
- * rebuilds thinking and tool-use blocks without the hint, and the
- * OpenAI-compatible chat adapter does the same. Media is not included because
- * that adapter drops its hint too. Anything else is schema-legal but not a
- * usable boundary.
+ * Anthropic adapter keeps `cache_control` on nonblank text and tool results
+ * only: it drops blank text and rebuilds thinking and tool-use blocks without
+ * the hint, and the OpenAI-compatible chat adapter does the same. Media is not
+ * included because that adapter drops its hint too. Anything else is
+ * schema-legal but not a usable boundary.
  */
 const LOWERED_CACHE_PARTS = new Set(['text', 'tool-result'])
 /**
  * Hints the SDK counts before lowering. This is deliberately wider than
  * LOWERED_CACHE_PARTS: the budget is spent by schema-legal hints even when a
- * protocol later drops them, so the count must match the SDK's own.
+ * protocol later drops them, so the count must match the SDK's own. Blank text
+ * still counts even though it cannot be a boundary.
  */
 const COUNTED_CACHE_PARTS = new Set(['text', 'media', 'tool-call', 'tool-result', 'reasoning'])
 /** `@opencode/ai` counts manual hints against this cap before placing its own. */
 const CACHE_BREAKPOINT_LIMIT = 4
 
 function isLoweredCachePart(part: unknown): part is CacheablePart {
-  return typeof part === 'object' && part !== null
-    && LOWERED_CACHE_PARTS.has(String((part as CacheablePart).type))
+  if (typeof part !== 'object' || part === null) return false
+  const value = part as CacheablePart
+  if (value.type === 'text') return typeof value.text === 'string' && value.text.trim().length > 0
+  return value.type === 'tool-result'
 }
 
 function isCountedCachePart(part: unknown): part is CacheablePart {
