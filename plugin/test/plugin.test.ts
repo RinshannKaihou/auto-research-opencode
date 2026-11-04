@@ -3095,7 +3095,13 @@ describe('context placement', () => {
     host.events.push({ id: 'step-b', type: 'session.step.started',
       data: { sessionID: 'ses_main', assistantMessageID: 'assistant-b', model: { id: 'actual', providerID: 'mock' } } })
     await until(async () => (await host.call('research_query', 'ses_main', { collection: 'usage' })).items.length === 2, 'next native step')
+    const delivered = (next.messages[0] as any).content[0]
     await host.hooks.get('context')!(next)
+    const after = ((next.messages as any[]).find((message: any) =>
+      message.content?.some?.((part: any) => part.type === 'tool-result'))).content[0]
+    expect(after.result).toEqual(delivered.result)
+    expect(after.id).toBe(delivered.id)
+    expect(after.name).toBe(delivered.name)
     const saved = await host.tools.get('research_checkpoint').execute({ state: { next: 'two' } },
       { sessionID: 'ses_main', messageID: 'assistant-b', id: 'second', agent: 'build' })
     expect(JSON.parse(saved.content).revision).toBe(2)
@@ -3218,6 +3224,26 @@ describe('context placement', () => {
     await host.hooks.get('context')!(request)
     expect(systemText(request)).toContain('## recent_node_notes')
     expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+  })
+
+  test('a node turn without drain authorization keeps its refusal in the system prompt', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'drain boundary fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    const child = host.created[0]!
+    host.turn.start(child)
+    await host.command('pause', 'ses_main')
+    await host.hooks.get('tool.execute.before')!({ tool: 'shell', sessionID: child, id: 'old-turn', input: {} })
+    await host.hooks.get('tool.execute.after')!({ tool: 'shell', sessionID: child, id: 'old-turn', status: 'completed', result: { metadata: {} } })
+    host.turn.end(child)
+    host.turn.start(child)
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('no active drain authorization')
+    expect(Object.keys(request.tools)).not.toContain('shell')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
   })
 
   test('pausing keeps control instructions in the system prompt under tail placement', async () => {

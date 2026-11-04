@@ -1,6 +1,6 @@
 # Prompt cache placement: restart plan
 
-2026-11-04. Status: plan only; implementation has not started.
+2026-11-04. Status: Step 1 and its focused Step 2 checks are implemented on `cursor/prompt-cache-stabilization`; the real-provider comparison in Step 3 has not started.
 
 Source: [Plan: keep the prompt cache valid in auto-research-opencode](<./Plan keep the prompt cache valid in auto-research-opencode.md>). The source analysis is preserved unchanged. This document defines the first implementation and replaces the earlier nine-work-package development plan.
 
