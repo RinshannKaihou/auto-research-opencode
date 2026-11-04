@@ -140,12 +140,25 @@ export function taskText(task: SpecialistTask): string {
   ].join("\n")
 }
 
-function kickoff(task: any, workspace: string, tools: readonly string[]): string {
+/** Same windows `armLimits` uses. Defaults are `SPECIALIST_STALL_MS` and `SPECIALIST_TIMEOUT_MS`. */
+function limitSpan(ms: number): string {
+  if (ms % 60_000 === 0) return `${ms / 60_000} 分钟`
+  if (ms % 1_000 === 0) return `${ms / 1_000} 秒`
+  return `${ms} 毫秒`
+}
+
+function limitNotice(stallMs: number, capMs: number): string {
+  return `连续 ${limitSpan(stallMs)}没有新的推进会被停下；即使一直有推进，${limitSpan(capMs)}后也会停下。请在那之前写好报告。`
+}
+
+function kickoff(task: any, workspace: string, tools: readonly string[], stallMs = SPECIALIST_STALL_MS, capMs = SPECIALIST_TIMEOUT_MS): string {
+  const limits = limitNotice(stallMs, capMs)
   if (task.context_mode === "blind") {
     return [
       `你是一位盲评专家（任务 ${task.task_id}）：只根据分配给你的材料独立作判断，不要推测材料的作者、来源或预期结论。`,
       task.prompt,
       `可用工具：${tools.join("、")}。`,
+      limits,
       FINAL_REPORT,
     ].join("\n")
   }
@@ -153,6 +166,7 @@ function kickoff(task: any, workspace: string, tools: readonly string[]): string
     `你是节点 ${task.node_id} 的专家（任务 ${task.task_id}），只读：可以查看文件和研究记录，不能运行命令、修改任何东西或再委派别人。`,
     task.prompt,
     `节点工作目录：${workspace}。可用工具：${tools.join("、")}。`,
+    limits,
     FINAL_REPORT,
   ].join("\n")
 }
@@ -411,7 +425,7 @@ export class Specialists {
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'bound' }, `${operationID}:bound`)
       this.research.notifyChanged(root)
       kickoffAttempted = true
-      await this.host.synthetic(child, kickoff(reserved, workspace, tools), `专家任务 ${reserved.task_id}`, true,
+      await this.host.synthetic(child, kickoff(reserved, workspace, tools, this.stallMs, this.timeoutMs), `专家任务 ${reserved.task_id}`, true,
         launch.message_id, undefined, undefined, launch.intent_id)
       await this.research.call('specialist_launch_phase', parent, { intent_id: launch.intent_id, phase: 'submitted' }, `${operationID}:submitted`)
       const exited = await this.finished(child, controller.signal)
