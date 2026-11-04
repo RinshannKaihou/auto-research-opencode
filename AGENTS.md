@@ -12,9 +12,10 @@
 |---|---|
 | Verify with `make test` | CI |
 | `cursor/` branch prefix | docs only |
+| `ari/` branch prefix for Ari's local opencode | docs only |
 | Sync by merge; no rebase; no force-push | docs only |
 | No push to `main`; no merging PRs; no tag or release | docs only |
 | PR body sections Why / Verified / Not verified | docs only |
 | Check `docs/evidence/*/review-response.md` before compatibility or version wording | docs only |
 
-CI (`.github/workflows/ci.yml` on `main`) runs `make test` on push and pull request to `main`. It does not check the other rows. `main` currently has no branch protection enabled.
+CI (`.github/workflows/ci.yml` on `main`) runs `make test` on push and pull request to `main`. It does not check the other rows. `main` currently has no branch protection enabled. A failing CI check therefore does not block merging.
