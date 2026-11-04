@@ -33,7 +33,8 @@ def tool_call():
 
 
 def tool_result():
-    return {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
+    return {"role": "tool", "tool_call_id": "call_1", "content": [
+        {"type": "text", "text": "ok", "cache_control": {"type": "ephemeral"}}]}
 
 
 def test_one_research_request_without_a_tail_fails():
@@ -43,6 +44,7 @@ def test_one_research_request_without_a_tail_fails():
     assert checks["tail_requests"] == 1
     assert checks["all_research_requests_have_tail"] is False
     assert checks["tail_is_last"] is False
+    assert probe.context_placement_ok(checks) is False
 
 
 def test_every_research_request_with_a_tail_passes():
@@ -54,12 +56,14 @@ def test_every_research_request_with_a_tail_passes():
     assert checks["tool_continuations"] == 1
     assert checks["tail_follows_every_tool_continuation"] is True
     assert checks["tool_pairing_ok"] is True
+    assert probe.context_placement_ok(checks) is True
 
 
 def test_a_tail_that_splits_a_tool_pair_is_rejected():
     checks = probe.context_placement_checks(
         [body([text_part(), tool_call(), tail()])], "tail", "")
     assert checks["tool_pairing_ok"] is False
+    assert probe.context_placement_ok(checks) is False
 
 
 def test_an_auxiliary_request_without_a_tail_is_ignored():

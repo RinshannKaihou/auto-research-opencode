@@ -83,6 +83,23 @@ def context_placement_checks(bodies, placement, persisted_context):
     return checks
 
 
+def context_placement_ok(checks):
+    """The gate for the controlled tail-placement smoke run."""
+    return bool(
+        checks.get('research_requests')
+        and checks.get('all_research_requests_have_tail')
+        and checks.get('tail_is_last')
+        and checks.get('tail_absent_from_earlier_messages')
+        and checks.get('tool_continuations')
+        and checks.get('tail_follows_every_tool_continuation')
+        and checks.get('tool_pairing_ok')
+        and checks.get('tail_has_no_cache_marker')
+        and checks.get('boundary_before_tail')
+        and checks.get('max_cache_markers', 99) <= 4
+        and not checks.get('persisted_history_has_tail')
+    )
+
+
 class ResearchProvider(BaseHTTPRequestHandler):
     actions = []
     requests = []
@@ -566,18 +583,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     result['context_placement'] = context_placement_checks(
                         ResearchProvider.bodies, args.context_placement, persisted)
                     checks = result['context_placement']
-                    if args.context_placement == 'tail' and (
-                            not checks['research_requests']
-                            or not checks['all_research_requests_have_tail']
-                            or not checks['tail_is_last']
-                            or not checks['tail_absent_from_earlier_messages']
-                            or not checks['tool_continuations']
-                            or not checks['tail_follows_every_tool_continuation']
-                            or not checks['tool_pairing_ok']
-                            or not checks['tail_has_no_cache_marker']
-                            or not checks['boundary_before_tail']
-                            or checks['max_cache_markers'] > 4
-                            or checks['persisted_history_has_tail']):
+                    if args.context_placement == 'tail' and not context_placement_ok(checks):
                         print(json.dumps(result, sort_keys=True))
                         raise RuntimeError('Tail context placement did not reach the wire as expected')
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
