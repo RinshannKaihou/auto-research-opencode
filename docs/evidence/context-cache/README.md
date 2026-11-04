@@ -16,7 +16,7 @@ This note records the engineering checks for the opt-in `contextPlacement: "tail
 
 `make test` (run in the agent VM):
 
-- Python: 851 passed.
+- Python: 853 passed.
 - Bun: 255 passed, 0 failed.
 - TypeScript: `tsc -p tsconfig.json --noEmit` clean.
 

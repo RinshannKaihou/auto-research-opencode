@@ -121,7 +121,17 @@
       "id": "msg_1a4df8819002noAzmRupsLHoDy",
       "created": 1793767475225,
       "status": "completed",
-      "reason": "auto"
+      "reason": "auto",
+      "tokens": {
+        "input": 114992,
+        "output": 1439,
+        "reasoning": 0,
+        "cache": {
+          "read": 6144,
+          "write": 0
+        }
+      },
+      "cost": 0
     }
   ],
   "unknown_usage": [

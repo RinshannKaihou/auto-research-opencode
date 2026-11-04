@@ -1,6 +1,6 @@
 # Prompt cache placement: restart plan
 
-2026-11-04. Status: Step 1, its focused Step 2 checks, and one Step 3 real-API pair are done on `cursor/prompt-cache-stabilization`. The pair is recorded in [evidence/context-cache/step3/README.md](./evidence/context-cache/step3/README.md); the tail coordinator showed a repeated-wait behavior that is not explained by placement, and the default remains `"system"` because the default-change gate (both exploration settings, repeats, no regressions) is not met.
+2026-11-04. Status: Step 1, its focused Step 2 checks, and one Step 3 real-API pair are done on `cursor/prompt-cache-stabilization`. The pair is recorded in [evidence/context-cache/step3/README.md](./evidence/context-cache/step3/README.md); the tail coordinator showed repeated waiting whose relationship to placement remains undetermined, and the default remains `"system"` because the default-change gate (both exploration settings, repeats, no regressions) is not met.
 
 Source: [Plan: keep the prompt cache valid in auto-research-opencode](<./Plan keep the prompt cache valid in auto-research-opencode.md>). The source analysis is preserved unchanged. This document defines the first implementation and replaces the earlier nine-work-package development plan.
 
@@ -118,7 +118,7 @@ If the selected API rejects the message sequence or reasoning replay, keep syste
 
 Revisit the source plan's Phase 2 only if renderer budget coupling materially limits the measured improvement. Revisit Phase 3 only if tool-schema changes materially explain remaining misses and the user accepts the visibility change. Output-token overhead, isolated-session rereading, and cache TTL are separate investigations.
 
-The tail coordinator's 104 `research_wait` calls (102 as the sole tool, median 2.1 s apart) are a separate wait/turn behavior: the tool sets a wait state but does not end the host's agent loop, so the model can call it again before the execution ends. It is not explained by placement and needs its own change and test before another paid pair; it is not a prerequisite for the opt-in placement patch.
+Repeated waiting occurred in the tail arm: 104 `research_wait` calls (102 as the sole tool, median 2.1 s apart). The wait tool permits continued steps; placement's contribution remains undetermined. A temporary user message could interact with model behavior, and this pair cannot exclude that. The wait/turn behavior needs its own change and test before another paid pair; it is not a prerequisite for the opt-in placement patch.
 
 Do not treat these follow-ups as prerequisites for the opt-in placement patch.
 

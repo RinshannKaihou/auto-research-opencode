@@ -40,6 +40,8 @@ The observation log records **primary** model requests. The host's `session_v2` 
 | Hit ratio, whole-run known | 78.7% | 94.1% |
 | Requests without usage | 0 | **1** |
 
+The extractor counts each completed compaction message individually and keeps its per-message `tokens`; a session with two compactions therefore contributes two requests, not one, and no session-wide delta is repeated across them. This pair has one compaction per arm, so the totals above are unchanged.
+
 The tail coordinator has one final assistant message without a usage record, immediately after the conclusion; it is counted as **one request with unknown usage**, not as zero. It is not included in the host aggregate either, so its tokens are genuinely unknown rather than zero. Complete accounting therefore remains unavailable for the tail arm. On the known subtotal, uncached input falls by **64.9%** (from 2,445,881 to 857,630). The primary-only subtotal falls by 68.2%; the difference is the compaction usage above.
 
 ## Results by role (primary completed)
@@ -72,14 +74,14 @@ The tail coordinator called `research_wait` **104 times**, versus **3** in the s
 | Wait uncached input | 71,569 | 233,188 |
 | Wait hit ratio | 44.6% | 96.1% |
 | Wait output | 211 | 6,080 |
-| Productive requests (with usage) | 26 | 87 (plus one unknown) |
-| Productive prompt tokens | 1,048,563 | 5,125,605 |
-| Productive uncached input | 477,427 | 250,213 |
-| Productive hit ratio | 54.5% | 95.1% |
+| Non-wait requests (with usage) | 26 | 87 (plus one unknown) |
+| Non-wait prompt tokens | 1,048,563 | 5,125,605 |
+| Non-wait uncached input | 477,427 | 250,213 |
+| Non-wait hit ratio | 54.5% | 95.1% |
 
-The wait requests are 54% of the tail coordinator's prompt tokens (6.0M of 11.1M) and 54% of its assistant messages. Their 96.1% hit ratio is slightly above the 95.1% of its productive requests, so the polling lifts the coordinator's aggregate ratio a little; the larger effect is the extra 104 requests and 6.0M mostly-cached prompt tokens. Excluding the waits, the tail coordinator still has **84.3% lower uncached input per productive request** (2,876 vs 18,363), so the placement benefit survives this behavior.
+The wait requests are 54% of the tail coordinator's prompt tokens (6.0M of 11.1M) and 54% of its assistant messages. Their 96.1% hit ratio is slightly above the 95.1% of its non-wait requests, so the polling lifts the coordinator's aggregate ratio a little; the larger effect is the extra 104 requests and 6.0M mostly-cached prompt tokens. Excluding the waits, the observed reduction is **84.3% per non-wait request** (2,876 vs 18,363). That is an observed difference in uncached input per request, not proof that the non-wait work in the two arms was equivalent.
 
-**Why it kept running.** The retained trace shows consecutive wait-only assistant messages about 2 s apart with no synthetic notification between them. `research_wait` writes the wait control state and returns an ordinary tool result; it does not interrupt the host's agent loop, so the host can start another step and the model can call `research_wait` again before the execution ends. The history shows the tail coordinator repeatedly checking that node X-001 was still open; the coordinator's own reasoning at these steps says it is waiting again. X-001 stayed open for about four minutes. The system coordinator had productive work between its three waits (272–531 s apart) and did not loop. The wait content is the same in both placements; this is a wait/turn interaction and model behavior, **not evidence that tail placement caused a regression**. It is a separate behavior to fix if desired, and it does not justify renderer or ledger redesign here.
+**Why it kept running.** Repeated waiting occurred in the tail arm. The retained trace shows consecutive wait-only assistant messages about 2 s apart with no synthetic notification between them. `research_wait` writes the wait control state and returns an ordinary tool result; the wait tool permits continued steps, so the host can start another step and the model can call it again before the execution ends. The history shows the tail coordinator repeatedly checking that node X-001 was still open; the coordinator's own reasoning at these steps says it is waiting again. X-001 stayed open for about four minutes. The system coordinator had non-wait work between its three waits (272–531 s apart). The shared wait mechanism explains how continued calls are possible, not why they were extensive in the tail arm. A temporary user message could interact with model behavior, and this pair cannot exclude a placement contribution, so **placement's contribution remains undetermined**. The wait/turn behavior needs its own change and test before another paid pair; it does not justify renderer or ledger redesign here.
 
 ## Behaviour and delivery
 
@@ -95,7 +97,7 @@ The wait requests are 54% of the tail coordinator's prompt tokens (6.0M of 11.1M
 - The arms did different amounts of work and took different times; totals are not a controlled cost comparison.
 - `tail` ran first. The system arm's first request may have inherited a warm provider prefix from the tail arm; its overall hit ratio is far below the tail arm's, so the direction is clear, but the exact system figure could be slightly flattered.
 - The route is the configured `gateway`, not the `opencode-go` route used by the current session. Only `volcengine/deepseek-v4.1-flash` was tested.
-- The tail wait loop adds requests and prompt tokens and is not explained by placement; a separate wait/turn change would be needed to remove it. The system arm also did more productive work, so the pair cannot separate cache placement from the two trajectories.
+- The tail wait loop adds requests and prompt tokens; its relationship to placement remains undetermined, and a separate wait/turn change would be needed to remove it. The system arm also did more non-wait work, so the pair cannot separate cache placement from the two trajectories.
 - No exploration-on arm, no repeats, and no per-model/provider certification. The default-change gate (both exploration settings, no rise in rejections/pauses/retries, quality within noise) is not met.
 - `cache.write` is unreported by this gateway and recorded as 0; cost is unavailable. Cached tokens still count as prompt tokens.
 - Report quality: both runs answered the task with evidence and independent review; the system arm's report was more extensive because it ran more nodes and specialists. This pair does not show that placement improves or degrades research quality.
@@ -107,7 +109,7 @@ The wait requests are 54% of the tail coordinator's prompt tokens (6.0M of 11.1M
 Committed evidence tooling and sanitized source records:
 
 - `scripts/context_placement_evidence.py` — offline extractor and report. It reads an isolated arm root (research ledger + OpenCode host DB) and writes sanitized records; it never copies prompt or report text.
-- `records/system/`, `records/tail/` — sanitized per-arm records: session roles and host aggregates, per-request primary usage (JSONL), per-request coordinator message metadata (JSONL), per-request stable-part digests (JSONL), compaction metadata and deltas, notification metadata, and the unknown-usage list.
+- `records/system/`, `records/tail/` — sanitized per-arm records: session roles and host aggregates, per-request primary usage (JSONL), per-request coordinator message metadata (JSONL), per-request stable-part digests (JSONL), per-compaction message metadata and token fields, notification metadata, and the unknown-usage list.
 - `corrected-report.json` — the machine-readable output of the `report` command.
 
 ```bash

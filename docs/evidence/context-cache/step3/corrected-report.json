@@ -96,13 +96,16 @@
         "created": 1793769090918,
         "status": "completed",
         "reason": "auto",
-        "delta": {
+        "tokens": {
           "input": 109772,
-          "cache_read": 6144,
-          "cache_write": 0,
           "output": 1898,
-          "reasoning": 0
-        }
+          "reasoning": 0,
+          "cache": {
+            "read": 6144,
+            "write": 0
+          }
+        },
+        "cost": 0
       }
     ],
     "waits": {
@@ -130,7 +133,7 @@
           "hit_ratio": 0.44647594298398263
         },
         "wait_without_usage": 0,
-        "productive": {
+        "non_wait": {
           "requests": 26,
           "input": 477427,
           "cache_read": 571136,
@@ -140,7 +143,7 @@
           "prompt": 1048563,
           "hit_ratio": 0.5446844872458784
         },
-        "productive_without_usage": 0
+        "non_wait_without_usage": 0
       }
     },
     "stability": {
@@ -293,13 +296,16 @@
         "created": 1793767475225,
         "status": "completed",
         "reason": "auto",
-        "delta": {
+        "tokens": {
           "input": 114992,
-          "cache_read": 6144,
-          "cache_write": 0,
           "output": 1439,
-          "reasoning": 0
-        }
+          "reasoning": 0,
+          "cache": {
+            "read": 6144,
+            "write": 0
+          }
+        },
+        "cost": 0
       }
     ],
     "waits": {
@@ -327,7 +333,7 @@
           "hit_ratio": 0.9612714770011819
         },
         "wait_without_usage": 0,
-        "productive": {
+        "non_wait": {
           "requests": 87,
           "input": 250213,
           "cache_read": 4875392,
@@ -337,7 +343,7 @@
           "prompt": 5125605,
           "hit_ratio": 0.9511837139225516
         },
-        "productive_without_usage": 1
+        "non_wait_without_usage": 1
       }
     },
     "stability": {

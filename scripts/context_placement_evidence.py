@@ -109,7 +109,8 @@ def extract(root):
         data = json.loads(row['data'])
         compaction.append({'session_id': row['session_id'], 'id': row['id'],
                            'created': data.get('time', {}).get('created'),
-                           'status': data.get('status'), 'reason': data.get('reason')})
+                           'status': data.get('status'), 'reason': data.get('reason'),
+                           'tokens': data.get('tokens'), 'cost': data.get('cost')})
     completed = set(usage)
     unknown = [{'session_id': row['session_id'], 'id': row['id']}
                for row in host.execute("SELECT id,session_id FROM session_message "
@@ -234,9 +235,9 @@ def wait_report(record):
             continue
         waits = [message for message in messages
                  if 'research_wait' in message.get('tools', [])]
-        productive = [message for message in messages if message not in waits]
+        non_wait = [message for message in messages if message not in waits]
         wait_usage = [message for message in waits if message.get('usage')]
-        productive_usage = [message for message in productive if message.get('usage')]
+        non_wait_usage = [message for message in non_wait if message.get('usage')]
         def sum_messages(items):
             entry = {'requests': 0, 'input': 0, 'cache_read': 0, 'cache_write': 0,
                      'output': 0, 'reasoning': 0}
@@ -269,8 +270,8 @@ def wait_report(record):
                             'under_1s': sum(1 for gap in gaps if gap < 1)},
             'wait': sum_messages(wait_usage),
             'wait_without_usage': len(waits) - len(wait_usage),
-            'productive': sum_messages(productive_usage),
-            'productive_without_usage': len(productive) - len(productive_usage),
+            'non_wait': sum_messages(non_wait_usage),
+            'non_wait_without_usage': len(non_wait) - len(non_wait_usage),
         }
     return report
 
@@ -282,9 +283,9 @@ def _ms(timestamp):
 
 def summarize(record):
     sessions = record['sessions']
-    aux = {item['session_id']: item for item in record['compaction']}
-    for item in record['compaction']:
-        item['delta'] = record['host_sessions'].get(item['session_id'], {}).get('delta')
+    completed_compactions = [item for item in record['compaction']
+                             if item.get('status') == 'completed']
+    aux_count = Counter(item['session_id'] for item in completed_compactions)
     observed_by_role = {}
     for session, entry in record['observed'].items():
         role = sessions.get(session, {}).get('role', 'unknown')
@@ -297,7 +298,7 @@ def summarize(record):
         role = sessions.get(session, {}).get('role', 'unknown')
         bucket = whole_by_role.setdefault(role, {'requests': 0, 'input': 0, 'cache_read': 0,
                                                  'cache_write': 0, 'output': 0, 'reasoning': 0})
-        bucket['requests'] += entry['observed']['requests'] + (1 if session in aux else 0)
+        bucket['requests'] += entry['observed']['requests'] + aux_count.get(session, 0)
         for key in ('input', 'cache_read', 'cache_write', 'output', 'reasoning'):
             bucket[key] += entry[key]
     for bucket in observed_by_role.values():

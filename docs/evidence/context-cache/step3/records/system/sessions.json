@@ -233,7 +233,17 @@
       "id": "msg_1a4f82f66002LwuGny4J7PEhD4",
       "created": 1793769090918,
       "status": "completed",
-      "reason": "auto"
+      "reason": "auto",
+      "tokens": {
+        "input": 109772,
+        "output": 1898,
+        "reasoning": 0,
+        "cache": {
+          "read": 6144,
+          "write": 0
+        }
+      },
+      "cost": 0
     }
   ],
   "unknown_usage": [],
