@@ -2,7 +2,8 @@
 
 test: test-python test-plugin typecheck
 
-# Specialist child-lifecycle model. Not part of `make test`: CI does not install TLC.
+# `make test` does not run TLC or the drift check.
+# `make verify-specialist-lifecycle` runs both: the drift check, then TLC.
 # Script exits 0 pass, 1 counterexample, 2 model, 3 drift, 4 setup.
 # GNU make prints that status as "Error N" and then exits 2 itself.
 verify-specialist-lifecycle:

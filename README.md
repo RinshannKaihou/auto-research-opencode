@@ -267,7 +267,10 @@ R2 修复写入契约、审阅任务生命周期和受管自动推进，不自�
 make test          # Python 测试 + 插件测试 + 类型检查
 make test-python   # 只跑 Python 测试
 make test-plugin   # 只跑插件测试（假宿主 + 真实 Python）
+make verify-specialist-lifecycle  # 漂移检查，然后 TLC
 ```
+
+`make test` 不跑 TLC，也不跑漂移检查。`make verify-specialist-lifecycle` 两样都跑：先比对指纹，再跑 TLC。
 
 改完插件代码后，要执行 `opencode service restart`，正在用的 OpenCode 才会加载新代码。插件的工作机制、工具和角色见 [plugin/README.md](plugin/README.md)。
 

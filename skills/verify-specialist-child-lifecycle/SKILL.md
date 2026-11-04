@@ -23,6 +23,8 @@ From the repo root:
 make verify-specialist-lifecycle
 ```
 
+`make test` does not run TLC or the drift check. `make verify-specialist-lifecycle` runs both: the drift check, then TLC. Drift exits 3 and TLC does not run.
+
 That runs TLC from the stable TLA+ release v1.7.4 (TLC 2.19 of 08 August 2024, rev `5a47802`, jar sha256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`) on `spec/specialist-child-lifecycle/SpecialistChildLifecycle.tla`. The first run downloads the jar into `spec/specialist-child-lifecycle/.cache/` (gitignored), checks the sha256, and checks that the jar's manifest tag is `v1.7.4` and that TLC's banner is `TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)`. Java and git must be on `PATH`. This clone must contain sync commit `fb1b19b9d33723f9a35cb87f23a2e198595a060b` and pre-#28 commit `8a2c6c9`. The four checks finish in a few seconds after the jar is cached. TLC is killed if one check exceeds 120 seconds.
 
 The script exits with its own status. GNU make prints that status as `Error N` and then exits 2 itself. Read the script's status and its first word (`DRIFT`, `COUNTEREXAMPLE`, `MODEL`, `SETUP`), not make's own exit code.
@@ -131,4 +133,4 @@ Checked state space on the sync commit, current variant: 902 distinct states, de
 
 ## Not in CI
 
-`.github/workflows/ci.yml` runs `make test` only. This target is not part of `make test`: the workflow does not install the pinned TLC jar, and a model failure is a different check from pytest, bun, and tsc. Run this command when a change touches a fingerprinted function or the `run` slice. It is short enough to run on each of those changes. `tests/test_verify_specialist_lifecycle.py` checks that the fingerprint extractor sees a body edit; it does not run TLC.
+`.github/workflows/ci.yml` runs `make test` only. `make test` does not run TLC or the drift check. `make verify-specialist-lifecycle` runs both: the drift check, then TLC. The workflow does not install the pinned TLC jar, so a model failure stays a different check from pytest, bun, and tsc. Run this command when a change touches a fingerprinted function or the `run` slice. It is short enough to run on each of those changes. `tests/test_verify_specialist_lifecycle.py` checks that the extractor sees a body edit in a source string. It does not compare the worktree to the sync commit, and it does not run TLC.

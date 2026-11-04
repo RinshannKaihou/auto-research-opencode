@@ -1,10 +1,7 @@
 """The lifecycle checker must notice a body edit, not only an exact missing string."""
 
 import importlib.util
-import subprocess
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -209,15 +206,3 @@ def test_exit_codes_are_distinct():
         verify.EXIT_SETUP,
     }
     assert codes == {0, 1, 2, 3, 4}
-
-
-def test_worktree_matches_the_sync_commit():
-    commit = verify.sync_commit()
-    present = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-        cwd=ROOT,
-        check=False,
-    )
-    if present.returncode != 0:
-        pytest.skip("sync commit is not in this clone")
-    assert verify.drift_problems(commit) == []
