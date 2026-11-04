@@ -37,12 +37,19 @@ def tool_result():
         {"type": "text", "text": "ok", "cache_control": {"type": "ephemeral"}}]}
 
 
+def finishing():
+    return {"tools": [], "messages": [
+        {"role": "system", "content": "A research wait was accepted in this execution. Do not call tools."},
+        tool_call(), tool_result()]}
+
+
 def test_one_research_request_without_a_tail_fails():
     checks = probe.context_placement_checks(
         [body([text_part(), tail()]), body([text_part()])], "tail", "")
     assert checks["research_requests"] == 2
     assert checks["tail_requests"] == 1
-    assert checks["all_research_requests_have_tail"] is False
+    assert checks["unaccounted_requests"] == 1
+    assert checks["all_research_requests_accounted_for"] is False
     assert checks["tail_is_last"] is False
     assert probe.context_placement_ok(checks) is False
 
@@ -51,10 +58,10 @@ def test_every_research_request_with_a_tail_passes():
     checks = probe.context_placement_checks(
         [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()])],
         "tail", "")
-    assert checks["all_research_requests_have_tail"] is True
+    assert checks["all_research_requests_accounted_for"] is True
     assert checks["tail_is_last"] is True
     assert checks["tool_continuations"] == 1
-    assert checks["tail_follows_every_tool_continuation"] is True
+    assert checks["tail_follows_every_regular_tool_continuation"] is True
     assert checks["tool_pairing_ok"] is True
     assert probe.context_placement_ok(checks) is True
 
@@ -71,4 +78,26 @@ def test_an_auxiliary_request_without_a_tail_is_ignored():
         [body([text_part(), tail()]), body([{"role": "user", "content": "title"}], research=False)],
         "tail", "")
     assert checks["research_requests"] == 1
-    assert checks["all_research_requests_have_tail"] is True
+    assert checks["all_research_requests_accounted_for"] is True
+
+
+def test_one_tool_free_finishing_request_is_accounted_for():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()]), finishing()],
+        "tail", "")
+    assert checks["research_requests"] == 3
+    assert checks["tail_requests"] == 2
+    assert checks["finishing_requests"] == 1
+    assert checks["all_research_requests_accounted_for"] is True
+    assert checks["finishing_requests_have_no_tools_and_no_tail"] is True
+    assert probe.context_placement_ok(checks) is True
+
+
+def test_a_finishing_request_with_a_tail_is_rejected():
+    bad = finishing()
+    bad["messages"] = bad["messages"] + [tail()]
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), bad], "tail", "")
+    assert checks["finishing_requests"] == 1
+    assert checks["finishing_requests_have_no_tools_and_no_tail"] is False
+    assert probe.context_placement_ok(checks) is False

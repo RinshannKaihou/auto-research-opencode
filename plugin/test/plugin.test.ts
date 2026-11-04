@@ -4639,3 +4639,204 @@ describe('context placement', () => {
     expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(true)
   })
 })
+
+describe('tail wait completion', () => {
+  function systemText(request: any): string {
+    return request.system.map((part: any) => part.text ?? '').join('\n')
+  }
+
+  function lastMessageText(request: any): string {
+    const last = request.messages.at(-1)
+    return Array.isArray(last?.content) ? last.content.map((part: any) => part.text ?? '').join('\n') : ''
+  }
+
+  function cacheHints(request: any): any[] {
+    const hints: any[] = []
+    for (const part of request.system) if (part.cache) hints.push(part.cache)
+    for (const message of request.messages) {
+      for (const part of Array.isArray(message.content) ? message.content : []) if (part.cache) hints.push(part.cache)
+    }
+    return hints
+  }
+
+  function waitResult(taskID: string) {
+    return { role: 'tool', content: [{ type: 'tool-result', id: 'wait-call', name: 'research_wait',
+      result: { type: 'text', value: JSON.stringify({ waiting: [taskID], message: '本轮结束后进入等待' }) } }] }
+  }
+
+  async function acceptedWait(host: Awaited<ReturnType<typeof load>>) {
+    await host.command('auto', 'ses_main', { goal: 'wait completion fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+    return task
+  }
+
+  test('an accepted wait produces one full-system, tool-free finishing request', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const history = [waitResult(task.task_id)]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(request.messages).toBe(history)
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(lastMessageText(request)).toBe('')
+    expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    expect(systemText(request)).toContain('A research wait was accepted')
+    expect(systemText(request)).toContain('Do not call tools')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).toContain('## checkpoint_recovery')
+    expect(cacheHints(request)).toHaveLength(0)
+
+    // The marker is one-shot: a later execution gets the normal placement.
+    host.turn.end('ses_main')
+    host.turn.start('ses_main')
+    await Bun.sleep(50)
+    const next = modelRequest('ses_main')
+    await host.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+    expect(systemText(next)).not.toContain('A research wait was accepted')
+  })
+
+  test('a failed wait does not latch a finishing request', async () => {
+    const host = await load({ placement: 'tail' })
+    await host.command('auto', 'ses_main', { goal: 'failed wait fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await expect(host.call('research_wait', 'ses_main', { task_ids: ['T_unknown'] }))
+      .rejects.toThrow('只能等待自己派发的任务')
+
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+  })
+
+  test('a mixed wait and query group keeps both results before finishing', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const query = await host.call('research_query', 'ses_main', { collection: 'nodes' })
+    const history = [
+      { role: 'tool', content: [{ type: 'tool-result', id: 'query-call', name: 'research_query',
+        result: { type: 'text', value: JSON.stringify(query) } }] },
+      waitResult(task.task_id),
+    ]
+    const snapshot = JSON.stringify(history)
+    const request = modelRequest('ses_main')
+    request.messages = history as any
+
+    await host.hooks.get('context')!(request)
+
+    expect(JSON.stringify(history)).toBe(snapshot)
+    expect(JSON.stringify(request.messages)).toContain('nodes')
+    expect(JSON.stringify(request.messages)).toContain('waiting')
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+  })
+
+  test('a late wait result from an older execution cannot finish a newer execution', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    host.turn.end('ses_main')
+    host.turn.start('ses_main')
+    await Bun.sleep(50)
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(lastMessageText(request).startsWith('<research_state>')).toBe(true)
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+  })
+
+  test('a warm rebind keeps the accepted wait for the same execution', async () => {
+    const first = await load({ placement: 'tail' })
+    const task = await acceptedWait(first)
+    const second = await load({ placement: 'tail' })
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+
+    await second.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+
+    second.turn.end('ses_main')
+    second.turn.start('ses_main')
+    await Bun.sleep(50)
+    const next = modelRequest('ses_main')
+    await second.hooks.get('context')!(next)
+    expect(Object.keys(next.tools)).toContain('research_query')
+    expect(lastMessageText(next).startsWith('<research_state>')).toBe(true)
+  })
+
+  test('a report notification does not clear the marker and the wake runs once', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const node = host.created[0]!
+    host.turn.start(node)
+    await host.call('research_publish', node, { status: 'complete', summary: 'node result',
+      items: [{ item_id: 'r', kind: 'text', content: { text: 'delivered result' } }] })
+    await host.call('research_finish', node, { state: 'finished', summary: 'node result' })
+    host.turn.end(node)
+    await until(() => host.said('ses_main').some((item) => !item.resume && item.text.includes('节点 X-001')),
+      'report notice without resume')
+
+    const request = modelRequest('ses_main')
+    request.messages = [waitResult(task.task_id)] as any
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect(systemText(request)).toContain('A research wait was accepted')
+
+    host.turn.end('ses_main')
+    await until(() => host.said('ses_main').filter((item) => item.resume && item.text.includes('等待的节点有了结果')).length === 1,
+      'single wake')
+    const after = modelRequest('ses_main')
+    await host.hooks.get('context')!(after)
+    expect(Object.keys(after.tools)).toContain('research_query')
+    expect(lastMessageText(after).startsWith('<research_state>')).toBe(true)
+    expect(lastMessageText(after)).toContain('pub/P-001')
+  })
+
+  test('the finishing request keeps an evidence warning in the system prompt', async () => {
+    const host = await load({ placement: 'tail' })
+    const task = await acceptedWait(host)
+    const spy = spyOn(Research.prototype, 'observeEvidence').mockResolvedValue(['timeout'])
+    try {
+      const request = modelRequest('ses_main')
+      request.messages = [waitResult(task.task_id)] as any
+      await host.hooks.get('context')!(request)
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(systemText(request)).toContain('Evidence delivery was not fully confirmed (timeout).')
+      expect(request.messages.some((message: any) => JSON.stringify(message).includes('<research_state>'))).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+
+  test('system mode still ends its turn normally after a wait', async () => {
+    const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'system wait fixture' })
+    await host.command('context-policy', 'ses_main', { policy: 'r1' })
+    host.turn.start('ses_main')
+    await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+    const task = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+    await host.call('research_wait', 'ses_main', { task_ids: [task.task_id] })
+
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(Object.keys(request.tools)).toContain('research_query')
+    expect(systemText(request)).toContain('## recent_node_notes')
+    expect(systemText(request)).not.toContain('A research wait was accepted')
+    expect(lastMessageText(request)).not.toContain('<research_state>')
+  })
+})

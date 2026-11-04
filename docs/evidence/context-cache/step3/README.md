@@ -4,6 +4,8 @@
 
 This is the first real-model comparison of `contextPlacement: "system"` and `"tail"`. It is descriptive, not statistically significant. The default remains `"system"`.
 
+The repeated-wait behavior in this pair led to the bounded tail-only wait completion recorded in [review-response.md](review-response.md); it is locally verified but has not been rerun on a real model route. The numbers below are unchanged historical observations.
+
 ## Setup
 
 | Setting | Value |

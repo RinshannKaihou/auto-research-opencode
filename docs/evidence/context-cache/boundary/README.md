@@ -6,7 +6,9 @@ This note records the Commit B host checks for the opt-in `contextPlacement: "ta
 
 ## Compaction routing
 
-`python3 scripts/probe_placement_boundary.py` ran one primary tool continuation (`research_query`), one real host manual compaction through `POST /api/session/{id}/compact`, then one further primary continuation. The fixture also registered a separate instrumentation plugin that logged the `context`, `compaction` and `model.request` hooks.
+`python3 scripts/probe_placement_boundary.py` ran one primary tool continuation with a mixed `research_query` + `research_wait` group, one real host manual compaction through `POST /api/session/{id}/compact`, then one further primary continuation. The fixture also registered a separate instrumentation plugin that logged the `context`, `compaction` and `model.request` hooks.
+
+The mixed group's next model request contained both tool results (`call_probe_query` and `call_probe_wait`) before the trailing tail, so the installed host completed the whole tool-call/result group before asking the model for another step. The wait in that fixture was deliberately rejected (the project had no dispatched task), so this checks grouping and sibling preservation, not wait acceptance.
 
 Observed hooks and bodies, in order:
 

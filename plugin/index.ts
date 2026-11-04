@@ -163,6 +163,7 @@ export default Plugin.define({
       observations.instanceID,
       session=>{
         nativeObservations.forget(session)
+        lifecycle.state.waitFinishes?.delete(session)
         for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
       },
     )
@@ -580,8 +581,23 @@ export default Plugin.define({
       switch (tool.engine) {
         case "dispatch":
           return engine.dispatch(sessionID, String(args.node_id), operationID)
-        case "wait":
-          return engine.wait(sessionID, (args.task_ids ?? []).map(String))
+        case "wait": {
+          const taskIDs = (args.task_ids ?? []).map(String)
+          const execution = engine.executionToken(sessionID)
+          const result: any = await engine.wait(sessionID, taskIDs)
+          // Tail mode finishes the accepted wait on the next primary request.
+          // A failed wait throws above and a newer execution never reuses the
+          // late result of an older one.
+          if (contextPlacement === 'tail' && execution !== undefined
+              && engine.executionToken(sessionID) === execution) {
+            const waiting = Array.isArray(result?.waiting) ? result.waiting.map(String) : []
+            if (waiting.length) {
+              const markers = lifecycle.state.waitFinishes ??= new Map()
+              markers.set(sessionID, { execution, waiting })
+            }
+          }
+          return result
+        }
         case "finish":
           return engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
         case "conclude":
@@ -684,6 +700,8 @@ export default Plugin.define({
         const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
         if (!main) throw new Error('Research controller owner is unavailable')
         await ensureController(root, main)
+        let finishing = false
+        let waitMarker: { execution: string; waiting: string[] } | undefined
         if (role === "main") {
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
@@ -713,7 +731,28 @@ export default Plugin.define({
           if (controlInstructions(run, pause)) {
             for (const name of ["research_propose", "research_dispatch", "research_conclude", 'research_scope', 'research_route', 'research_decide', 'research_prepare_conclusion']) delete request.tools[name]
           }
+          // An accepted wait finishes on the next primary request of the same
+          // execution. This marker is process-local and never reconstructs
+          // control from old tool results.
+          const markers = lifecycle.state.waitFinishes
+          const candidate = markers?.get(request.sessionID)
+          if (candidate) {
+            const execution = engine.executionToken(request.sessionID)
+            const waiting = Array.isArray(state.workflow?.session?.waiting)
+              ? state.workflow.session.waiting.map(String) : []
+            const matches = execution !== undefined && execution === candidate.execution
+              && run === 'running' && pause === 'wait'
+              && waiting.length === candidate.waiting.length
+              && waiting.every((id: string) => candidate.waiting.includes(id))
+            if (matches) {
+              finishing = true
+              waitMarker = candidate
+            } else markers!.delete(request.sessionID)
+          }
         }
+        // A finishing request keeps every completed result but exposes no tool,
+        // so neither a repeated wait nor query polling can continue the turn.
+        if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
         if (role === 'node_core') {
           await waitEvents(request.sessionID)
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
@@ -743,7 +782,7 @@ export default Plugin.define({
         // volatile ones travel in one temporary message after the history.
         // The stale notice and the blockless control fallbacks keep the old
         // system placement: they change the safety text itself.
-        let tailMode = contextPlacement === 'tail' && !!text
+        let tailMode = !finishing && contextPlacement === 'tail' && !!text
           && text.startsWith('Research context:\n') && !text.includes(STALE_CONTEXT_MARKER)
         let stable = text ?? ''
         const tail: string[] = []
@@ -770,10 +809,20 @@ export default Plugin.define({
           if (tailMode) tail.push(warning)
           else request.system.push({type:'text',text:warning})
         }
+        if (finishing) {
+          request.system.push({ type: 'text', text:
+            'A research wait was accepted in this execution. Acknowledge that the coordinator is waiting and end this response; ' +
+            'the engine will deliver the result and wake the coordinator. Do not call tools.' })
+        }
         // Allocate a new array: the boundary helper returns the host's array
         // when the history already carries a hint, and the tail must never be
         // written into the host's own message list.
         if (tail.length) request.messages = [...request.messages, researchStateMessage(tail) as any]
+        // One accepted wait yields one finishing request. A delayed report
+        // notification in the same execution leaves the marker alone.
+        if (waitMarker && lifecycle.state.waitFinishes?.get(request.sessionID) === waitMarker) {
+          lifecycle.state.waitFinishes!.delete(request.sessionID)
+        }
       } catch {
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)

@@ -48,6 +48,11 @@ def has_tail(body):
     return bool(body.get('messages')) and message_text(body['messages'][-1]).startswith('<research_state>')
 
 
+def tool_result_ids(body):
+    return [message.get('tool_call_id') for message in body.get('messages') or []
+            if message.get('role') == 'tool']
+
+
 def tool_names(body):
     return {(tool.get('function') or {}).get('name') for tool in body.get('tools') or []}
 
@@ -74,11 +79,13 @@ class BoundaryProvider(BaseHTTPRequestHandler):
         args = None
         if 'research_query' in names and not type(self).primary_tool_sent:
             type(self).primary_tool_sent = True
-            action = 'research_query'
-            args = {'collection': 'nodes'}
-        if action:
-            delta = {'tool_calls': [{'index': 0, 'id': 'call_probe_query', 'type': 'function',
-                                     'function': {'name': action, 'arguments': json.dumps(args)}}]}
+            calls = [
+                {'index': 0, 'id': 'call_probe_query', 'type': 'function',
+                 'function': {'name': 'research_query', 'arguments': json.dumps({'collection': 'nodes'})}},
+                {'index': 1, 'id': 'call_probe_wait', 'type': 'function',
+                 'function': {'name': 'research_wait', 'arguments': json.dumps({'task_ids': ['T_probe_missing']})}},
+            ]
+            delta = {'tool_calls': calls}
             finish = 'tool_calls'
         elif is_compaction_body(body):
             delta = {'role': 'assistant', 'content': (
@@ -263,6 +270,9 @@ def main():
                 primary_before = [body for body in BoundaryProvider.bodies if 'research_query' in tool_names(body)]
                 if len(primary_before) != 2 or not all(has_tail(body) for body in primary_before):
                     raise RuntimeError(f'expected two tailed primary requests, got {len(primary_before)}')
+                mixed_group = tool_result_ids(primary_before[1])
+                if sorted(mixed_group) != ['call_probe_query', 'call_probe_wait']:
+                    raise RuntimeError(f'host did not preserve the mixed wait/query group: {mixed_group}')
                 bodies_before = len(BoundaryProvider.bodies)
                 _, before_compact = request(base, f'/api/session/{sid}/context', password)
                 compactions_before = sum(1 for item in before_compact.get('data', []) if item.get('type') == 'compaction')
@@ -327,6 +337,8 @@ def main():
                 result = {
                     'primary_before': len(primary_before),
                     'primary_after': len(primary_after),
+                    'mixed_group_results': mixed_group,
+                    'mixed_group_complete': sorted(mixed_group) == ['call_probe_query', 'call_probe_wait'],
                     'all_primary_have_tail': all(has_tail(body) for body in primary_before + primary_after),
                     'tail_is_last': all(message_text(body['messages'][-1]).startswith('<research_state>')
                                         for body in primary_before + primary_after),

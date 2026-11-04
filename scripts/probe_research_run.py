@@ -49,35 +49,49 @@ def _tool_pairing_ok(messages):
 
 def context_placement_checks(bodies, placement, persisted_context):
     """Checks the temporary research-state message and the cache breakpoints
-    the SDK actually put on the wire. In this controlled lifecycle every
-    research request must carry the tail, not merely one of them."""
+    the SDK actually put on the wire. A tail-mode wait-completion request is
+    the one deliberate exception: it carries the full context in system and
+    exposes no tools, so it must have no temporary tail."""
     research = []
     for body in bodies:
         names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
-        if any(name.startswith('research_') for name in names):
+        finishing = (not names and any('A research wait was accepted' in _message_text(message)
+                                       for message in body.get('messages') or [] if message.get('role') == 'system'))
+        if any(name.startswith('research_') for name in names) or finishing:
             research.append(body)
     checks = {'requests': len(bodies), 'research_requests': len(research)}
     if placement != 'tail':
         checks['max_cache_markers'] = max((_cache_markers(body) for body in research), default=0)
         return checks
     tails = [body for body in research if _has_tail(body)]
+    finishing = [body for body in research if not body.get('tools')
+                 and any('A research wait was accepted' in _message_text(message)
+                         for message in body.get('messages') or [] if message.get('role') == 'system')]
+    tails = [body for body in tails if body not in finishing]
     tool_continuations = [body for body in research
                           if len(body.get('messages') or []) > 1
                           and body['messages'][-2].get('role') == 'tool']
+    regular_continuations = [body for body in tool_continuations if body not in finishing]
     checks.update({
         'tail_requests': len(tails),
-        'all_research_requests_have_tail': len(tails) == len(research),
-        'tail_is_last': all(_has_tail(body) for body in research),
+        'finishing_requests': len(finishing),
+        'unaccounted_requests': len(research) - len(tails) - len(finishing),
+        'all_research_requests_accounted_for': len(tails) + len(finishing) == len(research),
+        'tail_is_last': all(_has_tail(body) for body in research if body not in finishing),
         'tail_absent_from_earlier_messages': all(
             not any('Injected research state' in _message_text(message) for message in body['messages'][:-1])
-            for body in research),
+            for body in tails),
         'tool_continuations': len(tool_continuations),
-        'tail_follows_every_tool_continuation': all(_has_tail(body) for body in tool_continuations),
-        'tool_pairing_ok': all(_tool_pairing_ok(body['messages'][:-1]) for body in research),
+        'regular_tool_continuations': len(regular_continuations),
+        'tail_follows_every_regular_tool_continuation': all(_has_tail(body) for body in regular_continuations),
+        'finishing_requests_have_no_tools_and_no_tail': all(
+            not body.get('tools') and not _has_tail(body) for body in finishing),
+        'tool_pairing_ok': all(_tool_pairing_ok(body['messages'][:-1])
+                               for body in research if body not in finishing),
         'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
-        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in research),
+        'tail_has_no_cache_marker': all(_cache_markers(body['messages'][-1]) == 0 for body in tails),
         'boundary_before_tail': all(
-            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in research),
+            len(body['messages']) > 1 and _cache_markers(body['messages'][-2]) > 0 for body in tails),
         'persisted_history_has_tail': 'Injected research state' in persisted_context,
     })
     return checks
@@ -87,11 +101,12 @@ def context_placement_ok(checks):
     """The gate for the controlled tail-placement smoke run."""
     return bool(
         checks.get('research_requests')
-        and checks.get('all_research_requests_have_tail')
+        and checks.get('all_research_requests_accounted_for')
         and checks.get('tail_is_last')
         and checks.get('tail_absent_from_earlier_messages')
-        and checks.get('tool_continuations')
-        and checks.get('tail_follows_every_tool_continuation')
+        and checks.get('regular_tool_continuations')
+        and checks.get('tail_follows_every_regular_tool_continuation')
+        and checks.get('finishing_requests_have_no_tools_and_no_tail')
         and checks.get('tool_pairing_ok')
         and checks.get('tail_has_no_cache_marker')
         and checks.get('boundary_before_tail')
@@ -109,6 +124,7 @@ class ResearchProvider(BaseHTTPRequestHandler):
     hold_specialist = False
     hold_node = False
     background_node = False
+    wait_finish = False
     node_waiting = threading.Event()
     node_gate = threading.Event()
     coordinator_gate = threading.Event()
@@ -139,6 +155,21 @@ class ResearchProvider(BaseHTTPRequestHandler):
             elif 'dispatch' not in self.actions:
                 action, args = 'research_dispatch', {'node_id': 'X-001'}
                 self.actions.append('dispatch')
+            elif self.wait_finish and 'wait' not in self.actions:
+                # The scripted model only calls wait while tools are exposed;
+                # the finishing request offers none, so it then replies text.
+                task_id = None
+                for message in reversed(body.get('messages') or []):
+                    try:
+                        value = json.loads(_message_text(message))
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(value, dict) and isinstance(value.get('task_id'), str):
+                        task_id = value['task_id']
+                        break
+                if task_id:
+                    action, args = 'research_wait', {'task_ids': [task_id]}
+                    self.actions.append('wait')
         elif 'research_finish' in names and 'node_finish' not in self.actions:
             if self.background_node and 'background_start' not in self.actions:
                 action, args = 'shell', {'command': 'sleep 2', 'background': True, 'timeout': 20000}
@@ -198,6 +229,8 @@ def main():
                         help='plugin contextPlacement option; tail exercises the temporary research-state message')
     parser.add_argument('--request-dump', type=Path, help='write every provider request body to this JSON file')
     parser.add_argument('--background-node', action='store_true', help='exercise a native background shell and completion wake')
+    parser.add_argument('--wait-finish', action='store_true',
+                        help='script an accepted coordinator wait and assert the tool-free finishing request')
     args = parser.parse_args()
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
@@ -221,6 +254,7 @@ def main():
     ResearchProvider.hold_specialist = args.stop_during_specialist or args.warm_reload_specialist or args.cold_restart_specialist
     ResearchProvider.hold_node = args.lost_kickoff_response or args.cold_restart_node
     ResearchProvider.background_node = args.background_node
+    ResearchProvider.wait_finish = args.wait_finish
     ResearchProvider.node_waiting.clear()
     ResearchProvider.node_gate.clear()
     ResearchProvider.coordinator_gate.clear()
@@ -586,6 +620,13 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     if args.context_placement == 'tail' and not context_placement_ok(checks):
                         print(json.dumps(result, sort_keys=True))
                         raise RuntimeError('Tail context placement did not reach the wire as expected')
+                    if args.wait_finish:
+                        if checks.get('finishing_requests', 0) < 1:
+                            print(json.dumps(result, sort_keys=True))
+                            raise RuntimeError('The scripted accepted wait did not produce a tool-free finishing request')
+                        if ResearchProvider.actions.count('wait') != 1:
+                            print(json.dumps(result, sort_keys=True))
+                            raise RuntimeError('The scripted model repeated the wait or never called it once')
                 if (not tasks or tasks[0][0] != 'finished' or args.specialist and
                         (specialist_states != [('completed', 1)] or specialist_launches != [('submitted',)]) or ResearchProvider.pause_node and
                         (state != 'paused' or reservations_at_pause != reservations_final)):

@@ -23,6 +23,8 @@ export interface RuntimeState {
   models: Map<string, ModelRef>
   specialistTools: Map<string, readonly string[]>
   specialistResearch: Set<string>
+  /** Accepted tail-mode waits waiting for their next primary request to finish. */
+  waitFinishes?: Map<string, { execution: string; waiting: string[] }>
   shellInboxes?: Map<string, { sessionID: string; execution?: string; matched: boolean; authorized?: boolean; refused?: boolean; createdAt?: number; eligibleAt?: number }>
   shellDelivered?: Set<string>
   shellSeen?: Set<string>
