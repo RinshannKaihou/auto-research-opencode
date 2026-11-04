@@ -6,7 +6,8 @@ EXTENDS TLC
 \* Property (invariant Safe):
 \*   A child turn that is still running is never recorded with exit_verified TRUE.
 \*   A stall or absolute-cap finish never archives the opening text that was
-\*   written before the summary prompt.
+\*   written before the summary prompt. A failed turn, and a parent cancel that
+\*   is not a stall or a cap, never archives that opening line as a clean report.
 \*
 \* Tool: TLC from the stable TLA+ release v1.7.4 (TLC 2.19 of 08 August 2024,
 \* jar sha256 pinned by scripts/verify_specialist_lifecycle.py). Chosen because
@@ -24,6 +25,13 @@ EXTENDS TLC
 \*                  when the summary turn did not end "succeeded" (no later
 \*                  assistant text). A succeeded summary turn has written text
 \*                  after the prompt, so sessionResult returns that text.
+\*   "failedArchivesOpening"
+\*                  current code, except the direct finishChild archive is the
+\*                  pre-fix `report = exited ? found.text : ""`
+\*                  (specialists.ts:680). A failed turn archives the opening line.
+\*                  A parent cancel on that branch does not: the fixed code
+\*                  leaves badArchive false there, and the variant does too, so
+\*                  the counterexample TLC prints is the failed turn.
 \*
 \* Each action is one yield: host events may happen at an await, and the
 \* statements between awaits run in the action that resumes. Line numbers are
@@ -32,15 +40,17 @@ EXTENDS TLC
 \* The opening line from issue #27 is the transcript's last assistant text until
 \* a summary turn ends "succeeded". An interrupted summary turn adds no
 \* assistant text. A correct textSince never returns the opening line.
+\* A work turn that ends "failed", or "interrupted" with no stall or cap, does
+\* not archive that line. failedArchivesOpening is the pre-fix code, which did.
 
 CONSTANT Variant
 
-ASSUME Variant \in {"current", "pre28", "noBusyCheck", "textSinceAll"}
+ASSUME Variant \in {"current", "pre28", "noBusyCheck", "textSinceAll", "failedArchivesOpening"}
 
 VARIABLES
   pc,              \* which await the plugin is blocked in
   running,         \* ground truth: a child turn is in progress
-  outcome,         \* "none" | "succeeded" | "interrupted" once the turn has ended
+  outcome,         \* "none" | "succeeded" | "interrupted" | "failed" once the turn has ended
   limit,           \* "none" | "stall" | "cap"  (pre28 uses only "cap")
   parentAbort,     \* delegate AbortSignal
   fromAbort,       \* summarize()'s fromAbort: parent, not the grace timer
@@ -54,7 +64,7 @@ VARIABLES
   badArchive,      \* that write archives the pre-summary opening line
   recorded,        \* specialist_finish has returned
   exitVerified,    \* recorded exit_verified
-  archivedPre,     \* recorded archive used the opening line on a limit finish
+  archivedPre,     \* recorded archive used the opening line as a clean report
   ret,             \* who called stop(): "work" | "dead" | "sum" | "throw"
   sumAborted       \* summary grace controller aborted
 
@@ -182,6 +192,7 @@ TurnEnds(kind) ==
 
 TurnEndsSucceeded == TurnEnds("succeeded")
 TurnEndsInterrupted == TurnEnds("interrupted")
+TurnEndsFailed == TurnEnds("failed")
 
 \* Summary synthetic is accepted: the message id is stored and the turn starts
 \* in one host step (plugin/test fake host synthetic). The plugin's promise may
@@ -296,7 +307,7 @@ StopGraceExpires ==
 
 \* ---- finishChild's message read --------------------------------------------
 
-\* specialists.ts:611-613. pre28 archives sessionResult text at 8a2c6c9:294-318.
+\* specialists.ts:612-614. pre28 archives sessionResult text at 8a2c6c9:294-318.
 \* found outcome is "none" when the read happens while the turn is still running
 \* (no idle message yet). specialists.ts:169-178 / pre28:113-126.
 ReadTranscriptAndDecide ==
@@ -336,7 +347,16 @@ ReadTranscriptAndDecide ==
            /\ ~(limit # "none" /\ exitedSeen /\ found # "succeeded")
            /\ pc' = "Settle"
            /\ willVerify' = exitedSeen
-           /\ badArchive' = FALSE
+           \* specialists.ts:680. Only a succeeded turn archives its own text.
+           \* A failed turn does not. A parent cancel (interrupted, limit "none")
+           \* does not either. failedArchivesOpening is the pre-fix line
+           \* `report = exited ? found.text : ""` on a failed turn: it archives
+           \* the opening line. The same pre-fix line also archived a parent
+           \* cancel; that exit stays badArchive FALSE here so the first
+           \* counterexample TLC prints is the failed turn. A succeeded turn's
+           \* text is its report. A progress line before a later tool call is
+           \* not in this model.
+           /\ badArchive' = (Variant = "failedArchivesOpening" /\ exitedSeen /\ found = "failed")
            /\ UNCHANGED <<running, outcome, limit, parentAbort, fromAbort, quiet, limitsArmed,
                          summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
                          archivedPre, ret, sumAborted>>
@@ -512,8 +532,8 @@ BoundedSummaryReadSettles ==
                 summaryLanded, sendStarted, sendSettled, exitedSeen, recorded, exitVerified,
                 archivedPre, ret, sumAborted>>
 
-\* specialists.ts:706-710 specialist_finish. exit_verified is the value chosen
-\* above (621, 635, 650, 667). This action is the ledger write.
+\* specialists.ts:732-736 specialist_finish. exit_verified is the value chosen
+\* above (623, 637, 652, 667, 691). This action is the ledger write.
 RecordLedger ==
   /\ pc = "Settle"
   /\ pc' = "Done"
@@ -536,6 +556,7 @@ Next ==
   \/ ParentAborts
   \/ TurnEndsSucceeded
   \/ TurnEndsInterrupted
+  \/ TurnEndsFailed
   \/ SummarySendLandsAndStartsTurn
   \/ WatchSeesIdle
   \/ WatchSeesAbort
