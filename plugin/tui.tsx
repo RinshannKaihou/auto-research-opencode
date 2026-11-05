@@ -9,6 +9,7 @@ import { createSignal } from "solid-js"
 import { ResearchRpc } from "./rpc"
 import { parseResearchCommand } from "./src/commands"
 import { errorText } from "./src/format"
+import { sessionTitle } from "./src/session-title"
 import { ResearchBoard } from "./src/board/Board"
 import { showText } from "./src/dialog"
 import { ResearchComposerLine, ResearchSidebar, createSessionStatus } from "./src/status"
@@ -55,7 +56,7 @@ export default Plugin.define({
       // An existing project already has a main session; the server returns it.
       if (action === "auto" && summary?.project) return undefined
       if (action === "auto" && !title) throw new Error("当前目录还没有研究项目。用法：/research auto <研究目标>")
-      const session = await context.client.session.create({ title, location: { directory } })
+      const session = await context.client.session.create({ title: sessionTitle(title), location: { directory } })
       context.ui.router.navigate({ type: "session", sessionID: session.id })
       return session.id
     }
@@ -79,7 +80,7 @@ export default Plugin.define({
       }
       try {
         if (!sessionID && SESSION_OPENERS.has(command.action)) {
-          const title = command.action === "takeover" ? "Research" : String(command.args.goal ?? "").slice(0, 80)
+          const title = command.action === "takeover" ? "Research" : String(command.args.goal ?? "")
           sessionID = await sessionFor(command.action, title)
         }
         // Autonomous turns carry no model of their own; they use the one selected here.

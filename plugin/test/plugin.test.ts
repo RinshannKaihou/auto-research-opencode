@@ -5788,3 +5788,42 @@ describe('tail wait completion', () => {
     }
   })
 })
+
+for (const mode of ["init-auto", "auto"]) {
+  test(`multiline research goal survives ${mode} and starts generation one`, async () => {
+    const host = await load()
+    const goal = "研究目标：FA 微小误差\n\n级联传播机制\n" + "完整实验约束与交付要求。".repeat(30)
+    if (mode === "init-auto") {
+      const initialized = await host.command("init", "ses_main", { goal })
+      expect(initialized.error).toBeUndefined()
+      expect((await host.summary()).run.state).toBe("manual")
+      await host.command("auto", "ses_main")
+    } else await host.command("auto", "ses_main", { goal })
+    const summary = await host.summary()
+    expect(summary.project.goal).toBe(goal)
+    expect(summary.run.state).toBe("running")
+    expect(summary.run.generation).toBe(1)
+    const kickoffs = host.said("ses_main").filter((item: any) => item.resume)
+    expect(kickoffs).toHaveLength(1)
+    expect(kickoffs[0].text).toBe(`【Research 自动推进】开始自主研究。目标：${goal}\n先盘点已有材料和记录，然后规划节点、派发执行；结果回来后综合，目标回答后发布最终报告并调用 research_conclude。`)
+  })
+}
+
+test("node session creation sanitizes controls in research-derived titles", async () => {
+  const titles: string[] = []
+  const host = await load({ hostSetup: host => {
+    const create = host.ctx.session.create
+    host.ctx.session.create = async (input: any) => {
+      titles.push(input.title)
+      if (/[\u0000-\u001f\u007f-\u009f]/u.test(input.title)) throw new Error("native terminal rejected title")
+      return create(input)
+    }
+  } })
+  await host.command("auto", "ses_main", { goal: "Find X" })
+  await host.call("research_propose", "ses_main", { question: "FA\0gate\x1b down\n投影？", why_now: "w", plan: "p", root_reason: "r" })
+  await host.call("research_dispatch", "ses_main", { node_id: "X-001" })
+  await until(() => host.created.length === 1, "safe node title")
+  expect(titles).toHaveLength(1)
+  expect(titles[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u)
+  expect(titles[0]).toContain("投影")
+})

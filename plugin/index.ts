@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto"
 import { Observations } from "./src/observations"
 import { NativeObservations } from './src/native-observations'
 import { ResearchRpc } from "./rpc"
+import { sessionTitle } from "./src/session-title"
 import { StorageClient } from "./src/storage"
 import { Research, findProjectRoot, guidanceNote, type CommandResult } from "./src/research"
 import { Engine, type ModelRef, type SessionHost, type ConclusionInput } from "./src/engine"
@@ -318,7 +319,7 @@ export default Plugin.define({
           await verifyController(main)
         })
         return (await ctx.session.create({
-            title,
+            title: sessionTitle(title),
             ...(sessionID ? { id: sessionID } : {}),
             location: { directory: ctx.location.directory },
             ...(model ? { model } : {}),
