@@ -43,6 +43,52 @@ the agreed handoff: see the acceptance in the smoke sections below.
 `tests/test_prompt_handoff_probe.py` covers the delivery-scope classifier with
 enqueue-before-start, same-execution and new-execution event orders.
 
+## Model step -> tool call -> input association
+
+`python3 scripts/probe_step_association.py [--delivery steer|queue]` · same
+private-XDG / loopback-provider fixture. A probe tool blocks the model request and
+then the tool itself, and real prompts are sent in both windows.
+
+| Question | Observed on 2.2.5 |
+|---|---|
+| Do context-hook messages expose native IDs? | Yes for user and assistant messages; a user message ID equals the prompt-hook `messageID`; tool-result messages have no id. |
+| Does the tool know its generating step? | Yes. The tool execution `call.messageID` equals the `session.step.started` `assistantMessageID` of the step that produced the call. |
+| Does the tool see that step in the transcript? | Yes. `ctx.session.context()` called from the tool already contains the assistant message with `call.messageID` and the user messages delivered before it. |
+| Are primary requests serial per session? | Not used. The hook-level counter only shows that context callbacks do not overlap; it says nothing about request lifetimes, so the association does not rely on it. |
+| Where does an input sent during model generation first appear? | The next provider body (the step after the tool result), never the in-flight request. It is not in the transcript at tool time either. |
+| Where does an input sent while the tool runs first appear? | The next provider body as well. |
+| Are real prompts and synthetic notices distinguishable in the transcript? | Yes. A real prompt is a `user` entry; a `resume:false` synthetic is never persisted as `user`. |
+| Wire bodies carry message IDs? | No. Association uses the transcript's native message IDs, never the provider body. |
+
+The plugin therefore stores only the generating step's assistant ID on the
+terminal marker. When a finishing request is prepared, it reads the native
+transcript and asks what real (`type: "user"`) input arrived **after that
+assistant message**. That is a true generation-step association: a newer context
+preparation, a session-level snapshot or a late RPC cannot change it, and it does
+not assume request seriality. If the step is missing from the transcript (legacy
+`9424fb0` warm marker or compaction), the boundary is unknown and the finishing
+step takes the conservative text-response path instead of asserting there is no
+new input.
+
+The fake-host fixture models the same relationship explicitly: every tool call
+appends an assistant transcript entry whose ID is exactly the `messageID` handed
+to the tool, so transcript association is exercised rather than inferred from an
+auto-incrementing counter. The real-host probe separately proves the
+`step.started.assistantMessageID` = `call.messageID` equality.
+
+### steer vs queue control
+
+Same script barrier and send time, only the delivery differs:
+
+| Delivery | Inputs first visible | Execution boundaries | Tool still executed | IDs preserved |
+|---|---|---|---|---|
+| `steer` | both pending inputs in the next provider body | 1 | yes | yes |
+| `queue` | one input per step (bodies 2 and 3) | 1 | yes | yes |
+
+`queue` is therefore observably different (one input per step) and is kept; the
+control does not license dropping the earlier routing or claiming a new
+execution boundary.
+
 ## Isolated research smoke: the acceptance is a normal round
 
 `python3 scripts/probe_research_run.py --context-placement tail --wait-finish
@@ -59,12 +105,19 @@ the finishing request nor the post-terminal step.
 | Request | Content |
 |---:|---|
 | 5 | Accepted wait finishing request: full system context, no tools, no tail, **no queued text** |
-| 6 | The host delivered the queued prompt at the next step of the same execution: no tools, but the old finishing instruction is replaced by the post-terminal instruction |
+| 6 | The host delivered the queued prompt at the next step of the same execution: no tools, and the old finishing instruction is replaced by the post-terminal instruction because the newest real input differs from the marker's generating-step boundary |
 | 7 | The wait result woke the coordinator in a new execution: normal tail placement and tools, the user text in history |
+
+The probe records the blocked request's own index when it arrives and waits
+for the coordinator's normal round within one bounded deadline after release. A
+missing wake is reported as `timeout`, never as a structural host block. With
+`--interleave-session` another session's request is inserted while the target
+request is blocked; the target request index, the first post-terminal request and
+the normal round still line up.
 
 Recorded: `delivery: "queue"`, `finishing_had_text: false`,
 `post_terminal_step: true`, `normal_round: true`, `gate: "passed"`,
-`guidance_notes: 1`. The post-terminal request is a recognised overlay kind in
+`finishing_body_kind: "wait"`, `interleaved_requests: 1`, `guidance_notes: 1`. The post-terminal request is a recognised overlay kind in
 `context_placement_checks`, so it participates in request accounting, full tool
 pairing and the "no tools, no tail" gate instead of being skipped. The placement
 checks stayed valid: 8–9 research requests depending on whether the wake
@@ -83,12 +136,16 @@ prompt goes to the node session.
 | Request | Content |
 |---:|---|
 | 4 | Node finishing request: full system context, no tools, no tail, **no queued text** |
-| 5 | The queued prompt was delivered at a later step of the same node execution: no tools, post-terminal instruction |
+| 5 | The queued prompt was delivered at a later step of the same node execution: no tools, post-terminal instruction selected by the same input boundary |
 | — | No later node execution follows, so the queued input never reaches a normal round and no guidance note is filed |
+
+With the same interleaved request, the blocked index still points at the node
+finishing request (`finishing_body_kind: "finish"`).
 
 Recorded: `delivery: "queue"`, `finishing_had_text: false`,
 `post_terminal_step: true`, `normal_round: false`, `gate: "blocked"`,
-`reason: "no_later_execution"`, `guidance_notes: 0`, node task `finished`,
+`reason: "no_later_execution"`, `finishing_body_kind: "finish"`,
+`interleaved_requests: 1`, `guidance_notes: 0`, node task `finished`,
 8–9 research requests, 6–7 tailed, 2 overlay requests (one finishing, one
 post-terminal), `tool_pairing_ok: true`, `persisted_history_has_tail: false`,
 `max_cache_markers: 4`.

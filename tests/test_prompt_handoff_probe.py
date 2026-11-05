@@ -64,11 +64,16 @@ def test_a_later_tool_request_is_a_normal_round():
         "gate": "passed", "reason": None}
 
 
-def test_text_in_history_without_a_later_execution_is_blocked():
+def test_a_missing_wake_is_a_timeout_not_a_structural_block():
     gate = probe_run.handoff_gate({"normal_round": False, "new_executions_after_delivery": 0})
+    assert gate == {"gate": "timeout", "reason": "wake_not_observed"}
+
+
+def test_a_finished_node_without_a_later_execution_is_structurally_blocked():
+    gate = probe_run.handoff_gate({"normal_round": False, "new_executions_after_delivery": 0}, node_case=True)
     assert gate == {"gate": "blocked", "reason": "no_later_execution"}
 
 
-def test_a_later_execution_without_a_tool_request_is_blocked():
+def test_a_later_execution_without_a_normal_request_is_a_timeout():
     gate = probe_run.handoff_gate({"normal_round": False, "new_executions_after_delivery": 2})
-    assert gate == {"gate": "blocked", "reason": "no_tool_request_after_delivery"}
+    assert gate == {"gate": "timeout", "reason": "normal_round_not_observed"}

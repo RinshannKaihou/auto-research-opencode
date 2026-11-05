@@ -81,11 +81,10 @@ export default Plugin.define({
     const failedEvents = new Map<string, any[]>()
     const shellCalls = lifecycle.state.shellCalls ??= new Map()
     const shellSeen = lifecycle.state.shellSeen ??= new Set()
-    const terminalCalls: Map<string, Set<{ execution?: string }>> = lifecycle.state.terminalCalls ??= new Map()
+    const terminalCalls: Map<string, Set<{ execution?: string; step?: string }>> =
+      lifecycle.state.terminalCalls ??= new Map()
     const queuedGuidance: Map<string, { id: string; text: string; execution?: string; delivered?: boolean }[]> =
       lifecycle.state.queuedGuidance ??= new Map()
-    const queuedInputs: Map<string, { id: string; execution?: string; delivered?: boolean }[]> =
-      lifecycle.state.queuedInputs ??= new Map()
     let queuedEvents = 0
     const relevantEvents = new Set(['session.execution.started', 'session.execution.succeeded', 'session.execution.failed',
       'session.inbox.enqueued', 'session.inbox.delivered', 'session.execution.interrupted', 'session.tool.failed'])
@@ -99,20 +98,51 @@ export default Plugin.define({
       if (marker && (execution === undefined || marker.execution === execution)) markers!.delete(sessionID)
     }
     const GUIDANCE_QUEUE_LIMIT = 16
-    /** Register one terminal call before it awaits the service; the caller removes exactly this entry. */
-    const beginTerminalCall = (sessionID: string, execution: string | undefined) => {
-      const token: { execution?: string } = { execution }
-      const calls = terminalCalls.get(sessionID) ?? new Set<{ execution?: string }>()
+    /**
+     * The newest real user input that arrived in the native transcript after the
+     * assistant step that generated the terminal call. The transcript is the
+     * authoritative conversation order: `user` entries are real prompts and
+     * `synthetic` entries are reports/wakes, so no ID whitelist or wall-clock
+     * guess is involved. `null` means no new input; `undefined` means the
+     * transcript cannot prove it either way.
+     */
+    const inputAfterStep = async (sessionID: string, step: string | undefined) => {
+      if (!step) return undefined
+      const transcript = await within(host.messages(sessionID).catch(() => [] as any[]), 2000) as any[] | void
+      if (!transcript?.length) return undefined
+      const at = transcript.findIndex((item: any) => item?.id === step)
+      if (at < 0) return undefined
+      for (let index = transcript.length - 1; index > at; index--) {
+        const item: any = transcript[index]
+        if (item?.type === 'user' && typeof item.id === 'string') return item.id
+      }
+      return null
+    }
+    /**
+     * Register one terminal call before it awaits the service. The token keeps
+     * the assistant step that generated the call, so the finishing step can ask
+     * the transcript what arrived after that step, not what the session looked
+     * like when the RPC returned.
+     */
+    const beginTerminalCall = (sessionID: string, execution: string | undefined, call?: any) => {
+      const token: { execution?: string; step?: string } = {
+        execution,
+        step: typeof call?.messageID === 'string' ? call.messageID : undefined,
+      }
+      const calls = terminalCalls.get(sessionID) ?? new Set<{ execution?: string; step?: string }>()
       calls.add(token)
       terminalCalls.set(sessionID, calls)
       return token
     }
-    const endTerminalCall = (sessionID: string, token: { execution?: string }) => {
+    const endTerminalCall = (sessionID: string, token: { execution?: string; step?: string }) => {
       const calls = terminalCalls.get(sessionID)
       if (!calls) return
       calls.delete(token)
       if (!calls.size) terminalCalls.delete(sessionID)
     }
+    /** An in-flight terminal call that belongs to this execution. */
+    const terminalCallHere = (sessionID: string, execution: string | undefined) =>
+      [...(terminalCalls.get(sessionID) ?? [])].some(token => token.execution === execution)
     /**
      * A terminal action covers this execution only: an accepted marker in it, or
      * a call still awaiting the service that was registered for it. A late call
@@ -136,19 +166,6 @@ export default Plugin.define({
     const markQueuedGuidanceDelivered = (sessionID: string, id: string) => {
       for (const item of queuedGuidance.get(sessionID) ?? []) if (item.id === id) item.delivered = true
     }
-    /** Track a queued user input that may carry no text at all. */
-    const rememberQueuedInput = (sessionID: string, id: string, execution: string | undefined) => {
-      if (!id) return
-      const records = queuedInputs.get(sessionID) ?? []
-      if (records.some(item => item.id === id)) return
-      records.push({ id, execution })
-      queuedInputs.set(sessionID, records.slice(-GUIDANCE_QUEUE_LIMIT))
-    }
-    const markQueuedInputDelivered = (sessionID: string, id: string) => {
-      for (const item of queuedInputs.get(sessionID) ?? []) if (item.id === id) item.delivered = true
-    }
-    const deliveredInputHere = (sessionID: string, execution: string | undefined) =>
-      (queuedInputs.get(sessionID) ?? []).some(item => item.delivered && item.execution === execution)
     /**
      * The host may still deliver a queued prompt as the next step of the same
      * execution. The note therefore waits for a different execution, so the old
@@ -245,7 +262,6 @@ export default Plugin.define({
         lifecycle.state.waitFinishes?.delete(session)
         terminalCalls.delete(session)
         queuedGuidance.delete(session)
-        queuedInputs.delete(session)
         for(const key of externalStarts.keys())if(key.startsWith(session+':'))externalStarts.delete(key)
       },
     )
@@ -668,7 +684,7 @@ export default Plugin.define({
           const execution = engine.executionToken(sessionID)
           // Register before awaiting the service so user input that arrives in
           // the acceptance window is queued instead of steering this call.
-          const terminal = beginTerminalCall(sessionID, execution)
+          const terminal = beginTerminalCall(sessionID, execution, call)
           try {
             const result: any = await engine.wait(sessionID, taskIDs)
             // Tail mode finishes the accepted wait on the next primary request.
@@ -679,7 +695,7 @@ export default Plugin.define({
               const waiting = Array.isArray(result?.waiting) ? result.waiting.map(String) : []
               if (waiting.length) {
                 const markers = lifecycle.state.waitFinishes ??= new Map()
-                markers.set(sessionID, { execution, waiting })
+                markers.set(sessionID, { execution, waiting, step: terminal.step })
               }
             }
             return result
@@ -687,13 +703,13 @@ export default Plugin.define({
         }
         case "finish": {
           const execution = engine.executionToken(sessionID)
-          const terminal = beginTerminalCall(sessionID, execution)
+          const terminal = beginTerminalCall(sessionID, execution, call)
           try {
             const result = await engine.finish(sessionID, { state: String(args.state), summary: String(args.summary) }, operationID)
             if (contextPlacement === 'tail' && execution !== undefined
                 && engine.executionToken(sessionID) === execution) {
               const markers = lifecycle.state.waitFinishes ??= new Map()
-              markers.set(sessionID, { execution, waiting: [], kind: 'finish' })
+              markers.set(sessionID, { execution, waiting: [], kind: 'finish', step: terminal.step })
             }
             return result
           } finally { endTerminalCall(sessionID, terminal) }
@@ -816,6 +832,10 @@ export default Plugin.define({
         // The marker is compared before and after preparation in every case,
         // including "none at start, installed during an await".
         const markerAtStart = contextPlacement === 'tail' ? lifecycle.state.waitFinishes?.get(request.sessionID) : undefined
+        // The new read-only fallback belongs to tail terminal preparation only:
+        // system mode and markerless tail requests keep their baseline tools.
+        const terminalAtStart = contextPlacement === 'tail'
+          && (markerAtStart !== undefined || terminalCallHere(request.sessionID, executionAtStart))
         const candidate = markerAtStart
         let markerUsed: typeof candidate
         let markerCleared = false
@@ -922,6 +942,10 @@ export default Plugin.define({
           await research.delivered(request.sessionID,text,history,deadline-performance.now())
         }
         const issues = await evidence
+        // Ask the native transcript what arrived after the assistant step that
+        // generated the terminal call. This is a generation-step association, not
+        // a session-level snapshot: a newer preparation cannot change it.
+        const stepInput = finishing ? await inputAfterStep(request.sessionID, markerUsed?.step) : null
         // Wait for events that were already queued (including this message's own
         // delivery). The wait only covers the chain that existed at call time, so
         // the synchronous check below still tests whether another one was appended.
@@ -939,10 +963,16 @@ export default Plugin.define({
           && engine.executionToken(request.sessionID) === executionAtStart
           && markerStable
           && (finishing === undefined || markerNow === markerUsed)
-        if (!boundaryStable && (role === 'main' || role === 'node_core')) {
+        const terminalContext = contextPlacement === 'tail'
+          && (terminalAtStart || markerNow !== undefined || terminalCallHere(request.sessionID, executionAtStart))
+        let degraded = false
+        if (!boundaryStable && terminalContext && (role === 'main' || role === 'node_core')) {
+          // Only a tail terminal preparation falls back. An ordinary request
+          // keeps its tools for this unrelated event boundary change.
           finishing = undefined
           readOnly = true
           fullSystem = true
+          degraded = true
         }
         if (finishing) for (const name of Object.keys(request.tools)) delete request.tools[name]
         else if (readOnly) for (const name of Object.keys(request.tools)) {
@@ -975,14 +1005,21 @@ export default Plugin.define({
           if (tailMode) tail.push(warning)
           else request.system.push({type:'text',text:warning})
         }
+        if (degraded) {
+          request.system.push({ type: 'text', text:
+            'Research control or the accepted terminal action changed while this request was being prepared. ' +
+            'This response may read existing material only; do not claim the terminal action succeeded or start new work. ' +
+            'The next stable request re-checks the authoritative state.' })
+        }
         if (finishing) {
-          // A queued real user message may have been delivered into this same
-          // execution at the host's next step. The finishing barrier stays (no
-          // tools), but the old "end without work" instruction no longer covers
-          // that request: the user gets a text answer, and the pending result is
-          // still committed when the execution ends.
-          const queuedHere = deliveredInputHere(request.sessionID, executionAtStart)
-          request.system.push({ type: 'text', text: queuedHere
+          // `stepInput` is the newest real user input after the generating step.
+          // An uninterpretable boundary (pre-9424fb0 warm marker, missing
+          // transcript, or an evicted step) must not assert "no new input": keep
+          // the tool-free barrier and answer in text when a user message exists.
+          const newInput = stepInput === undefined
+            ? request.messages.some((message: any) => message?.role === 'user')
+            : stepInput !== null
+          request.system.push({ type: 'text', text: newInput
             ? 'A user message arrived while this terminal action was still pending. This execution is finishing and no tools are available: answer that message in text without starting new work. The engine commits the pending result after this response ends.'
             : finishing === 'finish'
             ? 'A research finish was accepted in this execution. End this response without further work; ' +
@@ -1031,10 +1068,8 @@ export default Plugin.define({
         if (messageID && contextPlacement === 'tail' && (role === 'main' || role === 'node_core')
             && (text.length > 0 || attachments > 0) && terminalWindow(input.sessionID)) {
           input.delivery = 'queue'
-          // The queued input is tracked on its own so an attachment-only
-          // delivery still marks the step that carries it. Only text becomes a
-          // note; an attachment still reaches the next request through history.
-          rememberQueuedInput(input.sessionID, messageID, engine.executionToken(input.sessionID))
+          // Only text becomes a note; an attachment-only input still reaches the
+          // next request through the host's own history.
           if (text) rememberQueuedGuidance(input.sessionID, messageID, text, engine.executionToken(input.sessionID))
           return
         }
@@ -1136,7 +1171,6 @@ export default Plugin.define({
       else if (type === 'session.inbox.delivered') {
         const inboxID = String((data as any)?.inboxID ?? '')
         await engine.inboxDelivered(sessionID, inboxID, sequence)
-        markQueuedInputDelivered(sessionID, inboxID)
         markQueuedGuidanceDelivered(sessionID, inboxID)
       }
       else if (['session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted'].includes(type)) {

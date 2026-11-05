@@ -4,6 +4,8 @@
 
 本计划只覆盖本次复现的用户输入交接、收尾判定过期、临时授权失败丢标记。它优先于原 [PR #35 remediation plan](<./Prompt cache PR 35 review remediation plan.md>) 中与这三处冲突的实现细节，其他约束与真实提供方验证门槛继续有效。
 
+后续 PR #36 在 `9424fb0` 的两份审阅修复，以 [PR #36 review remediation plan](<./PR 36 review remediation plan.md>) 为准；该计划保留本文件的 B 阻塞与用户交接选择。
+
 ## 1. 已确认的问题与用户选择
 
 基线的 5 个临时复现均通过了“缺陷确实出现”的断言，不是修复后的回归结果：

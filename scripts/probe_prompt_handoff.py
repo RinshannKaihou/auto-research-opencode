@@ -6,16 +6,19 @@ to ``queue``. This probe proves that contract against OpenCode 2.2.5 rather than
 a fake host: a private XDG tree, a loopback OpenAI-compatible provider with fake
 credentials and no external model or research data.
 
-Observed facts:
+Observed facts on OpenCode 2.2.5:
 
-1. a real user prompt that arrives while the session is busy is queued and
-   delivered only after the current execution ends, creating a new execution
-   boundary;
-2. where the prompt hook runs (enqueue or delivery), how often, and which
-   ``messageID`` the host exposes;
-3. whether message ID, text, attachments and order survive;
+1. a real user prompt that arrives while a session is busy is held out of the
+   request already in flight and delivered at the **next step of the same
+   execution**; it does not create a new execution boundary. Only a prompt sent
+   to an idle session starts its own execution;
+2. the prompt hook runs once at enqueue, and the ``messageID`` it sees is the
+   native inbound id;
+3. message ID, text, attachments and order survive the queue;
 4. ``synthetic`` notifications (``resume: false``) do not reach the prompt hook;
-5. a queued prompt sent to an idle session is delivered immediately.
+5. ``steer`` and ``queue`` differ: with the same barrier and send time, ``steer``
+   delivers both pending inputs at the next step, while ``queue`` delivers them
+   one per step. ``scripts/probe_step_association.py`` records that control.
 
 The probe decides nothing for the plugin: it only records what the host does.
 """
@@ -280,6 +283,7 @@ def main():
                 first_body, queued_body, idle_body = bodies[0], bodies[1], bodies[2]
                 context_status, context = request(base, f'/api/session/{sid}/context', password)
                 persisted = json.dumps(context.get('data', []))
+                transcript_types = {item.get('id'): item.get('type') for item in context.get('data', [])}
                 result = {
                     'host_version': subprocess.check_output(['opencode', '--version'], env=env, text=True).strip(),
                     'prompt_hook_calls': [{'message': item.get('message'), 'delivery': item.get('delivery'),
@@ -306,6 +310,8 @@ def main():
                     'inbox_delivery_while_busy': inbox_delivery,
                     'queued_while_busy': queued_while_busy,
                     'queued_ids_persisted': 'msg_handoff_two' in persisted,
+                    'real_prompt_transcript_type': transcript_types.get('msg_handoff_two'),
+                    'synthetic_transcript_type': transcript_types.get('msg_handoff_synthetic'),
                     'context_hook_bodies_with_queued_text': sum(item.get('queued_text_present') for item in contexts),
                     'context_status': context_status,
                     'session_events': [item for item in trace
@@ -337,6 +343,10 @@ def main():
                     problems.append('the host never delivered the idle queued prompt')
                 if result['synthetic_reached_prompt_hook']:
                     problems.append('a resume:false synthetic reached the user prompt hook')
+                if result['real_prompt_transcript_type'] != 'user':
+                    problems.append('a real prompt is not a user entry in the transcript')
+                if result['synthetic_transcript_type'] == 'user':
+                    problems.append('a resume:false synthetic was persisted as a real user entry')
                 if problems:
                     raise RuntimeError('; '.join(problems))
                 return 0
