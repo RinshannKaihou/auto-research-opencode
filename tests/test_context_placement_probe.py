@@ -44,6 +44,13 @@ def finishing(kind="wait"):
         tool_call(), tool_result()]}
 
 
+def post_terminal():
+    return {"tools": [], "messages": [
+        {"role": "system", "content": "A user message arrived while this terminal action was still pending. "
+                                      "This execution is finishing and no tools are available."},
+        tool_call(), tool_result()]}
+
+
 def test_one_research_request_without_a_tail_fails():
     checks = probe.context_placement_checks(
         [body([text_part(), tail()]), body([text_part()])], "tail", "")
@@ -125,4 +132,38 @@ def test_a_finishing_instruction_with_tools_is_rejected(kind):
         [body([text_part(), tool_call(), tool_result(), tail()]), bad], "tail", "")
     assert checks["finishing_requests"] == 1
     assert checks["finishing_requests_have_no_tools_and_no_tail"] is False
+    assert probe.context_placement_ok(checks) is False
+
+
+def test_one_post_terminal_request_is_accounted_for():
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), body([text_part(), tool_call(), tool_result(), tail()]), post_terminal()],
+        "tail", "")
+    assert checks["research_requests"] == 3
+    assert checks["tail_requests"] == 2
+    assert checks["post_terminal_requests"] == 1
+    assert checks["overlay_requests"] == 1
+    assert checks["unaccounted_requests"] == 0
+    assert checks["all_research_requests_accounted_for"] is True
+    assert checks["overlay_requests_have_no_tools_and_no_tail"] is True
+    assert probe.context_placement_ok(checks) is True
+
+
+def test_a_post_terminal_request_with_a_missing_tool_result_is_rejected():
+    bad = post_terminal()
+    bad["messages"] = bad["messages"][:-1]
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), bad], "tail", "")
+    assert checks["post_terminal_requests"] == 1
+    assert checks["tool_pairing_ok"] is False
+    assert probe.context_placement_ok(checks) is False
+
+
+def test_a_post_terminal_request_with_a_tail_is_rejected():
+    bad = post_terminal()
+    bad["messages"] = bad["messages"] + [tail()]
+    checks = probe.context_placement_checks(
+        [body([text_part(), tail()]), bad], "tail", "")
+    assert checks["post_terminal_requests"] == 1
+    assert checks["overlay_requests_have_no_tools_and_no_tail"] is False
     assert probe.context_placement_ok(checks) is False

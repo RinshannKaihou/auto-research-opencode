@@ -56,6 +56,104 @@ def _finishing_kind(body):
     return None
 
 
+POST_TERMINAL_MARKER = 'A user message arrived while this terminal action was still pending'
+
+
+def _post_terminal(body):
+    """The tool-free step that carries a delivered queued user input."""
+    return any(POST_TERMINAL_MARKER in _message_text(message)
+               for message in body.get('messages') or [] if message.get('role') == 'system')
+
+
+QUEUED_TEXT = 'queued user instruction for the next round'
+
+# Records which request carried the queued input and whether a later request in
+# the same session was a normal round (tools exposed, no terminal instruction).
+HANDOFF_INSTRUMENTATION = '''import {appendFileSync} from "node:fs";
+const log=(event,extra={})=>appendFileSync(process.env.ARI_HANDOFF_TRACE,JSON.stringify({event,...extra})+"\\n");
+export default {id:"ari-handoff-trace",async setup(ctx){
+ await ctx.session.hook("context",req=>{
+  const system=(req.system??[]).map(p=>String(p.text??"")).join("\\n");
+  log("context",{session:req.sessionID,tools:Object.keys(req.tools??{}).length,
+   queued:JSON.stringify(req.messages??[]).includes("queued user instruction for the next round"),
+   finishing:system.includes("was accepted in this execution"),
+   post_terminal:system.includes("arrived while this terminal action was still pending")});
+ });
+ let open=true;const stream=ctx.event.subscribe();
+ void(async()=>{try{for await(const e of stream){if(!open)break;
+  if(e.data?.sessionID)log("event",{type:e.type,session:e.data.sessionID,inbox:e.data.inboxID,seq:e.durable?.seq});
+ }}catch{}})();
+ return ()=>{open=false};
+}};
+'''
+
+
+def handoff_gate(checks, node_case=False):
+    """The agreed acceptance: the queued input later reaches a normal round.
+
+    A normal round is a request in the same session that still carries the
+    queued text, exposes tools, and is neither the finishing request nor the
+    post-terminal step. Merely keeping the text in history is not enough. A
+    missing wake is a timeout, not a structural host block; only a finished
+    node, which the host never continues on its own, is structurally blocked.
+    """
+    if checks.get('normal_round'):
+        return {'gate': 'passed', 'reason': None}
+    if not checks.get('new_executions_after_delivery'):
+        if node_case:
+            return {'gate': 'blocked', 'reason': 'no_later_execution'}
+        return {'gate': 'timeout', 'reason': 'wake_not_observed'}
+    return {'gate': 'timeout', 'reason': 'normal_round_not_observed'}
+
+
+def read_handoff_records(trace):
+    if not trace.exists():
+        return []
+    return [json.loads(line) for line in trace.read_text().splitlines() if line.strip()]
+
+
+def handoff_contexts(records, session):
+    return [item for item in records if item.get('event') == 'context' and item.get('session') == session]
+
+
+def normal_round_indexes(contexts):
+    return [index for index, item in enumerate(contexts)
+            if item.get('queued') and (item.get('tools') or 0) > 0
+            and not item.get('finishing') and not item.get('post_terminal')]
+
+
+def wait_for_normal_round(trace, session, deadline):
+    """One bounded wait for the coordinator's normal round after release."""
+    while time.monotonic() < deadline:
+        if normal_round_indexes(handoff_contexts(read_handoff_records(trace), session)):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def queued_handoff_checks(bodies, finishing_index, text=QUEUED_TEXT):
+    """Where a real user prompt appears relative to the accepted wait.
+
+    The pinned host delivers a queued prompt at the next step of the running
+    execution, so the finishing step must stay clean and the step that carries
+    the text must still expose no tools. The wake is the first later request
+    with tools again.
+    """
+    containing = [index for index, body in enumerate(bodies) if text in json.dumps(body.get('messages') or [])]
+    after = [index for index in containing if index > finishing_index] if finishing_index is not None else []
+    later_with_tools = [index for index in after if bodies[index].get('tools')]
+    return {
+        'finishing_index': finishing_index,
+        'finishing_had_text': finishing_index is not None and finishing_index in containing,
+        'text_request_indexes': containing,
+        'first_text_request': after[0] if after else None,
+        'first_text_request_tool_count': len(bodies[after[0]].get('tools') or []) if after else None,
+        'first_text_request_finishing_kind': _finishing_kind(bodies[after[0]]) if after else None,
+        'requests_after_text_with_tools': later_with_tools,
+        'wake_request_index': later_with_tools[0] if later_with_tools else None,
+    }
+
+
 def context_placement_checks(bodies, placement, persisted_context):
     """Checks the temporary research-state message and the cache breakpoints
     the SDK actually put on the wire. A tail-mode wait/node-completion request is
@@ -64,8 +162,8 @@ def context_placement_checks(bodies, placement, persisted_context):
     research = []
     for body in bodies:
         names = {(tool.get('function') or {}).get('name', '') for tool in body.get('tools') or []}
-        finishing = _finishing_kind(body) is not None
-        if any(name.startswith('research_') for name in names) or finishing:
+        overlay = _finishing_kind(body) is not None or _post_terminal(body)
+        if any(name.startswith('research_') for name in names) or overlay:
             research.append(body)
     checks = {'requests': len(bodies), 'research_requests': len(research)}
     if placement != 'tail':
@@ -73,19 +171,23 @@ def context_placement_checks(bodies, placement, persisted_context):
         return checks
     tails = [body for body in research if _has_tail(body)]
     finishing = [body for body in research if _finishing_kind(body) is not None]
-    tails = [body for body in tails if body not in finishing]
+    post_terminal = [body for body in research if _post_terminal(body)]
+    overlay = [body for body in research if body in finishing or body in post_terminal]
+    tails = [body for body in tails if body not in overlay]
     tool_continuations = [body for body in research
                           if len(body.get('messages') or []) > 1
                           and body['messages'][-2].get('role') == 'tool']
-    regular_continuations = [body for body in tool_continuations if body not in finishing]
+    regular_continuations = [body for body in tool_continuations if body not in overlay]
     checks.update({
         'tail_requests': len(tails),
         'finishing_requests': len(finishing),
+        'post_terminal_requests': len(post_terminal),
+        'overlay_requests': len(overlay),
         'wait_finishing_requests': sum(_finishing_kind(body) == 'wait' for body in finishing),
         'node_finishing_requests': sum(_finishing_kind(body) == 'finish' for body in finishing),
-        'unaccounted_requests': len(research) - len(tails) - len(finishing),
-        'all_research_requests_accounted_for': len(tails) + len(finishing) == len(research),
-        'tail_is_last': all(_has_tail(body) for body in research if body not in finishing),
+        'unaccounted_requests': len(research) - len(tails) - len(overlay),
+        'all_research_requests_accounted_for': len(tails) + len(overlay) == len(research),
+        'tail_is_last': all(_has_tail(body) for body in research if body not in overlay),
         'tail_absent_from_earlier_messages': all(
             not any('Injected research state' in _message_text(message) for message in body['messages'][:-1])
             for body in tails),
@@ -94,6 +196,8 @@ def context_placement_checks(bodies, placement, persisted_context):
         'tail_follows_every_regular_tool_continuation': all(_has_tail(body) for body in regular_continuations),
         'finishing_requests_have_no_tools_and_no_tail': all(
             not body.get('tools') and not _has_tail(body) for body in finishing),
+        'overlay_requests_have_no_tools_and_no_tail': all(
+            not body.get('tools') and not _has_tail(body) for body in overlay),
         'tool_pairing_ok': all(_tool_pairing_ok(
             body['messages'][:-1] if _has_tail(body) else body['messages']) for body in research),
         'max_cache_markers': max((_cache_markers(body) for body in research), default=0),
@@ -114,7 +218,7 @@ def context_placement_ok(checks):
         and checks.get('tail_absent_from_earlier_messages')
         and checks.get('regular_tool_continuations')
         and checks.get('tail_follows_every_regular_tool_continuation')
-        and checks.get('finishing_requests_have_no_tools_and_no_tail')
+        and checks.get('overlay_requests_have_no_tools_and_no_tail')
         and checks.get('tool_pairing_ok')
         and checks.get('tail_has_no_cache_marker')
         and checks.get('boundary_before_tail')
@@ -127,27 +231,41 @@ class ResearchProvider(BaseHTTPRequestHandler):
     actions = []
     requests = []
     bodies = []
+    lock = threading.Lock()
     pause_node = False
     use_specialist = False
     hold_specialist = False
     hold_node = False
     background_node = False
     wait_finish = False
+    queued_input = False
+    queued_input_kind = None
     node_waiting = threading.Event()
     node_gate = threading.Event()
     coordinator_gate = threading.Event()
     specialist_waiting = threading.Event()
     specialist_gate = threading.Event()
+    finishing_waiting = threading.Event()
+    finishing_gate = threading.Event()
+    finishing_index = None
 
     def log_message(self, *_args):
         pass
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
-        self.bodies.append(body)
+        with type(self).lock:
+            index = len(self.bodies)
+            self.bodies.append(body)
         names = {item.get('function', {}).get('name') for item in body.get('tools', []) if item.get('type') == 'function'}
         self.requests.append({'dispatch': 'research_dispatch' in names, 'finish': 'research_finish' in names,
                               'query': 'research_query' in names, 'shell': 'shell' in names, 'tool_count': len(names)})
+        if self.queued_input_kind and _finishing_kind(body) == self.queued_input_kind:
+            # Remember this exact request, not "the last body at release time":
+            # another session may append requests while it is blocked.
+            type(self).finishing_index = index
+            self.finishing_waiting.set()
+            self.finishing_gate.wait(timeout=30)
         if self.hold_node and 'dispatch' in self.actions and 'research_dispatch' not in names:
             self.node_waiting.set()
             self.node_gate.wait(timeout=12)
@@ -239,7 +357,19 @@ def main():
     parser.add_argument('--background-node', action='store_true', help='exercise a native background shell and completion wake')
     parser.add_argument('--wait-finish', action='store_true',
                         help='script an accepted coordinator wait and assert the tool-free finishing request')
+    parser.add_argument('--queued-input', action='store_true',
+                        help='send a real user prompt while the accepted wait is finishing; requires --wait-finish and tail')
+    parser.add_argument('--queued-input-node', action='store_true',
+                        help='send a real user prompt while the accepted node finish is preparing; requires tail')
+    parser.add_argument('--expect-blocked', action='store_true',
+                        help='record the host-contract block instead of failing when the queued input never gets a normal round')
+    parser.add_argument('--interleave-session', action='store_true',
+                        help='send a request from another session while the target finishing request is blocked')
     args = parser.parse_args()
+    if args.queued_input and (not args.wait_finish or args.context_placement != 'tail'):
+        parser.error('--queued-input requires --wait-finish and --context-placement tail')
+    if args.queued_input_node and (args.context_placement != 'tail' or args.queued_input):
+        parser.error('--queued-input-node requires --context-placement tail and is separate from --queued-input')
     if args.resume_after_pause and not args.pause_node:
         parser.error('--resume-after-pause requires --pause-node')
     if args.stop_during_specialist and (not args.specialist or args.pause_node):
@@ -263,11 +393,17 @@ def main():
     ResearchProvider.hold_node = args.lost_kickoff_response or args.cold_restart_node
     ResearchProvider.background_node = args.background_node
     ResearchProvider.wait_finish = args.wait_finish
+    ResearchProvider.queued_input = args.queued_input or args.queued_input_node
+    ResearchProvider.queued_input_kind = ('finish' if args.queued_input_node
+                                          else 'wait' if args.queued_input else None)
     ResearchProvider.node_waiting.clear()
     ResearchProvider.node_gate.clear()
     ResearchProvider.coordinator_gate.clear()
     ResearchProvider.specialist_waiting.clear()
     ResearchProvider.specialist_gate.clear()
+    ResearchProvider.finishing_waiting.clear()
+    ResearchProvider.finishing_gate.clear()
+    ResearchProvider.finishing_index = None
     with tempfile.TemporaryDirectory(prefix='ari-research-probe-') as temporary:
         root = Path(temporary)
         workspace = root / 'project'
@@ -290,6 +426,15 @@ def main():
         plugin = (args.plugin or Path(__file__).resolve().parents[1] / 'plugin').resolve()
         plugin_options = {'contextPlacement': args.context_placement} if args.context_placement else {}
         plugins = [{'package': str(plugin), 'options': plugin_options}]
+        handoff_trace = root / 'handoff.jsonl'
+        if args.queued_input or args.queued_input_node:
+            trace_dir = root / 'handoff-trace'
+            trace_dir.mkdir()
+            (trace_dir / 'package.json').write_text(json.dumps(
+                {'name': 'ari-handoff-trace', 'type': 'module', 'exports': {'.': './index.js'}}))
+            (trace_dir / 'index.js').write_text(HANDOFF_INSTRUMENTATION)
+            plugins.append({'package': str(trace_dir), 'options': {}})
+            env['ARI_HANDOFF_TRACE'] = str(handoff_trace)
         if args.warm_reload_specialist:
             trigger = root / 'reload-trigger'
             trigger.mkdir()
@@ -353,6 +498,45 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     print(json.dumps({'init_error': init.get('error'), 'budget_error': budget.get('error'), 'auto_error': auto.get('error')}))
                     raise SystemExit(1)
                 database = workspace / '.research' / 'state.sqlite3'
+                queued = None
+                post_deadline = None
+                if args.queued_input or args.queued_input_node:
+                    if not ResearchProvider.finishing_waiting.wait(timeout=20):
+                        raise RuntimeError('The accepted terminal action did not produce a finishing request')
+                    target = sid
+                    if args.queued_input_node:
+                        with sqlite3.connect(database) as db:
+                            row = db.execute("SELECT session_id FROM exploration_tasks WHERE state='running'").fetchone()
+                        if not row:
+                            raise RuntimeError('Could not locate the running node session')
+                        target = row[0]
+                    prompt_status, prompt_reply = request(base, f'/api/session/{target}/prompt', password,
+                        {'id': 'msg_queued_user', 'text': QUEUED_TEXT})
+                    if prompt_status != 200:
+                        raise RuntimeError(f'Queued prompt failed: {prompt_status} {prompt_reply}')
+                    _, inbox = request(base, f'/api/session/{target}/inbox', password)
+                    inbox_items = [item for item in inbox.get('data', []) if item.get('id') == 'msg_queued_user']
+                    if args.interleave_session:
+                        other = 'ses_interleave_' + uuid4().hex
+                        request(base, '/api/session', password,
+                            {'id': other, 'title': 'interleaved session', 'location': {'directory': str(workspace)},
+                             'model': {'providerID': 'ari-probe', 'id': 'probe'}})
+                        request(base, f'/api/session/{other}/prompt', password,
+                            {'id': 'msg_interleave', 'text': 'interleaved user request'})
+                        interleave_deadline = time.monotonic() + 10
+                        while time.monotonic() < interleave_deadline:
+                            if any('interleaved user request' in _message_text(message)
+                                   for body in ResearchProvider.bodies for message in body.get('messages') or []):
+                                break
+                            time.sleep(0.05)
+                    queued = {'status': prompt_status, 'session': target,
+                              'delivery': inbox_items[0].get('delivery') if inbox_items else None,
+                              'finishing_index': ResearchProvider.finishing_index}
+                    ResearchProvider.finishing_gate.set()
+                    # One bounded deadline for the whole post-release phase.
+                    post_deadline = time.monotonic() + 45
+                    if args.queued_input and not args.queued_input_node:
+                        queued['normal_round'] = wait_for_normal_round(handoff_trace, target, post_deadline)
                 reservations_at_pause = None
                 if args.warm_reload_specialist:
                     if not ResearchProvider.specialist_waiting.wait(timeout=12):
@@ -584,7 +768,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                         reservations_at_pause = db.execute('SELECT COUNT(*) FROM runtime_budget_reservations').fetchone()[0]
                     ResearchProvider.node_gate.set()
                 tasks = []
-                deadline = time.monotonic() + 12
+                deadline = min(time.monotonic() + 12, post_deadline) if post_deadline else time.monotonic() + 12
                 while time.monotonic() < deadline:
                     if database.exists():
                         with sqlite3.connect(database) as db:
@@ -615,6 +799,74 @@ export default {id:"ari-reload-probe",async setup(ctx){
                           'used_external_model': False}
                 if args.request_dump:
                     args.request_dump.write_text(json.dumps(ResearchProvider.bodies, indent=2))
+                if args.queued_input or args.queued_input_node:
+                    finishing_index = queued['finishing_index'] if queued else None
+                    handoff = queued_handoff_checks(ResearchProvider.bodies, finishing_index)
+                    with sqlite3.connect(database) as db:
+                        notes = db.execute("SELECT COUNT(*) FROM notes WHERE body LIKE ?", (f'%{QUEUED_TEXT}%',)).fetchone()[0]
+                    target = queued['session'] if queued else None
+                    records = read_handoff_records(handoff_trace)
+                    contexts = handoff_contexts(records, target)
+                    events = [item for item in records
+                              if item.get('event') == 'event' and item.get('session') == target]
+                    delivery = next((item.get('seq') for item in events
+                                     if item.get('type') == 'session.inbox.delivered'
+                                     and item.get('inbox') == 'msg_queued_user'), None)
+                    starts_after = [item for item in events
+                                    if item.get('type') == 'session.execution.started'
+                                    and delivery is not None and (item.get('seq') or 0) > delivery]
+                    normal = normal_round_indexes(contexts)
+                    post_terminal = [index for index, item in enumerate(contexts) if item.get('post_terminal')]
+                    interleaved = [index for index, body in enumerate(ResearchProvider.bodies)
+                                   if 'interleaved user request' in json.dumps(body.get('messages') or [])]
+                    handoff.update({'delivery': queued['delivery'] if queued else None,
+                                    'finishing_body_kind': (_finishing_kind(ResearchProvider.bodies[finishing_index])
+                                                            if finishing_index is not None else None),
+                                    'interleaved_requests': len(interleaved),
+                                    'prompt_status': queued['status'] if queued else None,
+                                    'target_session': target,
+                                    'guidance_notes': notes,
+                                    'delivery_seq': delivery,
+                                    'new_executions_after_delivery': len(starts_after),
+                                    'normal_round': bool(normal),
+                                    'normal_round_index': normal[0] if normal else None,
+                                    'post_terminal_step': bool(post_terminal),
+                                    'post_terminal_index': post_terminal[0] if post_terminal else None,
+                                    'context_rounds': contexts})
+                    handoff.update(handoff_gate(handoff, node_case=args.queued_input_node))
+                    result['queued_handoff'] = handoff
+                    problems = []
+                    if handoff['delivery'] != 'queue':
+                        problems.append('the prompt was not queued')
+                    if handoff['finishing_had_text']:
+                        problems.append('the queued prompt entered the finishing request')
+                    if not handoff['text_request_indexes']:
+                        problems.append('the queued prompt was never delivered')
+                    if finishing_index is not None and handoff.get('finishing_body_kind') != ('finish' if args.queued_input_node else 'wait'):
+                        problems.append('the blocked request index does not point at the target finishing request')
+                    if handoff['first_text_request_tool_count'] != 0:
+                        problems.append('the queued prompt step exposed tools after an accepted terminal action')
+                    if not handoff['post_terminal_step']:
+                        problems.append('the queued prompt step kept the old finishing instruction')
+                    if args.queued_input_node:
+                        if handoff['gate'] == 'passed':
+                            problems.append('the node case reached a normal round; revisit the blocking record')
+                        elif handoff['gate'] == 'timeout':
+                            problems.append(f"the node case did not settle: {handoff['reason']}")
+                        elif not args.expect_blocked:
+                            problems.append(f"blocked by the host contract: {handoff['reason']}; "
+                                            'use --expect-blocked to record the block')
+                        if notes != 0:
+                            problems.append('a closed node segment filed a guidance note')
+                    else:
+                        if handoff['gate'] != 'passed':
+                            problems.append(f"the queued input did not reach a normal round "
+                                            f"({handoff['gate']}: {handoff['reason']})")
+                        if notes != 1:
+                            problems.append('the guidance note was not filed exactly once')
+                    if problems:
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('; '.join(problems))
                 if args.context_placement:
                     persisted = ''
                     for role, session in role_sessions:
@@ -631,6 +883,9 @@ export default {id:"ari-reload-probe",async setup(ctx){
                     if args.context_placement == 'tail' and checks.get('node_finishing_requests', 0) < 1:
                         print(json.dumps(result, sort_keys=True))
                         raise RuntimeError('The scripted node finish did not produce a tool-free finishing request')
+                    if (args.queued_input or args.queued_input_node) and checks.get('post_terminal_requests', 0) < 1:
+                        print(json.dumps(result, sort_keys=True))
+                        raise RuntimeError('The queued input did not produce a post-terminal request')
                     if args.wait_finish:
                         if checks.get('wait_finishing_requests', 0) < 1:
                             print(json.dumps(result, sort_keys=True))
@@ -693,6 +948,7 @@ export default {id:"ari-reload-probe",async setup(ctx){
                 ResearchProvider.node_gate.set()
                 ResearchProvider.coordinator_gate.set()
                 ResearchProvider.specialist_gate.set()
+                ResearchProvider.finishing_gate.set()
                 process.terminate()
                 try:
                     process.wait(timeout=5)

@@ -1,8 +1,10 @@
 # PR #35: review remediation plan
 
-2026-11-04. Status: Commits A–C and the follow-up node-finish correction are implemented and locally checked. No new real-provider API experiment has been run. See the [review response](./evidence/context-cache/review-response.md) for current results and open gates.
+2026-11-04. Status: Commits A–C and the follow-up node-finish correction are implemented and locally checked. The terminal handoff authorization and late-boundary corrections are implemented; the user-input handoff itself remains blocked by the pinned host's queue contract. No new real-provider API experiment has been run. See the [review response](./evidence/context-cache/review-response.md) for current results and open gates.
 
 Target: PR #35, branch `cursor/prompt-cache-stabilization`, starting at `a463f91` (includes main/v0.2.2 at `6f36885`). Continue in the existing feature worktree. Preserve unrelated changes; follow `AGENTS.md`; sync main by merge when necessary. Do not modify the old dirty checkout, rewrite history, merge the PR, release, or restart the shared service.
+
+For the subsequently reproduced input-handoff and transient-authorization defects at `555b449`, follow the [terminal handoff repair plan](<./Prompt cache terminal handoff repair plan.md>). The user chose native queuing of new inputs until the accepted terminal action finishes; this does not cancel pending node finishes.
 
 This plan governs the remaining review work. The [original delivery plan](<./Prompt cache stabilization development plan.md>) remains background. Preserve the source diagnosis and historical trial evidence as historical records.
 
