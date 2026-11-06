@@ -1,5 +1,7 @@
 # System vs tail placement: real-API pair
 
+Current default decision (2026-11-06): [tail by default](../default-tail/README.md). The system-default statement below describes this comparison; unresolved limitations remain recorded.
+
 2026-11-04 · plugin code `a990fc5` (worktree `d4ba19d`) · OpenCode 2.2.5 · one paired run, exploration off.
 
 This is the first real-model comparison of `contextPlacement: "system"` and `"tail"`. It is descriptive, not statistically significant. The default remains `"system"`.

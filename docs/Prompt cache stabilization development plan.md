@@ -1,5 +1,7 @@
 # Prompt cache placement: restart plan
 
+Current default decision (2026-11-06): [tail by default](./evidence/context-cache/default-tail/README.md). The system-default statements below describe this plan as written on 2026-11-04; unresolved limitations remain recorded.
+
 2026-11-04. Status: Step 1, its focused Step 2 checks, and one Step 3 real-API pair are done on `cursor/prompt-cache-stabilization`. The pair is recorded in [evidence/context-cache/step3/README.md](./evidence/context-cache/step3/README.md); the tail coordinator showed repeated waiting whose relationship to placement remains undetermined, and the default remains `"system"` because the default-change gate (both exploration settings, repeats, no regressions) is not met.
 
 Remaining PR #35 review work is governed by the [review remediation plan](<./Prompt cache PR 35 review remediation plan.md>). Its merge and experiment gates supersede the earlier follow-up recommendations below. The review dispositions and checks are recorded in [evidence/context-cache/review-response.md](./evidence/context-cache/review-response.md).

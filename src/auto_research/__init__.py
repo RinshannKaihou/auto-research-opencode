@@ -1,3 +1,3 @@
 """Durable research state for OpenCode, derived from the DSH ledger."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.5"
