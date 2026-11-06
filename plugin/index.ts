@@ -58,9 +58,9 @@ export default Plugin.define({
       specialistStallMs?: number
       contextPlacement?: string
     }
-    // Placement is a reversible option: an unknown value keeps today's
-    // behaviour instead of guessing, and says so once at setup.
-    const contextPlacement = options.contextPlacement === 'tail' ? 'tail' : 'system'
+    // Omitted placement uses tail. Explicit system and unknown-value rollback
+    // keep the full-system path; an unknown value warns once at setup.
+    const contextPlacement = options.contextPlacement === undefined || options.contextPlacement === 'tail' ? 'tail' : 'system'
     if (options.contextPlacement !== undefined && options.contextPlacement !== 'system' && options.contextPlacement !== 'tail') {
       process.stderr.write(`Unknown contextPlacement ${JSON.stringify(options.contextPlacement)}; using "system".\n`)
     }

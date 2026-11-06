@@ -208,6 +208,10 @@ function fakeHost(
     appendTranscript, prompts, queuedPrompts, running, subscriptions: () => subscriptions, rpc: () => handlers }
 }
 
+function contextText(request: ReturnType<typeof modelRequest>): string {
+  return JSON.stringify([request.system, request.messages])
+}
+
 function modelRequest(sessionID: string) {
   return {
     sessionID,
@@ -1104,8 +1108,8 @@ describe("autonomous research", () => {
     await host.hooks.get("context")!(request)
     if (policy === "r1") {
       expect(report.text).toContain("发现：knowledge/")
-      expect(JSON.stringify(request.system)).toContain("X holds under A")
-      expect(JSON.stringify(request.system)).toContain("## findings")
+      expect(contextText(request)).toContain("X holds under A")
+      expect(contextText(request)).toContain("## findings")
       await until(async () => {
         const view = await host.rpc().board({ view: "context_preview", directory: project })
         return view.last_recorded?.policy_version === "memory-r1-v1"
@@ -1113,7 +1117,7 @@ describe("autonomous research", () => {
       const observed = await host.rpc().board({ view: "context_preview", directory: project })
       expect(observed.observations.generated).toBeGreaterThan(0)
       expect(observed.observations.recorded).toBeGreaterThan(0)
-    } else expect(JSON.stringify(request.system)).not.toContain("X holds under A")
+    } else expect(contextText(request)).not.toContain("X holds under A")
 
     // Coordinator dispatches the second node; node 2 finishes with a content-only publication.
     host.turn.start("ses_main")
@@ -1754,8 +1758,8 @@ describe("autonomous research", () => {
     await host.hooks.get("context")!(request)
     expect(Object.keys(request.tools)).not.toContain("research_dispatch")
     expect(Object.keys(request.tools)).not.toContain("research_propose")
-    expect(JSON.stringify(request.system)).toContain("Only an explicit /research resume")
-    expect(JSON.stringify(request.system)).not.toContain("decide and continue")
+    expect(contextText(request)).toContain("Only an explicit /research resume")
+    expect(contextText(request)).not.toContain("decide and continue")
     await expect(host.call("research_propose", "ses_main", { question: "new?", why_now: "w", plan: "p", root_reason: "r" }))
       .rejects.toThrow("研究已暂停")
     expect((await host.summary()).run.state).toBe("paused")
@@ -2032,7 +2036,7 @@ describe("autonomous research", () => {
     // Filed in the new work segment, so later requests carry it, not only the kickoff message.
     const request = modelRequest("ses_main")
     await host.hooks.get("context")!(request)
-    expect(JSON.stringify(request.system)).toContain("用户指导：重点验证 Y，放弃 Z")
+    expect(contextText(request)).toContain("用户指导：重点验证 Y，放弃 Z")
   })
 
   test("auto with text is refused, not dropped, while research runs or is paused, or when too long", async () => {
@@ -2050,7 +2054,7 @@ describe("autonomous research", () => {
     await host.hooks.get("prompt")!({ sessionID: "ses_main", prompt: { text: "先测小事务" } })
     const request = modelRequest("ses_main")
     await host.hooks.get("context")!(request)
-    const context = JSON.stringify(request.system)
+    const context = contextText(request)
     expect(context).toContain("用户指导：先测小事务")
     expect(context).not.toContain("改看 Y")
     expect(context).not.toContain("长长长")
@@ -2104,7 +2108,7 @@ describe("autonomous research", () => {
     expect(host.said("ses_main").some((item) => item.text.includes("按方案 B 继续"))).toBe(false)
     const context = modelRequest("ses_main")
     await host.hooks.get("context")!(context)
-    expect(JSON.stringify(context.system)).toContain("用户指导：按方案 B 继续")
+    expect(contextText(context)).toContain("用户指导：按方案 B 继续")
   })
 
   test("an instance opened in a subdirectory never drives the project", async () => {
@@ -2181,7 +2185,7 @@ describe("node specialists", () => {
       const request = modelRequest(child)
       request.system.push({ type: 'text', text: 'PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS' })
       await first.hooks.get('context')!(request)
-      expect(JSON.stringify(request.system)).not.toContain('PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS')
+      expect(contextText(request)).not.toContain('PRIVATE_DEFAULT_WORKSPACE_AND_AGENTS')
       expect(Object.keys(request.tools)).not.toContain('shell')
     } finally {
       release?.(); spy.mockRestore()
@@ -2300,7 +2304,7 @@ describe("node specialists", () => {
       await second.hooks.get('context')!(request)
       expect(Object.keys(request.tools)).toContain('research_read_input')
       expect(Object.keys(request.tools)).not.toContain('shell')
-      expect(JSON.stringify(request.system)).not.toContain('private workspace AGENTS')
+      expect(contextText(request)).not.toContain('private workspace AGENTS')
     } finally {
       spy.mockRestore()
       first.reply(child, 'review interrupted by controller handoff')
@@ -3835,21 +3839,21 @@ test("R1 context policy switches through the host and remains opt-in", async () 
   await host.command("init", "ses_main", { goal: "R1 policy fixture" })
   const legacy = modelRequest("ses_main")
   await host.hooks.get("context")!(legacy)
-  expect(JSON.stringify(legacy.system)).not.toContain("critical_now")
+  expect(contextText(legacy)).not.toContain("critical_now")
   const switched = await host.command("context-policy", "ses_main", { policy: "r1" })
   expect(switched.message).toContain("memory-r1-v1")
   expect(switched.message).not.toContain("诊断")
   expect(switched.state.last_recorded.policy_version).toBe("memory-v2")
   const current = modelRequest("ses_main")
   await host.hooks.get("context")!(current)
-  expect(JSON.stringify(current.system)).toContain("critical_now")
-  expect(JSON.stringify(current.system)).toContain("findings")
+  expect(contextText(current)).toContain("critical_now")
+  expect(contextText(current)).toContain("findings")
   const back = await host.command("context-policy", "ses_main", { policy: "legacy" })
   expect(back.state.policy_version).toBe("memory-v2")
   expect(back.state.last_recorded.policy_version).toBe("memory-r1-v1")
   const restored = modelRequest("ses_main")
   await host.hooks.get("context")!(restored)
-  expect(JSON.stringify(restored.system)).not.toContain("critical_now")
+  expect(contextText(restored)).not.toContain("critical_now")
 })
 
 test("switching context policy clears cached and in-flight legacy context", async () => {
@@ -3895,7 +3899,7 @@ test('exploration chooses one durable probe through the ordinary node scheduler'
   await until(async () => (await host.call('research_query','ses_main',{collection:'usage'})).items
     .some((item:any)=>item.source_key==='step:ses_main:exploration-preview'),'exploration context step')
   await host.hooks.get('context')!(context)
-  expect(JSON.stringify(context.system)).toContain('exploration')
+  expect(contextText(context)).toContain('exploration')
   expect(Object.keys(context.tools)).toContain('research_decide')
   expect(Object.keys(context.tools)).toContain('research_prepare_conclusion')
   expect(Object.keys((context.tools.research_conclude.input as any).properties).sort()).toEqual(['draft_id','final_ref','summary'])
@@ -4193,7 +4197,7 @@ test('a missing frozen material does not block the coordinator or credit its pag
   expect(view.materials.find((item:any)=>item.ref===good).material_read.complete).toBe(true)
   expect(view.materials.find((item:any)=>item.ref===missing).material_read?.complete).not.toBe(true)
   const next=await step('second-response')
-  expect(next.system.some((item:any)=>item.text?.includes(`material_unavailable ${missing}`))).toBe(true)
+  expect(contextText(next)).toContain(`material_unavailable ${missing}`)
   const second=await host.tools.get('research_query').execute({collection:'evidence',refs:[good,missing]},
     {sessionID:'ses_main',messageID:'second-response',id:'view-second',agent:'build'})
   expect(JSON.parse(second.content).snapshot_id).toBeTruthy()
@@ -4249,7 +4253,7 @@ test('unrelated coordinator tools do not wait for a stalled material confirmatio
       .some((item:any)=>item.source_key==='step:ses_main:after-timeout'),'post-timeout step')
     const next=modelRequest('ses_main'); next.messages=request.messages
     await host.hooks.get('context')!(next)
-    expect(next.system.some((item:any)=>item.text?.includes(`backend_unavailable ${ref}`))).toBe(true)
+    expect(contextText(next)).toContain(`backend_unavailable ${ref}`)
   } finally { release({receipt_ids:[],rejected:[]}); spy.mockRestore() }
 },10000)
 
@@ -4374,8 +4378,8 @@ test('E3 tools materialize a shared probe and another route with one common allo
   expect(summary.exploration.scopes.map((item:any)=>item.scope_id)).toContain(other.scope_id)
   const context=modelRequest('ses_main')
   await host.hooks.get('context')!(context)
-  expect(JSON.stringify(context.system)).toContain('exploration_scopes')
-  expect(JSON.stringify(context.system)).toContain('scope_id')
+  expect(contextText(context)).toContain('exploration_scopes')
+  expect(contextText(context)).toContain('scope_id')
 })
 
 describe('context placement', () => {
@@ -4573,8 +4577,23 @@ describe('context placement', () => {
     } finally { spy.mockRestore() }
   })
 
-  test('the default system placement keeps the whole context in the system prompt', async () => {
+  for (const policy of ['legacy', 'r1'] as const) test(`omitted placement uses tail with ${policy} context`, async () => {
     const host = await load()
+    await host.command('auto', 'ses_main', { goal: 'default tail placement fixture' })
+    if (policy === 'r1') await host.command('context-policy', 'ses_main', { policy })
+    const request = modelRequest('ses_main')
+    await host.hooks.get('context')!(request)
+    expect(systemText(request)).toContain('## role_instructions')
+    expect(systemText(request)).not.toContain('## recent_node_notes')
+    expect(tailMessages(request)).toHaveLength(1)
+    expect(request.messages.at(-1)).toBe(tailMessages(request)[0]!)
+    expect(lastMessageText(request)).toContain(policy === 'r1' ? '## recent_node_notes' : '## knowledge')
+    const current = await host.command('context-policy', 'ses_main')
+    expect(current.state.policy_version).toBe(policy === 'r1' ? 'memory-r1-v1' : 'memory-v2')
+  })
+
+  test('explicit system placement keeps the whole context in the system prompt', async () => {
+    const host = await load({ placement: 'system' })
     await host.command('auto', 'ses_main', { goal: 'default placement fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
     const request = modelRequest('ses_main')
@@ -4873,7 +4892,7 @@ describe('tail wait completion', () => {
   test('system mode discards a node finish marker and tail rebind cannot resurrect it', async () => {
     const first = await load({ placement: 'tail' })
     const node = await nodeAtFinish(first)
-    const system = await load()
+    const system = await load({ placement: 'system' })
     const request = modelRequest(node)
     await system.hooks.get('context')!(request)
     expect(Object.keys(request.tools)).toContain('research_query')
@@ -4888,7 +4907,7 @@ describe('tail wait completion', () => {
   })
 
   test('system mode does not latch an accepted node finish', async () => {
-    const host = await load()
+    const host = await load({ placement: 'system' })
     const node = await nodeAtFinish(host)
     const request = modelRequest(node)
     await host.hooks.get('context')!(request)
@@ -5046,7 +5065,7 @@ describe('tail wait completion', () => {
   test('a warm rebind to system mode discards a tail wait marker', async () => {
     const first = await load({ placement: 'tail' })
     const task = await acceptedWait(first)
-    const system = await load()
+    const system = await load({ placement: 'system' })
     const history = [waitResult(task.task_id)]
     const request = modelRequest('ses_main')
     request.messages = history as any
@@ -5111,7 +5130,7 @@ describe('tail wait completion', () => {
   })
 
   test('system mode still ends its turn normally after a wait', async () => {
-    const host = await load()
+    const host = await load({ placement: 'system' })
     await host.command('auto', 'ses_main', { goal: 'system wait fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
     host.turn.start('ses_main')
@@ -5262,7 +5281,7 @@ describe('tail wait completion', () => {
   }
 
   test('system mode keeps its baseline tools when an unrelated event is pending', async () => {
-    const host = await load()
+    const host = await load({ placement: 'system' })
     await host.command('auto', 'ses_main', { goal: 'system boundary fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
     host.turn.start('ses_main')
@@ -5424,7 +5443,7 @@ describe('tail wait completion', () => {
   })
 
   test('system mode queues nothing and keeps its guidance timing', async () => {
-    const host = await load()
+    const host = await load({ placement: 'system' })
     await host.command('auto', 'ses_main', { goal: 'system handoff fixture' })
     await host.command('context-policy', 'ses_main', { policy: 'r1' })
     host.turn.start('ses_main')
