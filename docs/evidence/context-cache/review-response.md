@@ -1,5 +1,7 @@
 # PR #35 review response
 
+Current default decision (2026-11-06): [tail by default](default-tail/README.md). The system-default statements below describe the historical implementation and review; unresolved limitations remain recorded.
+
 2026-11-04 · branch `cursor/prompt-cache-stabilization` · default remains `contextPlacement: "system"`.
 
 This note maps the original reviews and the [dcf09c9 re-review](https://github.com/RinshannKaihou/auto-research-opencode/pull/35#issuecomment-6631854671) to dispositions, commits and checks. It does not change the historical Step 3 numbers.

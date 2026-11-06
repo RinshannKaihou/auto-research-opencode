@@ -1,5 +1,7 @@
 # Context placement smoke record
 
+Current default decision (2026-11-06): [tail by default](default-tail/README.md). The system-default statements below describe the historical implementation and review; unresolved limitations remain recorded.
+
 2026-11-04 · branch `cursor/prompt-cache-stabilization` · revision `a990fc5` (initial placement implementation `ce393d5`), based on `73d507a` / v0.2.1.
 
 This note records the engineering checks for the opt-in `contextPlacement: "tail"` change. It is not a real-model cache or cost measurement; the Step 3 real-API pair is recorded separately in [step3/README.md](step3/README.md). The default remains `"system"`. Compaction routing and reasoning wire preservation are recorded in [boundary/README.md](boundary/README.md). The host queue contract and the queued-input handoff smoke are recorded in [handoff/README.md](handoff/README.md).
