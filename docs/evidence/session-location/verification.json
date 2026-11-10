@@ -1,0 +1,24 @@
+{
+  "base_commit": "c31c380297c897e831c2191f7e4c706c241581c0",
+  "environment": "local macOS agent host (not GitHub CI)",
+  "command": "make test",
+  "exit_code": 0,
+  "python_tests_passed": 886,
+  "plugin_tests_passed": 362,
+  "typescript": "passed",
+  "location_boundary_regressions": 10,
+  "native_host": "OpenCode 2.2.6",
+  "native_modes": [
+    "direct",
+    "nested",
+    "drift",
+    "catalog"
+  ],
+  "deployed": false,
+  "real_research_modified": false,
+  "limitations": [
+    "Scripted local provider only",
+    "Context catalog check cannot observe a later plugin mutating tools after this hook",
+    "No production deployment or shared server restart"
+  ]
+}

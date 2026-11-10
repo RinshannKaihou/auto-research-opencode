@@ -79,6 +79,8 @@ export class Research {
   readonly checkpoints = new CheckpointDelivery()
   readonly evidenceDelivery = new EvidenceDelivery()
   private members = new Map<string, Membership>()
+  // Trusted registration outside this instance is diagnostic data, never authority.
+  private foreignRoots = new Map<string, string>()
   private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
   private conclusionContracts = new Map<string,string>()
@@ -133,7 +135,7 @@ export class Research {
   async confirmMembership(sessionID: string): Promise<void> {
     await this.ready()
     if (!this.registryExists()) {
-      if (this.members.has(sessionID) || findProjectRoot(this.scope) === this.scope) {
+      if (this.registeredRootOf(sessionID) || findProjectRoot(this.scope) === this.scope) {
         throw new Error('Research membership registry is unavailable')
       }
       return
@@ -146,11 +148,19 @@ export class Research {
     const value = await this.storage.request<any>('session_membership', { host_id: HOST_ID, session_id: sessionID })
     if (!value.associated || !this.inScope(value.root)) {
       if (this.members.has(sessionID)) this.forget(sessionID)
+      this.foreignRoots.delete(sessionID)
+      if (value.associated) {
+        if (this.foreignRoots.size >= 2048) this.foreignRoots.delete(this.foreignRoots.keys().next().value!)
+        this.foreignRoots.set(sessionID, value.root)
+        this.nonmembers.delete(sessionID)
+        return
+      }
       if (this.nonmembers.size >= 2048) this.nonmembers.delete(this.nonmembers.keys().next().value!)
       this.nonmembers.set(sessionID, { stamp, at: Date.now() })
       return
     }
     this.nonmembers.delete(sessionID)
+    this.foreignRoots.delete(sessionID)
     const row = value.session
     this.members.set(sessionID, { root: value.root, role: row?.detached ? undefined : row?.role, node: row?.node_id ?? undefined })
     const main = value.main
@@ -204,6 +214,11 @@ export class Research {
     return this.members.has(sessionID)
   }
 
+  /** Includes a foreign registration only for fail-closed location diagnostics. */
+  registeredRootOf(sessionID: string): string | undefined {
+    return this.rootOf(sessionID) ?? this.foreignRoots.get(sessionID)
+  }
+
   roleOf(sessionID: string): string | undefined {
     return this.members.get(sessionID)?.role
   }
@@ -230,11 +245,13 @@ export class Research {
   }
 
   register(sessionID: string, root: string, role: string, node?: string): void {
+    this.foreignRoots.delete(sessionID)
     this.nonmembers.delete(sessionID)
     this.members.set(sessionID, { root, role, node })
   }
 
   forget(sessionID: string): void {
+    this.foreignRoots.delete(sessionID)
     this.nonmembers.delete(sessionID)
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)

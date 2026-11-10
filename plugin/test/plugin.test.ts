@@ -59,7 +59,7 @@ class EventStream implements AsyncIterable<any> {
 
 /** The slice of OpenCode's plugin context the server half uses. */
 const nativeSessions = new Map<string, {
-  transcripts: Map<string, any[]>; busy: Set<string>; waiters: Map<string, (() => void)[]>
+  locations: Map<string, string>; transcripts: Map<string, any[]>; busy: Set<string>; waiters: Map<string, (() => void)[]>
 }>()
 function fakeHost(
   registryPath: string,
@@ -84,8 +84,8 @@ function fakeHost(
   // A session is busy from a resuming message until its turn ends; wait() resolves then.
   // Reloading the plugin does not reset the native host's sessions or history.
   let native = nativeSessions.get(registryPath)
-  if (!native) nativeSessions.set(registryPath, native = { transcripts: new Map(), busy: new Set(), waiters: new Map() })
-  const { transcripts, busy, waiters } = native
+  if (!native) nativeSessions.set(registryPath, native = { locations: new Map(), transcripts: new Map(), busy: new Set(), waiters: new Map() })
+  const { locations, transcripts, busy, waiters } = native
   const endTurn = (sessionID: string, text: string, outcome: string) => {
     const content = text ? [{ type: "assistant", content: [{ type: "text", text }] }] : []
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), ...content, { type: "idle", outcome }])
@@ -102,6 +102,7 @@ function fakeHost(
     options: { registryPath, python, ...(contextPlacement ? { contextPlacement } : {}) },
     location: { directory },
     tool: {
+      list: async () => [...tools.values()],
       hook: async (name:string,callback:Hook) => { hooks.set(`tool.${name}`,callback); return {dispose:async()=>{}} },
       transform: async (callback: (editor: any) => void) => {
         callback({ add: (tool: any) => tools.set(tool.name, tool) })
@@ -113,10 +114,11 @@ function fakeHost(
         hooks.set(name, callback)
         return { dispose: async () => {} }
       },
-      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, location: { directory } }),
+      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, location: { directory: locations.get(sessionID) ?? directory } }),
       create: async (input: any) => {
         const id = input.id ?? `ses_node_${created.length + 1}`
         created.push(id)
+        locations.set(id, input.location.directory)
         models.push({ sessionID: id, model: input.model, via: "create" })
         if (input.permissions) permissions.set(id, input.permissions)
         return { id, title: input.title, location: input.location }
@@ -204,7 +206,7 @@ function fakeHost(
   }
   const appendTranscript = (sessionID: string, entry: any) =>
     transcripts.set(sessionID, [...(transcripts.get(sessionID) ?? []), entry])
-  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, prompt, deliverQueued,
+  return { ctx, tools, hooks, synthetic, interrupted, created, models, permissions, events, reply, locations, prompt, deliverQueued,
     appendTranscript, prompts, queuedPrompts, running, subscriptions: () => subscriptions, rpc: () => handlers }
 }
 
@@ -2119,7 +2121,8 @@ describe("autonomous research", () => {
     const other = await load({ directory: sub })
     const request = modelRequest("ses_main")
     await other.hooks.get("context")!(request)
-    expect(Object.keys(request.tools)).not.toContain("research_dispatch")
+    expect(JSON.stringify(request.system)).toContain("research_session_location")
+    expect(Object.keys(request.tools)).toHaveLength(0)
     const refused = await other.rpc().command({ action: "pause", directory: sub, args: {} })
     expect(refused.error).toContain("请在这个目录启动 OpenCode")
   })
@@ -5845,4 +5848,186 @@ test("node session creation sanitizes controls in research-derived titles", asyn
   expect(titles).toHaveLength(1)
   expect(titles[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u)
   expect(titles[0]).toContain("投影")
+})
+
+describe('research session location boundary', () => {
+  async function nodeFixture() {
+    const host = await load()
+    await host.command('auto', 'ses_main', {goal: 'location regression'})
+    await host.call('research_propose', 'ses_main', {question: 'Q', why_now: 'test', plan: 'test', root_reason: 'test'})
+    await host.call('research_dispatch', 'ses_main', {node_id: 'X-001'})
+    const child = host.created[0]!
+    host.turn.start(child)
+    const sub = join(project, 'workspaces', 'drift')
+    mkdirSync(sub, {recursive: true})
+    return {host, child, sub}
+  }
+
+  test('blocks direct and nested host move at the inner hook; ordinary execute remains usable', async () => {
+    const {host, child, sub} = await nodeFixture()
+    const before = host.hooks.get('tool.execute.before')!
+    await before({tool: 'execute', sessionID: child, id: 'outer', input: {code: 'dynamic code'}})
+    for (const tool of ['opencode_session_move']) {
+      await expect(before({tool, sessionID: child, id: tool, input: {directory: sub}})).rejects.toThrow('research_session_move_unsupported')
+    }
+    await before({tool: 'opencode_session_move', sessionID: 'ordinary', id: 'ordinary', input: {directory: sub}})
+    expect(host.locations.get(child)).toBe(project)
+  })
+
+  test('foreign registration diagnoses drift without granting identity or driving events', async () => {
+    const {host, child, sub} = await nodeFixture()
+    host.locations.set(child, sub)
+    const workspace = await load({directory: sub})
+    const request = modelRequest(child)
+    await workspace.hooks.get('context')!(request)
+    expect(JSON.stringify(request.system)).toContain('research_session_location')
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    await expect(workspace.hooks.get('tool.execute.before')!({tool: 'shell', sessionID: child, id: 'drift'})).rejects.toThrow('research_session_location')
+    await expect(workspace.call('research_finish', child, {state: 'finished', summary: 'forbidden'})).rejects.toThrow('research_session_location')
+    workspace.turn.end(child)
+    await Bun.sleep(60)
+    expect(workspace.synthetic).toHaveLength(0)
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    const ordinary = modelRequest('ordinary')
+    await workspace.hooks.get('context')!(ordinary)
+    expect(Object.keys(ordinary.tools)).not.toContain('research_finish')
+    expect(Object.keys(ordinary.tools)).toContain('shell')
+    const unrelatedDirectory = join(dir, 'unrelated-project')
+    mkdirSync(unrelatedDirectory)
+    const unrelated = await load({directory: unrelatedDirectory})
+    const foreign = modelRequest(child)
+    await unrelated.hooks.get('context')!(foreign)
+    expect(Object.keys(foreign.tools)).toHaveLength(0)
+    expect(JSON.stringify(foreign.system)).toContain('research_session_location')
+    await expect(unrelated.call('research_finish', child, {state: 'finished', summary: 'foreign project'})).rejects.toThrow('research_session_location')
+    const stranger = modelRequest('unregistered-session')
+    await unrelated.hooks.get('context')!(stranger)
+    expect(Object.keys(stranger.tools)).not.toContain('research_finish')
+    expect(Object.keys(stranger.tools)).toContain('shell')
+  })
+
+  test('first terminal after drift pauses with a diagnosis once; resume is refused before any new reservation', async () => {
+    const {host, child, sub} = await nodeFixture()
+    host.locations.set(child, sub)
+    host.reply(child, 'no research tools', 'succeeded')
+    const terminal = {id: 'location-terminal', type: 'session.execution.succeeded', data: {sessionID: child}}
+    host.events.push(terminal); host.events.push(terminal)
+    await until(async () => (await host.rpc().session({sessionID: child})).pauseReason === 'fault', 'location pause')
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+    expect(host.said(child).filter(row => row.text.includes('research_session_location'))).toHaveLength(1)
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    const refused = await host.command('resume', 'ses_main')
+    expect(refused.error).toContain('research_session_location')
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+    host.locations.set(child, project)
+    expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+    await host.call('research_publish', child, {status: 'complete', summary: 'recovered', gaps: [], claims: [], artifacts: [], review: {status: 'unreviewed', refs: [], limitations: ['test']}})
+    const context = modelRequest(child)
+    await host.hooks.get('context')!(context)
+    const seen = await host.call('research_query', child, {collection: 'checkpoint'})
+    await host.call('research_checkpoint', child, {base: seen.base, state: {next: 'finish'}})
+    await host.call('research_finish', child, {state: 'finished', summary: 'recovered'})
+    host.turn.end(child)
+    await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'recovered finish')
+    expect((await host.page('publications')).items).toHaveLength(1)
+  })
+
+  test('a stale root context and cached research tool cannot execute after a host-side move', async () => {
+    const {host, child, sub} = await nodeFixture()
+    host.locations.set(child, sub)
+    const request = modelRequest(child)
+    await host.hooks.get('context')!(request)
+    expect(JSON.stringify(request.system)).toContain('research_session_location')
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    await expect(host.call('research_finish', child, {state: 'finished', summary: 'stale'})).rejects.toThrow('research_session_location')
+    host.locations.set(child, project)
+    const recovered = modelRequest(child)
+    await host.hooks.get('context')!(recovered)
+    expect(Object.keys(recovered.tools)).toContain('research_finish')
+  })
+  test('a missing registered tool entry stops the first continuation', async () => {
+    const {host, child} = await nodeFixture()
+    host.tools.delete('research_finish')
+    host.reply(child, 'cannot finish', 'succeeded')
+    host.turn.end(child)
+    await until(async () => (await host.rpc().session({sessionID: child})).pauseReason === 'fault', 'tool entry pause')
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+    expect(host.said(child).some(row => row.text.includes('research_tool_entry_unavailable'))).toBe(true)
+    expect((await host.command('resume', 'ses_main')).error).toContain('research_tool_entry_unavailable')
+  })
+
+  test('root and workspace attachments handle a duplicate terminal through one controller only', async () => {
+    const {host, child, sub} = await nodeFixture()
+    const workspace = await load({directory: sub})
+    await host.call('research_finish', child, {state: 'finished', summary: 'one result'})
+    host.reply(child, 'done', 'succeeded')
+    const event = {id: 'shared-terminal', type: 'session.execution.succeeded', data: {sessionID: child}}
+    host.events.push(event); workspace.events.push(event); host.events.push(event)
+    await until(async () => (await host.page('tasks')).items[0].state === 'finished', 'one finish')
+    await until(() => host.said('ses_main').some(row => row.text.includes('节点 X-001 已完成')), 'one notification')
+    expect(host.said('ses_main').filter(row => row.text.includes('节点 X-001 已完成'))).toHaveLength(1)
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+    expect(workspace.synthetic).toHaveLength(0)
+    expect((await host.page('tasks')).items).toHaveLength(1)
+  })
+
+  test('unrelated missing tools do not block budget queries, budget changes or existing reads', async () => {
+    const {host, child} = await nodeFixture()
+    host.tools.delete('research_dispatch')
+    expect((await host.command('budget', 'ses_main')).error).toBeUndefined()
+    expect((await host.command('budget', 'ses_main', {limit: 'turns', value: '10', reason: 'repair configuration'})).error).toBeUndefined()
+    host.tools.delete('research_finish')
+    await host.hooks.get('tool.execute.before')!({tool: 'read', sessionID: child, id: 'existing-read'})
+    expect((await host.call('research_query', child, {collection: 'nodes'})).items).toHaveLength(1)
+    expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+    expect((await host.command('stop', 'ses_main')).error).toBeUndefined()
+  })
+
+  test('a gap in the actual model catalog pauses immediately without another reservation', async () => {
+    const {host, child} = await nodeFixture()
+    const request = modelRequest(child)
+    delete request.tools.research_finish
+    await host.hooks.get('context')!(request)
+    expect(JSON.stringify(request.system)).toContain('research_tool_entry_unavailable')
+    expect(Object.keys(request.tools)).toHaveLength(0)
+    expect((await host.rpc().session({sessionID: child})).pauseReason).toBe('fault')
+    host.reply(child, 'diagnosis only', 'succeeded')
+    host.turn.end(child)
+    await until(() => host.said('ses_main').some(row => row.text.includes('research_tool_entry_unavailable')), 'tool gap notification')
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+    expect((await host.page('tasks')).items[0].state).toBe('running')
+    expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
+    const recovered = modelRequest(child)
+    await host.hooks.get('context')!(recovered)
+    expect(Object.keys(recovered.tools)).toContain('research_finish')
+  })
+
+  test('one continuation checks host location and registered catalog only at final preflight', async () => {
+    const {host, child} = await nodeFixture()
+    await host.call('research_query', child, {collection: 'nodes'})
+    const get = spyOn(host.ctx.session, 'get')
+    const list = spyOn(host.ctx.tool, 'list')
+    try {
+      host.reply(child, 'continue once', 'succeeded')
+      host.turn.end(child)
+      await until(() => host.said(child).filter(row => row.resume).length === 2, 'one continuation')
+      expect(get.mock.calls.filter((args: any[]) => args[0].sessionID === child)).toHaveLength(1)
+      expect(list).toHaveBeenCalledTimes(1)
+    } finally { get.mockRestore(); list.mockRestore() }
+  })
+
+  test('resume does not require relocating an unverified node that it cannot restart', async () => {
+    const {host, child, sub} = await nodeFixture()
+    await host.call('research_query', child, {collection: 'nodes'})
+    host.locations.set(child, sub)
+    cleanups.pop()!()
+    simulateDeadHost()
+    const restarted = await load()
+    await until(async () => (await restarted.summary()).run.state === 'paused', 'cold recovery')
+    expect((await restarted.command('resume', 'ses_main')).error).toBeUndefined()
+    expect((await restarted.page('tasks')).items[0].state).toBe('unverified')
+    expect(restarted.said(child).filter(row => row.resume)).toHaveLength(0)
+    expect(restarted.locations.get(child)).toBe(sub)
+  })
+
 })
