@@ -1,5 +1,18 @@
 # 版本记录
 
+## v0.2.6 · 2026-11-10
+
+版本字符串自 v0.2.5 更新。下面只记 v0.2.5 之后合进 main 的改动：#40（fix: guard research sessions against workspace location drift，合并提交 65d4d90）。
+
+**升级注意**
+- **行为变化：** 已登记的研究会话固定在注册时的研究根目录。节点文件仍放在该任务自己的 workspace，用明确路径操作，不再把研究会话迁进 workspace。直接调用，以及经 `execute` 动态构造的 `tools.opencode.session_move`，在已核对的宿主钩子上都会被拒绝（工具名 `opencode_session_move`，代码 `research_session_move_unsupported`）。普通会话仍可使用这个原生工具。
+- 会话已经离开注册根目录时，下一次入口给出漂移诊断，并停掉自动续轮，不会再排到 `no_progress` 才停。工作区或其他目录里的插件实例只拿到诊断，不能据此再挂一个控制器或接着跑这个节点。诊断写明研究根目录、当前会话目录和插件目录（`research_session_location`），这次请求不再带工具。`/research status` 会附上同一条说明。宿主在工具钩子之外把会话搬走仍然可能；这不是目录锁，之后的入口检查才会发现。别的插件在本钩子之后再改工具表，这次检查看不见。
+- 已授权的工作上下文若缺少该角色需要的研究工具，或宿主工具目录不可用，会经原来的根控制器以 `fault` 暂停（`research_tool_entry_unavailable`），并在写入暂停之前先关掉这次请求的全部工具。暂停写失败时错误会传给宿主，不会假装已经暂停成功；这次请求仍然没有工具。已有的暂停（包括预算暂停）和非运行状态会保留。预算查询、预算修改和其他根上的管理操作不依赖某个无关的模型工具是否登记。核对插件加载和宿主工具目录之后，再显式 `/research resume`。
+- `/research takeover` 必须在研究根目录执行。会话目录的规范路径不等于研究根时，会在改成员关系或调用接管之前拒绝，并提示先把会话移到根目录。被拒绝的会话仍是普通会话，原来的主会话不变。移到根目录后，同一个候选可以再接管。
+- **已在子目录登记的旧会话不会自动迁回，也不会被自动接管。** 按[会话位置记录](docs/evidence/session-location/README.md)：由操作者把**同一个会话**移回它的注册根目录，等宿主上的位置真正变了，核对执行状态，再显式 `/research resume`。位置仍不对时，resume 会在改控制状态或预留新轮次之前拒绝。移动接口返回 HTTP 204 只表示可能已经入队。不要另建节点、不要改研究记录，也不要把本地 JSON 草稿当成已发布结果或已接受的收尾。无法重启的未核实执行仍走原来的人工核对，resume 不会为了这种节点要求先搬位置，也不会把它重新跑起来。
+- 没有 schema、Python 后端、checkpoint、证据交付或 finish API 的变更。控制器归属、执行授权、checkpoint、待收尾和 tail 收尾语义保持原样。#40 没有部署，也没有改过真实研究会话、研究库或共享 OpenCode 后台。
+- #40 的位置探针记录了 OpenCode 2.2.5 和 2.2.6 上各一轮 `direct`、`nested`、`drift`、`catalog`（本地脚本模型、隔离的 XDG 状态；2.2.5 用单独解出的二进制，经 `--opencode` 调用，没有替换全局宿主）。每条修好的用例都只发布一次、checkpoint 一次，并完成同一个任务。见[探针结果](docs/evidence/session-location/native-results.json)和[审阅处置](docs/evidence/session-location/review-response.md)。这不扩大兼容范围：`@opencode/plugin` 仍锁定 2.2.5，README 的宿主兼容声明仍是至 2.2.5（含）。其他宿主版本和真实研究模型没有在这项探针里测试。
+
 ## v0.2.5 · 2026-11-06
 
 版本字符串自 v0.2.2 之后第一次更新。git 标签 v0.2.3 标在 #36 的合并提交上（含已经合进 main 的 #35），v0.2.4 标在 #37；打这两个标签时没有改版本字符串。下面列出 v0.2.2 之后合进 main 的改动。
@@ -130,7 +143,7 @@
 - schema 15 及更早保存、尚未启动的探索工作，升级后须重新批准，原因为 `exploration_basis_format_upgraded`。
 
 **已知限制**
-- 两项 Python 测试已知失败：`tests/test_067_regressions.py::test_ce24_declaration_table[12]`（Python 3.12），`tests/test_artifacts.py::ArtifactTests::test_source_changed_during_copy_is_not_published`。
+- v0.2.0 发布时有两项 Python 测试已知失败：`tests/test_067_regressions.py::test_ce24_declaration_table[12]`（Python 3.12）、`tests/test_artifacts.py::ArtifactTests::test_source_changed_during_copy_is_not_published`。v0.2.6 准备时在 Python 3.12.3 上 `make test` 已通过（886 项，含这两项），不再把它们列为当前已知失败。
 - `@opentui/core` 与 `@opentui/solid` 固定为 0.5.12，而 `@opencode/plugin` 2.2.5 声明的 peer 要求 >=0.8.0。
 - 没有 CI。
 - 尚未用真实模型完整跑过并核对效果。
