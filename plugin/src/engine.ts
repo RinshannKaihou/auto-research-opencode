@@ -635,7 +635,7 @@ export class Engine {
     try { await this.say(sessionID, text, true, "继续") }
     catch (error) {
       if (!isSessionEntryError(error) || !wasNotSent(error, 'synthetic')) throw error
-      if (state.workflow?.session?.pause_reason !== 'fault') await this.pauseSession(sessionID, 'fault', error.message)
+      await this.pauseForEntry(sessionID, error)
     }
   }
 
@@ -643,12 +643,15 @@ export class Engine {
   blockTools(sessionID: string, error: Error): Promise<void> {
     const root = this.research.rootOf(sessionID)
     if (!root || !this.research.inScope(root)) return Promise.resolve()
-    return this.serial(root, async () => {
-      const state = await this.state(sessionID)
-      const row = state.workflow?.session
-      if (!row || !['running', 'manual'].includes(state.workflow?.run?.state) || row.pause_reason) return
-      await this.pauseSession(sessionID, 'fault', error.message)
-    })
+    return this.serial(root, () => this.pauseForEntry(sessionID, error))
+  }
+
+  /** The caller already owns the project decision queue; do not nest serial(). */
+  private async pauseForEntry(sessionID: string, error: Error): Promise<void> {
+    const current = await this.state(sessionID)
+    const row = current.workflow?.session
+    if (!row || !['running', 'manual'].includes(current.workflow?.run?.state) || row.pause_reason) return
+    await this.pauseSession(sessionID, 'fault', error.message)
   }
 
   private async pauseSession(sessionID: string, reason: string, note: string): Promise<void> {

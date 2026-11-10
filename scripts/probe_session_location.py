@@ -1,4 +1,4 @@
-"""OpenCode 2.2.6 location regression, using private XDG state and a loopback model.
+"""OpenCode 2.2.5/2.2.6 location regression, using private XDG state and a loopback model.
 
 Modes: reproduce the installed bug; block nested/direct moves; diagnose an
 out-of-band move and recover the same session; filter the actual model catalog. Never uses a real research DB.
@@ -47,6 +47,7 @@ def decoded_values(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plugin', required=True, type=Path)
+    parser.add_argument('--opencode', default='opencode', help='isolated host executable (defaults to PATH)')
     parser.add_argument('--mode', choices=['baseline', 'nested', 'direct', 'drift', 'catalog'], required=True)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
@@ -62,8 +63,8 @@ def main():
         env['XDG_' + name + '_HOME'] = str(directory)
     password = uuid4().hex
     env.update(OPENCODE_SERVER_PASSWORD=password, OPENCODE_DISABLE_MODELS_FETCH='1', ARI_PROBE_KEY='test-only')
-    version = subprocess.check_output(['opencode', '--version'], env=env, text=True).strip()
-    assert version in ('2.2.6', 'opencode v2.2.6'), version
+    version = subprocess.check_output([args.opencode, '--version'], env=env, text=True).strip()
+    assert version.removeprefix('opencode v') in ('2.2.5', '2.2.6'), version
     trace = root / 'trace.jsonl'
     env['ARI_LOCATION_TRACE'] = str(trace)
     instrumentation = root / 'trace-plugin'
@@ -171,7 +172,7 @@ export default {id:'location-trace',async setup(ctx){
         port = sock.getsockname()[1]
     url = f'http://127.0.0.1:{port}'
     log = (root / 'server.log').open('w')
-    process = subprocess.Popen(['opencode', 'serve', '--hostname', '127.0.0.1', '--port', str(port)], cwd=project, env=env, stdout=log, stderr=log)
+    process = subprocess.Popen([args.opencode, 'serve', '--hostname', '127.0.0.1', '--port', str(port)], cwd=project, env=env, stdout=log, stderr=log)
     database = project / '.research' / 'state.sqlite3'
     sid = 'ses_location_probe_' + uuid4().hex
 

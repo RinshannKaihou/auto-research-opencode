@@ -15,7 +15,7 @@ export function isSessionEntryError(error: unknown): error is Error & {code: str
   return ['research_session_location', 'research_tool_entry_unavailable'].includes((error as any)?.code)
 }
 
-// OpenCode 2.2.6 invokes execute.before for this effective name even when the
+// OpenCode 2.2.5/2.2.6 invoke execute.before for this effective name even when the
 // invocation comes from execute -> tools.opencode.session_move (not code parsing).
 export function isSessionMove(tool: string): boolean {
   return tool === 'opencode_session_move'

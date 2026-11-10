@@ -6030,4 +6030,103 @@ describe('research session location boundary', () => {
     expect(restarted.locations.get(child)).toBe(sub)
   })
 
+  test('takeover rejects a subdirectory before changing research membership', async () => {
+    const host = await load()
+    await host.command('init', 'ses_main', {goal: 'takeover location fixture'})
+    const sub = join(project, 'subdirectory'); mkdirSync(sub)
+    host.locations.set('ses_replacement', sub)
+    const result = await host.command('takeover', 'ses_replacement')
+    expect(result.error).toContain('研究根目录')
+    expect(result.error).toContain('接管')
+    expect((await host.rpc().session({sessionID: 'ses_replacement'})).associated).toBe(false)
+    expect((await host.summary()).run.main_session_id).toBe('ses_main')
+    host.locations.set('ses_replacement', project)
+    expect((await host.command('takeover', 'ses_replacement')).error).toBeUndefined()
+    expect((await host.summary()).run.main_session_id).toBe('ses_replacement')
+  })
+
+  test('entry diagnostics stay tool-free if persisting the fault fails', async () => {
+    const {host, child} = await nodeFixture()
+    const request = modelRequest(child); delete request.tools.research_finish
+    const original = StorageClient.prototype.request
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function(method, fields, operation): any {
+      if (method === 'workflow' && fields?.action === 'session' && (fields?.fields as any)?.pause_reason === 'fault') return Promise.reject(new Error('pause persistence failed'))
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      await expect(host.hooks.get('context')!(request)).rejects.toThrow('pause persistence failed')
+      expect(Object.keys(request.tools)).toHaveLength(0)
+      expect(JSON.stringify(request.system)).toContain('research_tool_entry_unavailable')
+    } finally { spy.mockRestore() }
+    expect((await host.rpc().session({sessionID: child})).pauseReason).not.toBe('fault')
+    expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+  })
+
+  test('a continuation fault preserves a budget pause written during its preflight', async () => {
+    const {host, child} = await nodeFixture()
+    await host.call('research_query', child, {collection: 'nodes'})
+    const original = StorageClient.prototype.request
+    let injected = false
+    const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(async function(method, fields, operation): Promise<any> {
+      if (method === 'runtime_reserve' && fields?.session_id === child && !injected) {
+        injected = true
+        await original.call(this, 'workflow', {...fields, action: 'session', fields: {pause_reason: 'budget'}}, 'concurrent-budget-pause')
+        throw Object.assign(new Error('research_tool_entry_unavailable: concurrent catalog gap'), {code: 'research_tool_entry_unavailable'})
+      }
+      return original.call(this, method, fields, operation)
+    })
+    try {
+      host.reply(child, 'done for this turn', 'succeeded'); host.turn.end(child)
+      await until(() => injected, 'budget pause during submission')
+      await host.call('research_query', child, {collection: 'nodes'})
+      expect((await host.rpc().session({sessionID: child})).pauseReason).toBe('budget')
+      expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+      expect(host.said(child).some(row => row.text.includes('concurrent catalog gap'))).toBe(false)
+    } finally { spy.mockRestore() }
+  })
+
+  for (const failure of ['location', 'catalog']) test(`${failure} lookup failure blocks the first continuation`, async () => {
+    const {host, child} = await nodeFixture()
+    const target = failure === 'location' ? host.ctx.session : host.ctx.tool
+    const spy = spyOn(target, failure === 'location' ? 'get' : 'list').mockRejectedValue(new Error('host lookup failed'))
+    try {
+      if (failure === 'location') {
+        const request = modelRequest(child); await host.hooks.get('context')!(request)
+        expect(Object.keys(request.tools)).toHaveLength(0)
+        expect(JSON.stringify(request.system)).toContain('research_session_location')
+      }
+      host.reply(child, 'no further work', 'succeeded'); host.turn.end(child)
+      await until(async () => (await host.rpc().session({sessionID: child})).pauseReason === 'fault', 'lookup failure pause')
+      expect(host.said(child).filter(row => row.resume)).toHaveLength(1)
+      expect(host.said(child).some(row => row.text.includes(failure === 'location' ? 'host session lookup failed' : 'host tool catalog unavailable'))).toBe(true)
+    } finally { spy.mockRestore() }
+  })
+
+})
+
+
+test('foreign membership has a bounded diagnostic cache with expiry and registry invalidation', async () => {
+  const first = new StorageClient({registryPath: registry}), second = new StorageClient({registryPath: registry})
+  try {
+    const creator = new Research(second, project, () => existsSync(registry))
+    await creator.init('ses_main', project, 'foreign cache fixture')
+    const sub = join(project, 'subdirectory'); mkdirSync(sub)
+    const observer = new Research(first, sub, () => existsSync(registry)); await observer.ready()
+    const original = first.request.bind(first)
+    let lookups = 0
+    first.request = ((method, fields, operation) => {
+      if (method === 'session_membership') lookups++
+      return original(method, fields, operation)
+    }) as typeof first.request
+    await observer.confirmMembership('ses_main'); await observer.confirmMembership('ses_main')
+    expect(lookups).toBe(1)
+    expect(observer.registeredRootOf('ses_main')).toBe(creator.scope)
+    expect(observer.isAssociated('ses_main')).toBe(false)
+    expect(observer.roots()).toHaveLength(0)
+    await Bun.sleep(1050); await observer.confirmMembership('ses_main')
+    expect(lookups).toBe(2)
+    await creator.detach('ses_main'); await observer.confirmMembership('ses_main')
+    expect(lookups).toBe(3)
+    expect(observer.registeredRootOf('ses_main')).toBeUndefined()
+  } finally { first.close(); second.close() }
 })

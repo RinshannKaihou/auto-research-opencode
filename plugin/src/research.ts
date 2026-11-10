@@ -80,7 +80,7 @@ export class Research {
   readonly evidenceDelivery = new EvidenceDelivery()
   private members = new Map<string, Membership>()
   // Trusted registration outside this instance is diagnostic data, never authority.
-  private foreignRoots = new Map<string, string>()
+  private foreignRoots = new Map<string, { root: string; stamp: string; at: number }>()
   private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
   private conclusionContracts = new Map<string,string>()
@@ -143,6 +143,8 @@ export class Research {
     const stamp = [this.storage.registryPath, this.storage.registryPath + '-wal'].map(path => {
       try { const info = statSync(path); return `${info.mtimeMs}:${info.ctimeMs}:${info.size}` } catch { return '-' }
     }).join('|')
+    const foreign = this.foreignRoots.get(sessionID)
+    if (foreign?.stamp === stamp && Date.now() - foreign.at < 1000) return
     const negative = this.nonmembers.get(sessionID)
     if (!this.members.has(sessionID) && negative?.stamp === stamp && Date.now() - negative.at < 1000) return
     const value = await this.storage.request<any>('session_membership', { host_id: HOST_ID, session_id: sessionID })
@@ -151,7 +153,7 @@ export class Research {
       this.foreignRoots.delete(sessionID)
       if (value.associated) {
         if (this.foreignRoots.size >= 2048) this.foreignRoots.delete(this.foreignRoots.keys().next().value!)
-        this.foreignRoots.set(sessionID, value.root)
+        this.foreignRoots.set(sessionID, { root: value.root, stamp, at: Date.now() })
         this.nonmembers.delete(sessionID)
         return
       }
@@ -216,7 +218,7 @@ export class Research {
 
   /** Includes a foreign registration only for fail-closed location diagnostics. */
   registeredRootOf(sessionID: string): string | undefined {
-    return this.rootOf(sessionID) ?? this.foreignRoots.get(sessionID)
+    return this.rootOf(sessionID) ?? this.foreignRoots.get(sessionID)?.root
   }
 
   roleOf(sessionID: string): string | undefined {
@@ -339,6 +341,7 @@ export class Research {
     await this.ready()
     const root = findProjectRoot(directory)
     if (!root) throw new Error("当前目录及上级目录里没有研究项目。")
+    if (canonical(directory) !== canonical(root)) throw new Error(`请先将会话移到研究根目录 ${root} 后再接管（当前目录：${directory}）。`)
     this.requireScope(root)
     const summary = await this.board(directory, "summary")
     const run = summary?.run

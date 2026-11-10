@@ -1071,9 +1071,10 @@ export default Plugin.define({
           error = locationError(registered, 'unavailable (membership lookup failed)', research.scope)
         }
         if (isSessionEntryError(error)) {
-          if (error.code === 'research_tool_entry_unavailable') await engine.blockTools(request.sessionID, error)
           for (const name of Object.keys(request.tools)) delete request.tools[name]
           request.system.splice(0, request.system.length, {type: 'text', text: error.message})
+          // Keep the request closed even if persisting its fault fails.
+          if (error.code === 'research_tool_entry_unavailable') await engine.blockTools(request.sessionID, error)
           // An explicit diagnostic response gets no tools. Keep the host loop
           // able to process user-requested location changes at its boundary;
           // the owning controller separately prevents autonomous continuation.

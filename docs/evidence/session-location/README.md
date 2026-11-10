@@ -12,7 +12,7 @@ is diagnostic data, not authority to attach a second controller or run a node.
 
 ## Boundaries
 
-- OpenCode 2.2.6 invokes `execute.before` with `opencode_session_move` for both
+- OpenCode 2.2.5 and 2.2.6 invoke `execute.before` with `opencode_session_move` for both
   direct calls and dynamically constructed nested calls. That inner hook rejects
   moves from registered research sessions. Ordinary sessions retain native tools.
 - Context and tool execution check the actual host location. Autonomous submission
@@ -45,14 +45,14 @@ python3 scripts/probe_session_location.py --plugin ./plugin --mode drift --outpu
 python3 scripts/probe_session_location.py --plugin ./plugin --mode catalog --output /tmp/aro-location-catalog
 ```
 
-Each output directory must be new. Probes require OpenCode 2.2.6 and local loopback
+Each output directory must be new. Probes accept the verified OpenCode 2.2.5/2.2.6 binaries and local loopback
 listeners, use private XDG configuration/storage, and call only a local scripted
 model. They persist raw model requests, hook traces and `result.json` in the output
-directory. Every successful repaired case publishes once, checkpoints once and
+directory. Use `--opencode /path/to/opencode` to test a separate binary without replacing the global host. Every successful repaired case publishes once, checkpoints once and
 finishes the same single task. The `baseline` mode can reproduce tool loss and
 `no_progress` against an unmodified plugin in an independent checkout.
 
-The ten location-boundary regressions cover nested/direct hook checks, foreign
+The location-boundary regressions cover nested/direct hook checks, foreign
 and unrelated instances, ordinary sessions, first-turn drift pause and recovery,
 old tool handles, duplicate terminals/notifications, missing registered tools,
 management operations, actual context tool loss, one submission check, and
@@ -67,6 +67,8 @@ Do not package a dirty checkout or automatically restart a shared server. Revert
 the plugin reference and reload in a coordinated window to roll back; there is no
 database migration to undo.
 
+Takeover now rejects a session outside the registered root before changing membership; rejected sessions keep their ordinary-session status. Existing registrations in subdirectories still require the explicit recovery below.
+
 For an active, recoverable session already in a workspace, the operator must move
 that **same session** back to its registered root, wait for the host's actual
 location change, reconcile its execution state, then explicitly resume. A move
@@ -78,6 +80,8 @@ Host-level moves made outside the tool hook remain possible and are detected at
 subsequent entry checks; these checks are not a directory lock. Context validation
 covers the map visible to this hook; a different plugin mutating the map afterward
 is not covered by a final host catalog callback. Native validation uses a scripted
-provider, not a real research model. Host versions other than the tested 2.2.6 and
+provider, not a real research model. Host versions other than the tested 2.2.5/2.2.6 and
 production deployment are not verified here; existing compatibility policy is
 unchanged.
+
+Review dispositions and failure-path regressions are in [review-response.md](review-response.md).
