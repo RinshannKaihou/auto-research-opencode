@@ -25,6 +25,7 @@ import { USAGE, runtimeBudgetSummary } from "./src/format"
 import { SOURCE_ALGORITHM, SOURCE_LIMITS, WorkspaceProbe, type SourceSnapshot } from './src/workspace-probe'
 import { attachController } from './src/controller-lifecycle'
 import { preflight } from './src/host-submission'
+import { sameDirectory, locationError, isSessionEntryError, isSessionMove, toolEntryError, assertResearchTools } from './src/session-location'
 
 const STARTUP_WAIT_MS = 1500
 const RESEARCH_READS = new Set(['research_query', 'research_read_input'])
@@ -293,7 +294,25 @@ export default Plugin.define({
       await research.call('controller_check', sessionID)
       requireCurrent()
     }
+    const assertLocation = async (sessionID: string) => {
+      const root = research.registeredRootOf(sessionID)
+      if (!root) return
+      let directory: string
+      try { directory = await sessionDirectory(sessionID) }
+      catch { throw locationError(root, 'unavailable (host session lookup failed)', research.scope) }
+      if (!research.inScope(root) || !sameDirectory(root, directory)) throw locationError(root, directory, research.scope)
+    }
+    const assertReady = async (sessionID: string) => {
+      await assertLocation(sessionID)
+      const root = research.rootOf(sessionID)
+      if (!root) return
+      let tools
+      try { tools = await ctx.tool.list() }
+      catch { throw toolEntryError(root, ['host tool catalog unavailable']) }
+      assertResearchTools(root, research.roleOf(sessionID), new Set(tools.map(tool => tool.name)))
+    }
     const host: SessionHost = {
+      assertReady,
       source: async sessionID => {
         requireCurrent()
         if (research.roleOf(sessionID)!=='node_core') return undefined
@@ -337,6 +356,7 @@ export default Plugin.define({
         await preflight('synthetic', async () => {
           requireCurrent()
           await verifyController(sessionID, !resume)
+          if (resume) await assertReady(sessionID)
           if (resume && research.isAssociated(sessionID)) {
             const source_snapshot=await host.source?.(sessionID)
             reservation = await research.call('runtime_reserve', sessionID,{source_snapshot, message_id: outboundID, ...(wakeIntentID ? { wake_intent_id: wakeIntentID } : {}),
@@ -424,6 +444,8 @@ export default Plugin.define({
         const ready = await within(research.confirmMembership(request.sessionID).then(() => true), STARTUP_WAIT_MS)
         if (!ready) throw new Error("Research membership is not ready")
       } catch {
+        const registered = research.registeredRootOf(request.sessionID)
+        if (registered && !research.inScope(registered)) throw locationError(registered, 'unavailable (membership lookup failed)', research.scope)
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardBefore(request)
         if (findProjectRoot(research.scope) === research.scope && !COORDINATOR_NATIVE_READS.has(request.tool) && !RESEARCH_READS.has(request.tool)) {
           throw new ToolError({ message: "研究会话身份尚未核实；请先核对状态，不能执行此工具。",
@@ -436,8 +458,13 @@ export default Plugin.define({
         throw new ToolError({ message: '研究控制器正在交接；请先等待身份核对。',
           metadata: { code: 'research_control_recovery_pending', retryable: false, allow_fallback: false } })
       }
+      await assertLocation(request.sessionID)
       const root = research.rootOf(request.sessionID)
       if (!root) return
+      if (isSessionMove(request.tool)) throw new ToolError({
+        message: `research_session_move_unsupported: 研究会话固定在研究根目录 ${root}；文件操作请使用节点 workspace 的明确路径。`,
+        metadata: {code: 'research_session_move_unsupported', retryable: false, allow_fallback: false},
+      })
       try {
         await bootstrap()
         const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
@@ -645,6 +672,7 @@ export default Plugin.define({
       if (tool.writes) requireCurrent()
       const sessionID = call.sessionID as string
       await research.confirmMembership(sessionID)
+      await assertLocation(sessionID)
       if (!research.isAssociated(sessionID)) {
         throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
       }
@@ -796,6 +824,7 @@ export default Plugin.define({
       try {
         const ready = await within(research.confirmMembership(request.sessionID).then(() => true), STARTUP_WAIT_MS)
         if (!ready) throw new Error("Research membership is not ready")
+        await assertLocation(request.sessionID)
         const associated = research.isAssociated(request.sessionID)
         const role = research.roleOf(request.sessionID)
         if (!lifecycle.current()) {
@@ -840,10 +869,12 @@ export default Plugin.define({
         const candidate = markerAtStart
         let markerUsed: typeof candidate
         let markerCleared = false
+        let needsResearchTools = role === 'node_core'
         if (role === "main") {
           const state = await research.call<any>("status", request.sessionID)
           const run = state.workflow?.run?.state
           const pause = state.workflow?.session?.pause_reason
+          needsResearchTools = ['running', 'manual'].includes(run) && !pause
           if (state.project?.config?.exploration_policy !== 'exploration-v1') {
             for (const name of ['research_scope', 'research_route']) delete request.tools[name]
             if (!state.exploration_closing_allowed) delete request.tools.research_decide
@@ -894,6 +925,7 @@ export default Plugin.define({
         }
         if (role === 'node_core') {
           if (!await engine.nodeTurnAllowed(request.sessionID)) {
+            needsResearchTools = false
             let shellWake = engine.isShellWake(request.sessionID)
             if (!shellWake) {
               const transcript = await within(host.recoveryMessages!(request.sessionID).catch(() => undefined), 1000)
@@ -979,6 +1011,7 @@ export default Plugin.define({
         else if (readOnly) for (const name of Object.keys(request.tools)) {
           if (!COORDINATOR_NATIVE_READS.has(name) && !RESEARCH_READS.has(name)) delete request.tools[name]
         }
+        if (needsResearchTools && !finishing && !readOnly && boundaryStable) assertResearchTools(root, role, new Set(Object.keys(request.tools)))
         // In tail mode the stable blocks stay in the system prompt and the
         // volatile ones travel in one temporary message after the history.
         // The stale notice, the blockless control fallbacks and an unstable
@@ -1032,7 +1065,21 @@ export default Plugin.define({
         // when the history already carries a hint, and the tail must never be
         // written into the host's own message list.
         if (tail.length) request.messages = [...request.messages, researchStateMessage(tail) as any]
-      } catch {
+      } catch (error) {
+        const registered = research.registeredRootOf(request.sessionID)
+        if (registered && !research.inScope(registered) && !isSessionEntryError(error)) {
+          error = locationError(registered, 'unavailable (membership lookup failed)', research.scope)
+        }
+        if (isSessionEntryError(error)) {
+          for (const name of Object.keys(request.tools)) delete request.tools[name]
+          request.system.splice(0, request.system.length, {type: 'text', text: error.message})
+          // Keep the request closed even if persisting its fault fails.
+          if (error.code === 'research_tool_entry_unavailable') await engine.blockTools(request.sessionID, error)
+          // An explicit diagnostic response gets no tools. Keep the host loop
+          // able to process user-requested location changes at its boundary;
+          // the owning controller separately prevents autonomous continuation.
+          return
+        }
         // Unknown control is not permission to use an old research context or execute tools.
         if (!lifecycle.current() && lifecycle.successorReady()) return lifecycle.forwardContext(request)
         if (research.isAssociated(request.sessionID) || findProjectRoot(research.scope) === research.scope) {
@@ -1303,10 +1350,20 @@ export default Plugin.define({
           if (['auto','resume','init','takeover','budget','recover','retry'].includes(action)) await research.ensureContract()
           await within(research.ready(), STARTUP_WAIT_MS)
           const sessionID = input.sessionID ? String(input.sessionID) : null
-          if (sessionID && action !== 'takeover') await research.confirmMembership(sessionID)
+          if (sessionID) {
+            await research.confirmMembership(sessionID)
+            const registered = research.registeredRootOf(sessionID)
+            // Management commands at the owning root do not require model tools.
+            // No foreign instance may initialize or take over this ledger.
+            if (registered && !research.inScope(registered)) await assertLocation(sessionID)
+          }
           const directory = sessionID ? await sessionDirectory(sessionID) : String(input.directory ?? ctx.location.directory)
           const result = await runCommand(action, sessionID, directory, (input.args ?? {}) as Record<string, any>)
           if (action === 'status') {
+            if (sessionID) {
+              try { await assertLocation(sessionID) }
+              catch (error) { if (!isSessionEntryError(error)) throw error; result.message += '\n' + error.message }
+            }
             const health = eventHealth(sessionID ? research.rootOf(sessionID) : findProjectRoot(directory) ?? undefined)
             if (health?.message) result.message += '\n' + health.message
             if (health && result.state && typeof result.state === 'object') result.state = { ...result.state, event_recovery: health }
@@ -1321,6 +1378,8 @@ export default Plugin.define({
     const sessionHandler = (input: any) => reported(async () => {
           const sessionID = String(input.sessionID)
           await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS)
+          const registered = research.registeredRootOf(sessionID)
+          if (registered && !research.inScope(registered)) await assertLocation(sessionID)
           const state = await research.sessionState(sessionID)
           const root = research.rootOf(sessionID)
           return { ...state, eventRecovery: eventHealth(root) ?? null, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }

@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto"
 import type { SourceSnapshot } from './workspace-probe'
 import type { RuntimeState } from './controller-lifecycle'
 import { wasNotSent } from './host-submission'
+import { isSessionEntryError } from './session-location'
 
 /** The model a research run uses; autonomous turns name no model of their own. */
 export interface ModelRef {
@@ -31,6 +32,8 @@ export interface PermissionRule {
 }
 
 export interface SessionHost {
+  /** Host location is separate from ledger membership and the node file workspace. */
+  assertReady?(sessionID: string): Promise<void>
   eventsPending?(sessionID: string): boolean
   source?(sessionID:string):Promise<SourceSnapshot | undefined>
   create(title: string, directory: string, model?: ModelRef, permissions?: PermissionRule[], sessionID?: string): Promise<string>
@@ -629,7 +632,26 @@ export class Engine {
       row?.role === "node_core"
         ? `${reason}继续完成节点 ${row.node_id}。完成或受阻时调用 research_finish。`
         : `${reason}继续推进研究。${this.progressLine(state)}按角色说明决定下一步；有节点在运行而你没有别的工作时调用 research_wait；目标已经回答时发布最终报告并调用 research_conclude。`
-    await this.say(sessionID, text, true, "继续")
+    try { await this.say(sessionID, text, true, "继续") }
+    catch (error) {
+      if (!isSessionEntryError(error) || !wasNotSent(error, 'synthetic')) throw error
+      await this.pauseForEntry(sessionID, error)
+    }
+  }
+
+  /** A known model catalog gap uses the existing durable pause, never a new owner. */
+  blockTools(sessionID: string, error: Error): Promise<void> {
+    const root = this.research.rootOf(sessionID)
+    if (!root || !this.research.inScope(root)) return Promise.resolve()
+    return this.serial(root, () => this.pauseForEntry(sessionID, error))
+  }
+
+  /** The caller already owns the project decision queue; do not nest serial(). */
+  private async pauseForEntry(sessionID: string, error: Error): Promise<void> {
+    const current = await this.state(sessionID)
+    const row = current.workflow?.session
+    if (!row || !['running', 'manual'].includes(current.workflow?.run?.state) || row.pause_reason) return
+    await this.pauseSession(sessionID, 'fault', error.message)
   }
 
   private async pauseSession(sessionID: string, reason: string, note: string): Promise<void> {
@@ -1341,18 +1363,29 @@ export class Engine {
       if (!["paused", "cold", "running"].includes(run)) {
         throw new Error(`项目状态是「${run}」；用 /research auto 开始。`)
       }
-      if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
       const tasks = await this.allTasks(main, state.workflow)
+      const candidate = (member: string, current: any) => {
+        const row = current.workflow?.session
+        if (!row || row.detached || !['main', 'node_core'].includes(row.role) ||
+            row.pause_reason && !RESUMABLE.has(row.pause_reason)) return
+        const task = tasks.find((item: any) => item.session_id === member && (
+          ACTIVE_TASK.has(item.state) || item.state === 'waiting' && item.error?.startsWith('wall_clock_budget:')))
+        if (row.role === 'node_core' && !task) return
+        return {row, task}
+      }
+      const members = this.research.sessionsIn(root).filter(sid => this.drives(sid))
+      // Validate only eligible targets, before changing control or reserving turns.
+      for (const member of members) {
+        const target = candidate(member, await this.state(member))
+        if (target && target.task?.state !== 'unverified') await this.host.assertReady?.(member)
+      }
+      if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
       const resumed: string[] = []
       const skipped: string[] = []
-      for (const member of this.research.sessionsIn(root).filter((sessionID) => this.drives(sessionID))) {
-        const current = await this.state(member)
-        const row = current.workflow?.session
-        if (!row || row.detached || !["main", "node_core"].includes(row.role)) continue
-        if (row.pause_reason && !RESUMABLE.has(row.pause_reason)) continue
-        const task = tasks.find((item: any) => item.session_id === member && (
-          ACTIVE_TASK.has(item.state) || item.state==='waiting' && item.error?.startsWith('wall_clock_budget:')))
-        if (row.role === "node_core" && !task) continue
+      for (const member of members) {
+        const target = candidate(member, await this.state(member))
+        if (!target) continue
+        const {row, task} = target
         if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
         let result: any
         for (let attempt=0; attempt<2; attempt++) {

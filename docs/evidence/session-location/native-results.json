@@ -1,0 +1,153 @@
+{
+  "environment": "local macOS host; isolated XDG state; local scripted provider; no external model calls",
+  "host_versions": [
+    "2.2.5",
+    "2.2.6"
+  ],
+  "reviewed_head": "0e4f78d87399c19efc7773fa4ac6d7b6cdf7dd4e",
+  "independent_225_package": "@opencode/cli-darwin-arm64@2.2.5 (temporary extraction; no global replacement)",
+  "results": [
+    {
+      "host": "opencode v2.2.5",
+      "mode": "direct",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "move_blocked_at_host_hook": true,
+      "actions": [
+        "propose",
+        "dispatch",
+        "move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 10,
+      "passed": true
+    },
+    {
+      "host": "opencode v2.2.5",
+      "mode": "nested",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "move_blocked_at_host_hook": true,
+      "actions": [
+        "propose",
+        "dispatch",
+        "move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 10,
+      "passed": true
+    },
+    {
+      "host": "opencode v2.2.5",
+      "mode": "drift",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "actions": [
+        "propose",
+        "dispatch",
+        "external_move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 12,
+      "passed": true,
+      "resume_refused_code": "research_session_location"
+    },
+    {
+      "host": "opencode v2.2.5",
+      "mode": "catalog",
+      "actual_model_catalog_gap_paused_without_continuation": true,
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "actions": [
+        "propose",
+        "dispatch",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 11,
+      "passed": true
+    },
+    {
+      "host": "opencode v2.2.6",
+      "mode": "direct",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "move_blocked_at_host_hook": true,
+      "actions": [
+        "propose",
+        "dispatch",
+        "move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 10,
+      "passed": true
+    },
+    {
+      "host": "opencode v2.2.6",
+      "mode": "nested",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "move_blocked_at_host_hook": true,
+      "actions": [
+        "propose",
+        "dispatch",
+        "move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 10,
+      "passed": true
+    },
+    {
+      "host": "opencode v2.2.6",
+      "mode": "drift",
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "actions": [
+        "propose",
+        "dispatch",
+        "external_move",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 12,
+      "passed": true,
+      "resume_refused_code": "research_session_location"
+    },
+    {
+      "host": "opencode v2.2.6",
+      "mode": "catalog",
+      "actual_model_catalog_gap_paused_without_continuation": true,
+      "publication_checkpoint_finish": true,
+      "task_count": 1,
+      "actions": [
+        "propose",
+        "dispatch",
+        "query",
+        "publish",
+        "checkpoint",
+        "finish"
+      ],
+      "model_requests": 11,
+      "passed": true
+    }
+  ]
+}

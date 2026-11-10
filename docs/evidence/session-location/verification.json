@@ -1,0 +1,34 @@
+{
+  "reviewed_head": "0e4f78d87399c19efc7773fa4ac6d7b6cdf7dd4e",
+  "environment": "local macOS agent host (not GitHub CI)",
+  "command": "make test",
+  "exit_code": 0,
+  "python_tests_passed": 886,
+  "plugin_tests_passed": 372,
+  "typescript": "passed",
+  "focused_review_regressions_passed": 20,
+  "pre_fix_defect_cases_failed": 4,
+  "native_hosts": [
+    "OpenCode 2.2.5",
+    "OpenCode 2.2.6"
+  ],
+  "native_modes_per_host": [
+    "direct",
+    "nested",
+    "drift",
+    "catalog"
+  ],
+  "prior_head_github_ci": {
+    "sha": "0e4f78d87399c19efc7773fa4ac6d7b6cdf7dd4e",
+    "python_3_11": "success",
+    "python_3_12": "success"
+  },
+  "deployed": false,
+  "real_research_modified": false,
+  "limitations": [
+    "Scripted local provider only",
+    "Context catalog check cannot observe a later plugin mutating tools after this hook",
+    "No production deployment or shared server restart",
+    "No new formal verification run; specifications unchanged"
+  ]
+}

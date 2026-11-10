@@ -79,6 +79,8 @@ export class Research {
   readonly checkpoints = new CheckpointDelivery()
   readonly evidenceDelivery = new EvidenceDelivery()
   private members = new Map<string, Membership>()
+  // Trusted registration outside this instance is diagnostic data, never authority.
+  private foreignRoots = new Map<string, { root: string; stamp: string; at: number }>()
   private nonmembers = new Map<string, { stamp: string; at: number }>()
   private controllers = new Map<string, { epoch: string; binding: string; fence: number }>()
   private conclusionContracts = new Map<string,string>()
@@ -133,7 +135,7 @@ export class Research {
   async confirmMembership(sessionID: string): Promise<void> {
     await this.ready()
     if (!this.registryExists()) {
-      if (this.members.has(sessionID) || findProjectRoot(this.scope) === this.scope) {
+      if (this.registeredRootOf(sessionID) || findProjectRoot(this.scope) === this.scope) {
         throw new Error('Research membership registry is unavailable')
       }
       return
@@ -141,16 +143,26 @@ export class Research {
     const stamp = [this.storage.registryPath, this.storage.registryPath + '-wal'].map(path => {
       try { const info = statSync(path); return `${info.mtimeMs}:${info.ctimeMs}:${info.size}` } catch { return '-' }
     }).join('|')
+    const foreign = this.foreignRoots.get(sessionID)
+    if (foreign?.stamp === stamp && Date.now() - foreign.at < 1000) return
     const negative = this.nonmembers.get(sessionID)
     if (!this.members.has(sessionID) && negative?.stamp === stamp && Date.now() - negative.at < 1000) return
     const value = await this.storage.request<any>('session_membership', { host_id: HOST_ID, session_id: sessionID })
     if (!value.associated || !this.inScope(value.root)) {
       if (this.members.has(sessionID)) this.forget(sessionID)
+      this.foreignRoots.delete(sessionID)
+      if (value.associated) {
+        if (this.foreignRoots.size >= 2048) this.foreignRoots.delete(this.foreignRoots.keys().next().value!)
+        this.foreignRoots.set(sessionID, { root: value.root, stamp, at: Date.now() })
+        this.nonmembers.delete(sessionID)
+        return
+      }
       if (this.nonmembers.size >= 2048) this.nonmembers.delete(this.nonmembers.keys().next().value!)
       this.nonmembers.set(sessionID, { stamp, at: Date.now() })
       return
     }
     this.nonmembers.delete(sessionID)
+    this.foreignRoots.delete(sessionID)
     const row = value.session
     this.members.set(sessionID, { root: value.root, role: row?.detached ? undefined : row?.role, node: row?.node_id ?? undefined })
     const main = value.main
@@ -204,6 +216,11 @@ export class Research {
     return this.members.has(sessionID)
   }
 
+  /** Includes a foreign registration only for fail-closed location diagnostics. */
+  registeredRootOf(sessionID: string): string | undefined {
+    return this.rootOf(sessionID) ?? this.foreignRoots.get(sessionID)?.root
+  }
+
   roleOf(sessionID: string): string | undefined {
     return this.members.get(sessionID)?.role
   }
@@ -230,11 +247,13 @@ export class Research {
   }
 
   register(sessionID: string, root: string, role: string, node?: string): void {
+    this.foreignRoots.delete(sessionID)
     this.nonmembers.delete(sessionID)
     this.members.set(sessionID, { root, role, node })
   }
 
   forget(sessionID: string): void {
+    this.foreignRoots.delete(sessionID)
     this.nonmembers.delete(sessionID)
     this.members.delete(sessionID)
     this.memoryCache.delete(sessionID)
@@ -322,6 +341,7 @@ export class Research {
     await this.ready()
     const root = findProjectRoot(directory)
     if (!root) throw new Error("当前目录及上级目录里没有研究项目。")
+    if (canonical(directory) !== canonical(root)) throw new Error(`请先将会话移到研究根目录 ${root} 后再接管（当前目录：${directory}）。`)
     this.requireScope(root)
     const summary = await this.board(directory, "summary")
     const run = summary?.run
