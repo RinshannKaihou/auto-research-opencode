@@ -136,7 +136,7 @@ export interface OverviewModel {
 export function recoveryNotices(summary: any): string[] {
   if (!summary?.project) return []
   return controlRecoveryLines(
-    { controller: summary.controller, deliveries: summary.deliveries, unverified: summary.unverified },
+    { run: summary.run, controller: summary.controller, deliveries: summary.deliveries, unverified: summary.unverified },
     {
       boardHint: "还有未核实执行，见「2 研究 → v 运行会话」。",
       eventMessage: summary.event_recovery?.message,

@@ -668,13 +668,13 @@ export default Plugin.define({
       // A started event may already be buffered while setup is completing.
       // Consume it before a node asks to finish that execution.
       await waitEvents(call.sessionID)
-      if (tool.writes && (eventGap || failedEvents.has(call.sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume')
+      if (tool.writes && (eventGap || failedEvents.has(call.sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research auto')
       if (tool.writes) requireCurrent()
       const sessionID = call.sessionID as string
       await research.confirmMembership(sessionID)
       await assertLocation(sessionID)
       if (!research.isAssociated(sessionID)) {
-        throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
+        throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research recover takeover 接管。")
       }
       const root = research.rootOf(sessionID)!
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
@@ -1247,8 +1247,21 @@ export default Plugin.define({
       return { id: value.id, providerID: value.providerID, ...(typeof value.variant === "string" ? { variant: value.variant } : {}) }
     }
 
+    const USER_COMMAND_LABELS: Record<string, string> = {
+      budget: "/research budget",
+      exploration: "/research exploration",
+      recover: "/research recover",
+      init: "/research auto --pause",
+      takeover: "/research recover takeover",
+      retry: "/research recover retry",
+      resume: "/research auto",
+    }
+
     function needsSession(sessionID: string | null, action: string): string {
-      if (!sessionID) throw new Error(`请先进入一个会话，再使用 /research ${action}。`)
+      if (!sessionID) {
+        const label = USER_COMMAND_LABELS[action]
+        throw new Error(label ? `请先进入一个会话，再使用 ${label}。` : "请先进入一个会话再执行该操作。")
+      }
       return sessionID
     }
 
@@ -1327,16 +1340,17 @@ export default Plugin.define({
           })()
         case "takeover":
           return research.takeover(needsSession(sessionID, action), directory)
+        case "exploration":
+          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
+        // Internal-only RPC actions (no user slash entry): retained alongside `status` and
+        // `resume` for host probe scripts (`scripts/probe_*.py`) and isolated R1 / evidence-v1 /
+        // session-boundary test harnesses.
         case "detach":
           return research.detach(needsSession(sessionID, action))
         case "context-policy":
           return research.contextPolicy(needsSession(sessionID, action), args.policy)
-        case "exploration":
-          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
         case "conclusion-contract":
           return research.conclusionContract(needsSession(sessionID, action), args.contract)
-        case "guidance":
-          return research.guidance(needsSession(sessionID, action), directory, args.path, args.version)
         default:
           throw new Error(`未知的 /research 子命令：${action}\n\n${USAGE}`)
       }
@@ -1391,10 +1405,15 @@ export default Plugin.define({
           const view = String(input.view)
           const data = await research.board(directory, view, input.fields ?? {})
           if (view !== 'summary' || !data?.project_root) return data
-          await within(research.ready(), STARTUP_WAIT_MS).catch(() => {})
-          if (sessionID) await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS).catch(() => {})
+          let membershipReady = true
+          await within(research.ready(), STARTUP_WAIT_MS).catch(() => { membershipReady = false })
+          if (membershipReady && sessionID) {
+            await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS).catch(() => { membershipReady = false })
+          }
           const root = String(data.project_root)
-          const hasHostMain = research.sessionsIn(root).some((sid) => research.roleOf(sid) === 'main')
+          const hasHostMain = membershipReady
+            ? research.sessionsIn(root).some((sid) => research.roleOf(sid) === 'main')
+            : undefined
           const health = eventHealth(root)
           let locationWarning: string | undefined
           if (sessionID) {
@@ -1403,7 +1422,7 @@ export default Plugin.define({
           }
           return {
             ...data,
-            has_host_main: hasHostMain,
+            ...(hasHostMain !== undefined ? { has_host_main: hasHostMain } : {}),
             ...(health ? { event_recovery: health } : {}),
             ...(locationWarning ? { location_warning: locationWarning } : {}),
           }

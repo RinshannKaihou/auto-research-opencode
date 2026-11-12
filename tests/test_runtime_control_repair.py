@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from auto_research.errors import ConflictError, ResearchControlError, ResearchExecutionUnverified
+from auto_research.errors import BudgetError, ConflictError, ResearchControlError, ResearchExecutionUnverified
 from auto_research.native_store import NativeStore, SCHEMA_VERSION
 from auto_research import schema12
 from test_opencode_host import Host
@@ -385,3 +385,52 @@ def test_pause_drain_requires_the_exact_delivered_message_and_current_turn(tmp_p
     host.call('runtime_execution_start', session='ses_node', execution_token='turn-b', event_seq=7)
     assert host.call('runtime_execution_bind', session='ses_node', execution_token='turn-b', message_id='msg_authorized', event_seq=4)['matched'] is False
     assert '不能开始新工作' in host.error('runtime_drain_check', session='ses_node', execution_token='turn-b')
+
+
+def test_board_project_read_summary_exposes_unverified_deliveries_without_session(tmp_path):
+    host, store, node_id = project(tmp_path)
+    task = store.workflow('opencode', 'ses_main', 'task', {'node_id': node_id}, 'task-delivery')
+    with store._connection() as db:
+        db.execute("INSERT INTO workflow_notifications VALUES(?,?,?,?,?,?,?,?)",
+                   ('notice-board', task['task_id'], 'ses_main', 'finished', None, '{}', 'pending', 'now'))
+    begun = store.notification_begin('opencode', 'ses_main', 'notice-board', 'begin-board', 'node report')
+    assert begun['send'] is True
+    board_summary = host.call('project_read', session=None, root=str(host.root), view='summary')
+    assert board_summary['deliveries'] == [{
+        'kind': 'report',
+        'state': 'unverified',
+        'notification_id': 'notice-board',
+        'message_id': begun['message_id'],
+    }]
+    store.recovery_resolve_delivery('opencode', 'ses_main', 'notice-board', 'report', 'delivered', 'verified in host transcript', 'resolve-board')
+    store.workflow('opencode', 'ses_main', 'session', {'pause_reason': 'wait', 'waiting': [task['task_id']]}, 'wait-wake')
+    wake = store.notification_wake_begin('opencode', 'ses_main', 'notice-board', 'begin-wake')
+    assert wake['send'] is True
+    wake_summary = host.call('project_read', session=None, root=str(host.root), view='summary')
+    assert wake_summary['deliveries'] == [{
+        'kind': 'wake',
+        'state': 'unverified',
+        'notification_id': 'notice-board',
+        'message_id': wake['message_id'],
+    }]
+    store.recovery_resolve_delivery('opencode', 'ses_main', 'notice-board', 'wake', 'not_sent', 'wake never landed', 'resolve-wake')
+    assert host.call('project_read', session=None, root=str(host.root), view='summary')['deliveries'] == []
+
+
+def test_runtime_resume_session_enforces_budget_cap_until_limit_is_raised(tmp_path):
+    host, store, _ = project(tmp_path)
+    host.call('runtime_budget_set', limits={'max_session_turns': 1}, reason='cap at one turn')
+    reserved = host.call('runtime_reserve', session='ses_main', message_id='msg_turn_1')
+    assert reserved['allowed'] is True
+    exhausted = host.call('runtime_reserve', session='ses_main', message_id='msg_turn_2')
+    assert exhausted['allowed'] is False
+    revision = host.call('status')['workflow']['run']['control_revision']
+    with pytest.raises(BudgetError):
+        store.runtime_resume_session('opencode', 'ses_main', 'ses_main', revision, 'resume-before-increase')
+    with store._read() as db:
+        assert db.execute("SELECT pause_reason FROM workflow_sessions WHERE session_id='ses_main'").fetchone()[0] == 'budget'
+    host.call('runtime_budget_set', limits={'max_session_turns': 2}, reason='raise cap')
+    resumed = store.runtime_resume_session('opencode', 'ses_main', 'ses_main', revision, 'resume-after-increase')
+    assert resumed['resumed'] is True
+    with store._read() as db:
+        assert db.execute("SELECT pause_reason FROM workflow_sessions WHERE session_id='ses_main'").fetchone()[0] is None

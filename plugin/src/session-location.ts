@@ -7,7 +7,7 @@ export function sameDirectory(left: string, right: string): boolean {
 }
 
 export function locationError(root: string, directory: string, scope: string): Error & {code: string} {
-  return Object.assign(new Error(`research_session_location: 已登记研究会话的位置不受支持。研究根目录：${root}；会话目录：${directory}；插件目录：${scope}。请由用户协调将原会话移回研究根目录，核对执行状态后显式 /research resume；文件操作请使用节点 workspace 的明确路径。不会自动迁移或接管。`),
+  return Object.assign(new Error(`research_session_location: 已登记研究会话的位置不受支持。研究根目录：${root}；会话目录：${directory}；插件目录：${scope}。请由用户协调将原会话移回研究根目录，核对执行状态后显式 /research auto；文件操作请使用节点 workspace 的明确路径。不会自动迁移或接管。`),
     {code: 'research_session_location'})
 }
 
@@ -22,7 +22,7 @@ export function isSessionMove(tool: string): boolean {
 }
 
 export function toolEntryError(root: string, missing: string[]): Error & {code: string} {
-  return Object.assign(new Error(`research_tool_entry_unavailable: 研究根目录 ${root} 的工具入口缺少 ${missing.join(', ')}；停止续轮，请先核对插件加载和宿主工具目录，再显式 /research resume。`), {code: 'research_tool_entry_unavailable'})
+  return Object.assign(new Error(`research_tool_entry_unavailable: 研究根目录 ${root} 的工具入口缺少 ${missing.join(', ')}；停止续轮，请先核对插件加载和宿主工具目录，再显式 /research auto。`), {code: 'research_tool_entry_unavailable'})
 }
 
 /** Full research tools are expected only on an authorized working request. */

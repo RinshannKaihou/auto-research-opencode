@@ -897,6 +897,6 @@ function summaryRefusal(error: unknown): string | null {
   if (code === "runtime_budget_exhausted") return "自主调度预算已到限，超时补问没有发出；先用 /research budget 调整额度。已有进度句不是报告。"
   if (code === "research_control_paused") return "研究已暂停，超时补问没有发出；恢复前已有进度句不是报告。"
   if (code === "research_control_stopped") return "研究已停止，超时补问没有发出；已有进度句不是报告。"
-  if (code === "research_events_need_check") return "事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。"
+  if (code === "research_events_need_check") return "事件流中断或需核对，超时补问没有发出；先 /research auto。已有进度句不是报告。"
   return null
 }

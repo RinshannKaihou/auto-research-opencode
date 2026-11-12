@@ -1326,6 +1326,10 @@ class RuntimeStore:
                 raise ConflictError('Session is not eligible to resume')
             if target['pause_reason'] is not None and target['pause_reason'] not in RESUMABLE_SESSION_PAUSES:
                 return {'resumed': False, 'reason': 'not_paused'}
+            if target['pause_reason'] == 'budget':
+                budget = view(self, db, host, target_session)
+                if budget['reason']:
+                    raise BudgetError(f"自主调度预算已到限：{budget['reason']}；先用 /research budget 显式调整额度，再恢复。")
             unknown = db.execute("SELECT task_id FROM exploration_tasks WHERE session_id=? AND state='unverified'", (target_session,)).fetchone()
             if unknown:
                 return {'resumed': False, 'reason': 'execution_unverified', 'task_id': unknown['task_id']}

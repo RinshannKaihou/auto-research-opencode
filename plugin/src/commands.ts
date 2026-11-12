@@ -19,16 +19,18 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
   const [action = ""] = input.split(/\s+/)
   const tail = input.slice(action.length).trim()
   switch (action) {
-    case "board":
-      return tail ? { kind: "error", message: "用法：/research（直接打开只读看板）" } : { kind: "board" }
     case "help":
     case "pause":
-    case "resume":
-      return tail ? { kind: "error", message: `用法：/research ${action === "resume" ? "auto" : action}` } : { kind: "rpc", action, args: {} }
+      return tail ? { kind: "error", message: `用法：/research ${action}` } : { kind: "rpc", action, args: {} }
     case "auto": {
       if (tail === "--pause" || tail.startsWith("--pause ") || tail.startsWith("--pause\t") || tail.startsWith("--pause\n")) {
         const goal = tail.slice("--pause".length).trim()
-        if (!goal) return { kind: "error", message: "用法：/research auto --pause <研究目标>" }
+        if (!goal) {
+          return {
+            kind: "error",
+            message: "用法：/research auto --pause <研究目标>（仅用于新建项目暂不启动；暂停运行中的研究请用 /research pause）",
+          }
+        }
         return { kind: "rpc", action: "init", args: { goal } }
       }
       // Still `goal` on the wire; on an existing project the engine resumes if paused or treats it as guidance for a new run.

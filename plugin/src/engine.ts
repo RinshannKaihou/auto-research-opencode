@@ -1392,7 +1392,17 @@ export class Engine {
     // Validate only eligible targets, before changing control or reserving turns.
     for (const member of members) {
       const target = candidate(member, await this.state(member))
-      if (target && target.task?.state !== 'unverified') await this.host.assertReady?.(member)
+      if (!target) continue
+      if (target.row.pause_reason === 'budget') {
+        const budget = await this.call<any>('runtime_budget_status', member)
+        if (budget?.reason) {
+          throw Object.assign(
+            new Error(`自主调度预算已到限：${budget.reason}；先用 /research budget 显式调整额度，再恢复。`),
+            { code: 'runtime_budget_exhausted' },
+          )
+        }
+      }
+      if (target.task?.state !== 'unverified') await this.host.assertReady?.(member)
     }
     if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
     const resumed: string[] = []

@@ -2761,7 +2761,7 @@ describe("node specialists", () => {
     await Bun.sleep(30)
     const result = await pending
     expect(result.error).toContain("达到专家时间上限，没有可用报告")
-    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research auto。已有进度句不是报告。")
     expect(String(result.error).indexOf("达到专家时间上限，没有可用报告"))
       .toBeLessThan(String(result.error).indexOf("事件流中断或需核对"))
   })
@@ -2779,7 +2779,7 @@ describe("node specialists", () => {
     host.events.end()
     const result = await pending
     expect(result.error).toContain("专家一段时间没有新的推进，没有可用报告")
-    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research auto。已有进度句不是报告。")
     expect(String(result.error).indexOf("专家一段时间没有新的推进，没有可用报告"))
       .toBeLessThan(String(result.error).indexOf("事件流中断或需核对"))
     expect(result.error).not.toContain("达到专家时间上限")
@@ -2797,14 +2797,14 @@ describe("node specialists", () => {
     await specialist(host, 1)
     const result = await pending
     expect(result.error).toContain("达到专家时间上限，没有可用报告")
-    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。")
+    expect(result.error).toContain("事件流中断或需核对，超时补问没有发出；先 /research auto。已有进度句不是报告。")
   })
 
   test("the Chinese event-gap sentence without that code is not a summary refusal", async () => {
     const host = await load({
       hostSetup: (raw) => {
         timeoutTranscript(raw)
-        refuseSummary(raw, new Error("研究事件需核对；停止和暂停仍可用，核对后可 /research resume"))
+        refuseSummary(raw, new Error("研究事件需核对；停止和暂停仍可用，核对后可 /research auto"))
       },
     })
     await nodeAtWork(host)
@@ -2826,7 +2826,7 @@ describe("node specialists", () => {
     expect(result).toMatchObject({
       state: "incomplete",
       exit_verified: true,
-      error: "达到专家时间上限，没有可用报告\n事件流中断或需核对，超时补问没有发出；先 /research resume。已有进度句不是报告。",
+      error: "达到专家时间上限，没有可用报告\n事件流中断或需核对，超时补问没有发出；先 /research auto。已有进度句不是报告。",
     })
     expect(result.result.preview ?? "").not.toContain(OPENING_LINE)
     expect(result.result.report_path).toBeUndefined()
@@ -3740,8 +3740,6 @@ describe("command parsing", () => {
     expect(parseResearchCommand("auto")).toEqual({ kind: "rpc", action: "auto", args: { goal: null } })
     expect(parseResearchCommand("pause")).toEqual({ kind: "rpc", action: "pause", args: {} })
     expect((parseResearchCommand("stop") as any).confirm).toContain("停止自主研究")
-    expect(parseResearchCommand("board")).toEqual({ kind: "board" })
-    expect(parseResearchCommand("resume")).toEqual({ kind: "rpc", action: "resume", args: {} })
     expect(parseResearchCommand('budget cost 0.25 small experiment')).toMatchObject({kind:'rpc',action:'budget',args:{limit:'cost',value:'0.25'}})
     expect(parseResearchCommand('budget turns 0.25 invalid')).toMatchObject({kind:'error'})
     expect(parseResearchCommand('budget cost 0 invalid')).toMatchObject({kind:'error'})
@@ -3752,15 +3750,18 @@ describe("command parsing", () => {
     expect(parseResearchCommand("recover takeover")).toMatchObject({ kind: "rpc", action: "takeover", args: {} })
     expect((parseResearchCommand("recover takeover") as any).confirm).toContain("接管")
     for (const removed of [
+      "board",
+      "board extra",
+      "resume",
+      "resume extra",
       "init Find X",
       "status",
       "context-policy r1",
       "conclusion-contract evidence-v1",
       "guidance read docs",
       "detach",
-      "retry T-001",
+      "retry T-001 原因",
       "takeover",
-      "board extra",
       "work X-001",
     ]) {
       expect(parseResearchCommand(removed)).toMatchObject({ kind: "error" })
@@ -3787,7 +3788,17 @@ describe("board text", () => {
     const gaps = Array.from({ length: 12 }, (_, index) => `gap ${index}`)
     const conclusion = { outcome: "partial", final_ref: "pub/P-2#r", gaps, review: { status: "partial", refs: ["pub/P-3#review"], limitations: ["l1", "l2"] } }
     const text = associatedStatus({ project: { goal: "G" }, workflow: { run: { state: "complete" }, conclusion } })
-    expect(text).toContain("未解决项 12 条 · 审阅限制 2 条 · 审阅材料 1 条，逐条见 /research board 概览")
+    expect(text).toContain("未解决项 12 条 · 审阅限制 2 条 · 审阅材料 1 条，逐条见 /research 概览")
+    const quietUnrecorded = overviewModel(
+      { project: { goal: "New or DSH" }, counts: {}, run: { state: "manual" }, controller: { phase: "unrecorded" } },
+      null,
+    )!
+    expect(quietUnrecorded.notices).toEqual([])
+    const runningUnrecorded = overviewModel(
+      { project: { goal: "Upgraded running" }, counts: {}, run: { state: "running" }, controller: { phase: "unrecorded" } },
+      null,
+    )!
+    expect(runningUnrecorded.notices.some((line) => line.includes("控制器：unrecorded；需先核对执行状态"))).toBe(true)
     expect(text).not.toContain("gap 0")
     const clean = associatedStatus({ workflow: { run: { state: "complete" }, conclusion: { ...conclusion, gaps: [], review: { status: "reviewed", refs: [], limitations: [] } } } })
     expect(clean).not.toContain("逐条见")
@@ -6174,4 +6185,137 @@ test('auto without guidance resumes a paused generation without resetting budget
   expect(afterResume.run.state).toBe('running')
   expect(afterResume.run.generation).toBe(genBefore)
   expect(afterResume.runtime_budget.turns).toBeGreaterThanOrEqual(turnsBefore)
+})
+
+test('read-only board summary exposes unverified coordinator deliveries through the real Python path', async () => {
+  let dropped = false
+  const host = await load({
+    hostSetup: (raw) => {
+      const original = raw.ctx.session.synthetic
+      raw.ctx.session.synthetic = async (input: any) => {
+        if (!dropped && String(input.description ?? '').includes('收到节点消息')) {
+          dropped = true
+          throw new Error('simulated transport drop during report delivery')
+        }
+        return original(input)
+      }
+    },
+  })
+  await host.command('auto', 'ses_main', { goal: 'Board delivery visibility' })
+  await host.call('research_propose', 'ses_main', { question: 'Q?', why_now: 'w', plan: 'p', root_reason: 'r' })
+  await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  const child = host.created[0]!
+  await until(() => host.said(child).length > 0, 'node kickoff')
+  const workspace = /工作目录：(.+?)。/.exec(host.said(child).at(-1).text)![1]!
+  mkdirSync(join(workspace, 'output'), { recursive: true })
+  writeFileSync(join(workspace, 'output', 'report.md'), '# X-001\nresult\n')
+  host.turn.start(child)
+  const pub = await host.call('research_publish', child, {
+    status: 'complete',
+    summary: 'node 1 result',
+    items: [{ item_id: 'report', kind: 'report', source_path: 'output/report.md' }],
+  })
+  await host.call('research_memory', child, {
+    action: 'record',
+    kind: 'observation',
+    statement: 'X holds under A',
+    evidence_refs: [`pub/${pub.publication_id}#report`],
+  })
+  const seen = await host.call('research_query', child, { collection: 'checkpoint' })
+  await host.call('research_memory', child, { action: 'checkpoint', base: seen.base, state: { next: 'finish' } })
+  await host.call('research_finish', child, { state: 'finished', summary: 'node 1 result' })
+  host.turn.end(child)
+
+  let summary: any
+  await until(async () => {
+    if (!dropped) return false
+    summary = await host.rpc().board({ view: 'summary', directory: project })
+    return Array.isArray(summary?.deliveries) && summary.deliveries.length === 1
+  }, 'unverified delivery visible on board summary')
+  expect(summary.deliveries[0]).toMatchObject({ kind: 'report', state: 'unverified' })
+  const overview = overviewModel(summary, null)!
+  expect(overview.notices.some((line) => line.includes('/research recover delivery'))).toBe(true)
+
+  const resolved = await host.command('recover', 'ses_main', {
+    kind: 'delivery',
+    delivery_kind: 'report',
+    notification_id: summary.deliveries[0].notification_id,
+    disposition: 'delivered',
+    reason: 'checked host messages',
+  })
+  expect(resolved.error).toBeUndefined()
+  const cleared = await host.rpc().board({ view: 'summary', directory: project })
+  expect(cleared.deliveries).toEqual([])
+})
+
+test('auto without guidance resumes an interrupted session while the project run is still running, and enforces budget caps before resuming', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'Running-project session recovery' })
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 1, 'initial kickoff')
+  host.turn.start('ses_main')
+  host.events.push({ id: 'esc-1', type: 'session.execution.interrupted', data: { sessionID: 'ses_main' } })
+  await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'native_stop', 'native_stop pause')
+  expect((await host.summary()).run.state).toBe('running')
+
+  const resumedFromEsc = await host.command('auto', 'ses_main', { goal: null })
+  expect(resumedFromEsc.error).toBeUndefined()
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 2, 'resumed after native_stop')
+
+  await host.command('budget', 'ses_main', { limit: 'turns', value: '2', reason: 'cap at current turns' })
+  host.turn.start('ses_main')
+  host.events.push({ id: 'turn-2-done', type: 'session.execution.succeeded', data: { sessionID: 'ses_main' } })
+  await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'budget', 'budget pause')
+  expect((await host.summary()).run.state).toBe('running')
+
+  const refusedRunning = await host.command('auto', 'ses_main', { goal: null })
+  expect(refusedRunning.error).toContain('预算已到限')
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('budget')
+
+  await host.command('pause', 'ses_main')
+  expect((await host.summary()).run.state).toBe('paused')
+  const refusedPaused = await host.command('auto', 'ses_main', { goal: null })
+  expect(refusedPaused.error).toContain('预算已到限')
+  expect((await host.summary()).run.state).toBe('paused')
+
+  await host.command('budget', 'ses_main', { limit: 'turns', value: '3', reason: 'explicitly raise cap' })
+  const resumedAfterRaise = await host.command('auto', 'ses_main', { goal: null })
+  expect(resumedAfterRaise.error).toBeUndefined()
+  expect((await host.summary()).run.state).toBe('running')
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 3, 'resumed after raising budget')
+})
+
+test('board summary omits has_host_main when membership loading fails so takeover is not falsely offered', async () => {
+  const host = await load()
+  await host.command('init', 'ses_main', { goal: 'Membership failure safety' })
+  const normal = await host.rpc().board({ view: 'summary', directory: project })
+  expect(normal.has_host_main).toBe(true)
+
+  const original = StorageClient.prototype.request
+  const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function (method, fields, operation) {
+    if (method === 'host_sessions') return Promise.reject(new Error('registry unavailable'))
+    return original.call(this, method, fields, operation)
+  })
+  try {
+    const degraded = await load()
+    const summary = await degraded.rpc().board({ view: 'summary', directory: project })
+    expect(summary.project?.goal).toBe('Membership failure safety')
+    expect(summary.has_host_main).toBeUndefined()
+  } finally {
+    spy.mockRestore()
+  }
+})
+
+test('session-required RPC errors never point to removed slash commands', async () => {
+  const host = await load()
+  for (const [action, expected] of [
+    ['init', '/research auto --pause'],
+    ['takeover', '/research recover takeover'],
+    ['retry', '/research recover retry'],
+    ['budget', '/research budget'],
+    ['detach', '请先进入一个会话再执行该操作。'],
+  ] as const) {
+    const res = await host.rpc().command({ action, directory: project, args: {} })
+    expect(res.error).toContain(expected)
+    if (action !== 'budget') expect(res.error).not.toContain(`/research ${action}`)
+  }
 })

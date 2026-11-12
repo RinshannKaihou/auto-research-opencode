@@ -8,7 +8,7 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import { ResearchRpc } from "./rpc"
 import { TAKEOVER_WARNING, parseResearchCommand } from "./src/commands"
-import { errorText } from "./src/format"
+import { QUIET_STATES, errorText } from "./src/format"
 import { sessionTitle } from "./src/session-title"
 import { ResearchBoard } from "./src/board/Board"
 import { showText } from "./src/dialog"
@@ -16,7 +16,6 @@ import { ResearchComposerLine, ResearchSidebar, createSessionStatus } from "./sr
 
 const BOARD = "research-board"
 const SESSION_OPENERS = new Set(["init", "takeover", "auto"])
-const QUIET_STATES = new Set(["manual", "stopped", "complete"])
 
 export default Plugin.define({
   id: "auto-research.tui",
@@ -124,7 +123,7 @@ export default Plugin.define({
           sessionID = prepared.sessionID
         }
         // Autonomous turns carry no model of their own; they use the one selected here.
-        const selected = ["auto", "resume"].includes(command.action) ? context.ui.model.current() : undefined
+        const selected = command.action === "auto" ? context.ui.model.current() : undefined
         const model = selected
           ? { id: selected.modelID, providerID: selected.providerID, ...(selected.variant ? { variant: selected.variant } : {}) }
           : undefined

@@ -9,6 +9,8 @@ export function runtimeBudgetSummary(budget: any): any {
     expand:{collection:'exploration_budget'}}}
 }
 
+export const QUIET_STATES: ReadonlySet<string> = new Set(["manual", "stopped", "complete"])
+
 const RUN_STATES: Record<string, string> = {
   manual: "手动",
   running: "自主推进中",
@@ -75,7 +77,7 @@ export function conclusionLines(conclusion: any, state?: string): string[] {
     conclusion.evidence
       ? `证据：${conclusion.evidence.evidence_closure.status} · 审阅覆盖：${conclusion.evidence.review_coverage.status} · 停止：${conclusion.evidence.exploration_stop.reason}`
       : `审阅声明：${REVIEWS[conclusion.review.status] ?? conclusion.review.status}（不表示结论通过）`,
-    ...(counted.length ? [`${counted.join(" · ")}，逐条见 /research board 概览`] : []),
+    ...(counted.length ? [`${counted.join(" · ")}，逐条见 /research 概览`] : []),
   ]
 }
 
@@ -94,7 +96,9 @@ export function controlRecoveryLines(
   return [
     options?.locationWarning ?? "",
     options?.eventMessage ?? "",
-    workflow?.controller?.phase && workflow.controller.phase !== "ready"
+    workflow?.controller?.phase &&
+    workflow.controller.phase !== "ready" &&
+    (workflow.controller.phase !== "unrecorded" || workflow?.run?.state === "running")
       ? `控制器：${workflow.controller.phase}；需先核对执行状态${workflow.controller.phase === "recovery_required" ? "，可用 /research recover controller <原因>" : ""}。`
       : "",
     ...(workflow?.deliveries ?? []).map(
@@ -134,7 +138,6 @@ export function associatedStatus(state: any): string {
     `项目：${state.project_root ?? ""}`,
     `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
     ...controlRecoveryLines(state.workflow, {
-      boardHint: "还有未核实执行，请使用 /research board 查看完整列表。",
       resourceLeases: state.runtime_budget?.exploration?.resource_leases,
     }),
     state.schema_version>=11 ? `写入契约：R2 · schema ${state.schema_version}` : '',
@@ -166,7 +169,8 @@ export function unassociatedStatus(root: string | null, summary: any, inSession 
 
 export const USAGE = [
   "/research                     打开研究看板（只读；含概览、进度、成果与待核实提示）",
-  "/research auto [--pause] [目标或指令]  新建并开始、暂停后恢复，或开启新一轮；--pause 仅建项暂不启动",
+  "/research auto [目标或指令]   新建并开始、暂停或中断后恢复，或开启新一轮",
+  "/research auto --pause <目标> 仅新建项目而不启动（先调预算或开探索时用；暂停已有运行请用 pause）",
   "/research pause               暂停自主研究（当前这一轮会做完）",
   "/research stop                停止新工作并请求中断；在途执行需核实（需确认）",
   "/research budget [turns|nodes|seconds|tokens|cost|work <正数|off> <原因>]  查看或改额",
