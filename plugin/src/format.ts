@@ -84,6 +84,42 @@ function countsLine(counts: Record<string, number> | undefined): string {
   return `节点 ${counts.nodes ?? 0} · 发布 ${counts.publications ?? 0} · 知识 ${counts.knowledge ?? 0} · 检查点 ${counts.checkpoints ?? 0}`
 }
 
+export function controlRecoveryLines(
+  workflow: any,
+  options?: { boardHint?: string; eventMessage?: string; locationWarning?: string; resourceLeases?: any[] },
+): string[] {
+  const uncertainLeases = (options?.resourceLeases ?? []).filter(
+    (lease: any) => lease?.resource_state === "uncertain" && lease?.task_id,
+  )
+  return [
+    options?.locationWarning ?? "",
+    options?.eventMessage ?? "",
+    workflow?.controller?.phase && workflow.controller.phase !== "ready"
+      ? `控制器：${workflow.controller.phase}；需先核对执行状态${workflow.controller.phase === "recovery_required" ? "，可用 /research recover controller <原因>" : ""}。`
+      : "",
+    ...(workflow?.deliveries ?? []).map(
+      (delivery: any) =>
+        `通知未核实：${delivery.kind} ${delivery.notification_id}（消息 ${delivery.message_id}）；核对后用 /research recover delivery。`,
+    ),
+    ...(workflow?.unverified?.tasks ?? []).map(
+      (task: any) =>
+        `节点执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ""}；核对后用 /research recover task。`,
+    ),
+    ...(workflow?.unverified?.specialists ?? []).map(
+      (task: any) =>
+        `专家执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ""}；核对后用 /research recover specialist。`,
+    ),
+    ...uncertainLeases.map(
+      (lease: any) =>
+        `声明资源待释放：${lease.task_id}（${Object.keys(lease.resources ?? {}).join("、")}）；核实外部进程退出后用 /research recover resource ${lease.task_id} <原因>。`,
+    ),
+    workflow?.unverified?.tasks_total > (workflow?.unverified?.tasks?.length ?? 0) ||
+    workflow?.unverified?.specialists_total > (workflow?.unverified?.specialists?.length ?? 0)
+      ? options?.boardHint ?? "还有未核实执行，请使用 /research 查看完整列表。"
+      : "",
+  ].filter(Boolean)
+}
+
 /** Status of a session that belongs to a project (control_state). */
 export function associatedStatus(state: any): string {
   const attempt = state.attempt
@@ -97,17 +133,10 @@ export function associatedStatus(state: any): string {
     `目标：${state.project?.goal ?? "未记录"}`,
     `项目：${state.project_root ?? ""}`,
     `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
-    state.workflow?.controller?.phase && state.workflow.controller.phase !== 'ready'
-      ? `控制器：${state.workflow.controller.phase}；需先核对执行状态${state.workflow.controller.phase === 'recovery_required' ? '，可用 /research recover controller <原因>' : ''}。` : '',
-    ...(state.workflow?.deliveries ?? []).map((delivery: any) =>
-      `通知未核实：${delivery.kind} ${delivery.notification_id}（消息 ${delivery.message_id}）；核对后用 /research recover delivery。`),
-    ...(state.workflow?.unverified?.tasks ?? []).map((task: any) =>
-      `节点执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ''}；核对后用 /research recover task。`),
-    ...(state.workflow?.unverified?.specialists ?? []).map((task: any) =>
-      `专家执行未核实：${task.task_id}${task.node_id ? `（${task.node_id}）` : ''}；核对后用 /research recover specialist。`),
-    state.workflow?.unverified?.tasks_total > (state.workflow?.unverified?.tasks?.length ?? 0) ||
-      state.workflow?.unverified?.specialists_total > (state.workflow?.unverified?.specialists?.length ?? 0)
-      ? '还有未核实执行，请使用 /research board 查看完整列表。' : '',
+    ...controlRecoveryLines(state.workflow, {
+      boardHint: "还有未核实执行，请使用 /research board 查看完整列表。",
+      resourceLeases: state.runtime_budget?.exploration?.resource_leases,
+    }),
     state.schema_version>=11 ? `写入契约：R2 · schema ${state.schema_version}` : '',
     work,
     ...conclusionLines(state.workflow?.conclusion, state.workflow?.run?.state),
@@ -131,30 +160,20 @@ export function unassociatedStatus(root: string | null, summary: any, inSession 
     `目录 ${root} 里有一个研究项目：${summary.project.goal ?? ""}`,
     `运行状态：${runState(summary.run?.state)} · ${countsLine(summary.counts)}`,
     ...conclusionLines(summary.conclusion, summary.run?.state),
-    "用 /research auto 继续自主研究，用 /research takeover 接管它，或 /research board 只读浏览。",
+    "用 /research auto 继续自主研究，用 /research recover takeover 接管它，或 /research 只读浏览。",
   ].join("\n")
 }
 
 export const USAGE = [
-  "/research auto [目标或指令]   建立项目并开始自主研究；已有项目时文字作为补充指令，目标不变",
+  "/research                     打开研究看板（只读；含概览、进度、成果与待核实提示）",
+  "/research auto [--pause] [目标或指令]  新建并开始、暂停后恢复，或开启新一轮；--pause 仅建项暂不启动",
   "/research pause               暂停自主研究（当前这一轮会做完）",
-  "/research resume              恢复自主研究",
   "/research stop                停止新工作并请求中断；在途执行需核实（需确认）",
-  "/research status              查看项目和本会话状态",
-  "/research recover controller <原因>  人工核对后接管身份不明的控制器（需确认）",
-  "/research recover task|specialist|resource <任务 ID> <原因>  核实执行已退出（需确认）",
-  "/research recover delivery report|wake <通知 ID> delivered|not-sent <原因>  核对投递（需确认）",
-  "/research retry <任务 ID> <原因>  重新执行已核实退出的节点（需确认）",
-  "/research budget [turns|nodes|seconds|tokens|cost|work <正数|off> <原因>]  查看或改额；cost/work 允许小数；work 为计划投入单位",
-  "/research budget resource <名称> <容量> <原因>  配置受管测量资源容量",
-  "/research board               打开研究看板（只读）",
-  "/research init <研究目标>     只建立项目，不开始（想先和模型讨论时用）",
-  "/research guidance [路径 [--version v]]  查看或登记科研指导文档",
-  "/research context-policy [legacy|r1]  查看或切换上下文读取策略",
+  "/research budget [turns|nodes|seconds|tokens|cost|work <正数|off> <原因>]  查看或改额",
+  "/research budget resource <名称> <容量|off> <原因>  配置受管测量资源容量",
   "/research exploration [on|off]  查看或切换探索模式",
-  "/research conclusion-contract [evidence-v1]  查看或采用证据结项契约",
-  "/research takeover            接管目录里已有的项目（单向，需确认）",
-  "/research detach              把本会话移出项目，保留对话和材料",
+  "/research recover controller|task|specialist|resource|delivery|retry|takeover …  人工核实、重试或接管（需确认）",
+  "/research help                查看本帮助说明",
 ].join("\n")
 
 /** Readable text for anything thrown across the RPC boundary. */

@@ -357,3 +357,85 @@ test("changed risk pages ask for explicit refresh without retaining stale rows o
     expect(ui.frame()).not.toContain("当前分页已失效")
   } finally { ui.screen.renderer.destroy() }
 })
+
+test("read-only board surfaces recovery notices on overview and runtime tabs", async () => {
+  const color = RGBA.fromHex("#cad3df")
+  const scale = Object.fromEntries(Array.from({ length: 11 }, (_, i) => [i * 100, color]))
+  const theme = {
+    text: { base: color, muted: color, feedback: Object.fromEntries(["info", "success", "warning", "error"].map((v) => [v, { base: color }])) },
+    background: { base: RGBA.fromHex("#101620"), raised: { high: color } }, border: { base: color },
+    hue: { accent: scale, interactive: scale }, categorical: [scale],
+    markdown: Object.fromEntries(["heading", "text", "codeBlock", "listItem", "strong", "emphasis", "code", "blockQuote", "link", "linkText"].map((v) => [v, color])),
+    syntax: Object.fromEntries(["comment", "keyword", "function", "variable", "string", "number", "type", "operator", "punctuation"].map((v) => [v, color])),
+  }
+  let layer!: () => { commands: Command[] }
+  const summary = {
+    project: { goal: "测试只读诊断提示" },
+    project_root: "/fixture",
+    run: { state: "paused", main_session_id: "ses_main" },
+    counts: { nodes: 2, publications: 1, knowledge: 4, checkpoints: 0 },
+    review_queue: { pending_total: 0 },
+    controller: { phase: "recovery_required" },
+    deliveries: [{ kind: "node_result", notification_id: "N-001", message_id: "M-001" }],
+    unverified: {
+      tasks: [{ task_id: "T-009", node_id: "X-002" }],
+      tasks_total: 1,
+      specialists: [{ task_id: "S-004", node_id: "X-002" }],
+      specialists_total: 1,
+    },
+    event_recovery: { state: "held", held: 1, message: "事件流待重放，请运行 /research auto" },
+    runtime_budget: {
+      available: true,
+      turns: 2,
+      total_nodes: 2,
+      unconfirmed_reservations: 0,
+      limits: { max_session_turns: 10 },
+      exploration: {
+        available: true,
+        allocated: 1,
+        reserved: 1,
+        committed: 0,
+        resource_leases: [{ task_id: "T-009", resource_state: "uncertain", resources: { gpu: 1 } }],
+      },
+    },
+  }
+  const fakeBoard = async ({ view, fields: f = {} }: any) => {
+    if (view === "summary") return summary
+    if (view === "presentation") return { status: "missing" }
+    if (view === "knowledge") return { items: [], total: 0, cursor: null }
+    if (view === "page") {
+      if (f.collection === "sessions") return { items: [{ session_id: "ses_main", role: "main", detached: false }], cursor: null }
+      return { items: [], total: 0, cursor: null }
+    }
+    throw new Error(`Unexpected board view ${view}`)
+  }
+  const context = {
+    theme, themeMode: "dark", renderer: {}, location: { directory: "/fixture" },
+    keymap: { layer: (value: any) => { layer = value } },
+    client: { rpc: () => ({ board: fakeBoard, events: { on: () => () => {} } }) },
+  } as unknown as Context
+  const screen = await testRender(() => <ResearchBoard context={context} onClose={() => {}} openSession={() => {}} />, { width: 132, height: 40 })
+  const flush = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await screen.renderOnce()
+    await screen.renderOnce()
+  }
+  try {
+    await flush()
+    const overview = screen.captureCharFrame()
+    expect(overview).toContain("/research recover controller")
+    expect(overview).toContain("/research recover delivery")
+    expect(overview).toContain("/research recover task")
+    expect(overview).toContain("/research recover specialist")
+    expect(overview).toContain("/research recover resource T-009")
+    expect(overview).toContain("事件流待重放")
+    layer().commands.find((v) => v.bind === "2")!.run(); await flush()
+    layer().commands.find((v) => v.bind === "v")!.run(); await flush()
+    const runtime = screen.captureCharFrame()
+    expect(runtime).toContain("控制器：recovery_required")
+    expect(runtime).toContain("recover controller <原因>")
+    expect(runtime).toContain("recover resource T-009")
+  } finally {
+    screen.renderer.destroy()
+  }
+})

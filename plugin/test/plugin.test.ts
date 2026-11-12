@@ -604,7 +604,7 @@ test('a terminal with unresolved membership is retained and visible until replay
     host.turn.end(child)
     await until(() => failures >= 3, 'membership retries exhausted')
     await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).eventRecovery.held === 1, 'held event visible in sidebar state')
-    expect((await host.command('status', 'ses_main')).message).toContain('/research resume')
+    expect((await host.command('status', 'ses_main')).message).toContain('/research auto')
     expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
   } finally { storage.mockRestore(); membership.mockRestore() }
   expect((await host.command('resume', 'ses_main')).error).toBeUndefined()
@@ -2049,7 +2049,7 @@ describe("autonomous research", () => {
     await host.command("pause", "ses_main")
     const paused = await host.command("auto", "ses_main", { goal: "改看 Y" })
     expect(paused.error).toContain("补充指令没有发送")
-    expect(paused.error).toContain("/research resume")
+    expect(paused.error).toContain("/research auto")
     const long = await host.command("auto", "ses_main", { goal: "长".repeat(2001) })
     expect(long.error).toContain("超过 2000 字")
     // Notes of the open work segment reach the research context; the typed one shows that, the refused text is absent.
@@ -3728,18 +3728,43 @@ describe("storage", () => {
 
 describe("command parsing", () => {
   test("maps /research input to actions", () => {
-    expect(parseResearchCommand("")).toEqual({ kind: "rpc", action: "help", args: {} })
+    expect(parseResearchCommand("")).toEqual({ kind: "board" })
+    expect(parseResearchCommand("help")).toEqual({ kind: "rpc", action: "help", args: {} })
     expect(parseResearchCommand("auto  Find the cause of X ")).toEqual({
       kind: "rpc", action: "auto", args: { goal: "Find the cause of X" },
     })
+    expect(parseResearchCommand("auto --pause  Find the cause of X ")).toEqual({
+      kind: "rpc", action: "init", args: { goal: "Find the cause of X" },
+    })
+    expect(parseResearchCommand("auto --pause")).toMatchObject({ kind: "error" })
     expect(parseResearchCommand("auto")).toEqual({ kind: "rpc", action: "auto", args: { goal: null } })
     expect(parseResearchCommand("pause")).toEqual({ kind: "rpc", action: "pause", args: {} })
     expect((parseResearchCommand("stop") as any).confirm).toContain("停止自主研究")
     expect(parseResearchCommand("board")).toEqual({ kind: "board" })
-    expect(parseResearchCommand('budget cost 0.25 small experiment')).toMatchObject({kind:'rpc',args:{limit:'cost',value:'0.25'}})
+    expect(parseResearchCommand("resume")).toEqual({ kind: "rpc", action: "resume", args: {} })
+    expect(parseResearchCommand('budget cost 0.25 small experiment')).toMatchObject({kind:'rpc',action:'budget',args:{limit:'cost',value:'0.25'}})
     expect(parseResearchCommand('budget turns 0.25 invalid')).toMatchObject({kind:'error'})
     expect(parseResearchCommand('budget cost 0 invalid')).toMatchObject({kind:'error'})
-    expect(parseResearchCommand("work X-001")).toMatchObject({ kind: "error" })
+    expect(parseResearchCommand("recover retry T-001 retry after fix")).toMatchObject({
+      kind: "rpc", action: "retry", args: { task_id: "T-001", reason: "retry after fix" },
+    })
+    expect((parseResearchCommand("recover retry T-001 retry after fix") as any).confirm).toContain("重新执行该节点")
+    expect(parseResearchCommand("recover takeover")).toMatchObject({ kind: "rpc", action: "takeover", args: {} })
+    expect((parseResearchCommand("recover takeover") as any).confirm).toContain("接管")
+    for (const removed of [
+      "init Find X",
+      "status",
+      "context-policy r1",
+      "conclusion-contract evidence-v1",
+      "guidance read docs",
+      "detach",
+      "retry T-001",
+      "takeover",
+      "board extra",
+      "work X-001",
+    ]) {
+      expect(parseResearchCommand(removed)).toMatchObject({ kind: "error" })
+    }
   })
 })
 
@@ -6129,4 +6154,24 @@ test('foreign membership has a bounded diagnostic cache with expiry and registry
     expect(lookups).toBe(3)
     expect(observer.registeredRootOf('ses_main')).toBeUndefined()
   } finally { first.close(); second.close() }
+})
+
+test('auto without guidance resumes a paused generation without resetting budget or opening a new generation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'Resume via auto' })
+  await until(() => host.said('ses_main').some((row) => row.resume), 'initial kickoff')
+  host.reply('ses_main', 'turn 1')
+  host.turn.end('ses_main')
+  const beforePause = await host.summary()
+  const genBefore = beforePause.run.generation
+  const turnsBefore = beforePause.runtime_budget.turns
+  expect(turnsBefore).toBeGreaterThanOrEqual(1)
+  expect((await host.command('pause', 'ses_main')).error).toBeUndefined()
+  expect((await host.summary()).run.state).toBe('paused')
+  const resumed = await host.command('auto', 'ses_main', { goal: null })
+  expect(resumed.error).toBeUndefined()
+  const afterResume = await host.summary()
+  expect(afterResume.run.state).toBe('running')
+  expect(afterResume.run.generation).toBe(genBefore)
+  expect(afterResume.runtime_budget.turns).toBeGreaterThanOrEqual(turnsBefore)
 })

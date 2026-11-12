@@ -298,7 +298,7 @@ export class Research {
 
   requireAssociated(sessionID: string): string {
     const root = this.rootOf(sessionID)
-    if (!root) throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
+    if (!root) throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research recover takeover 接管。")
     return root
   }
 
@@ -320,11 +320,11 @@ export class Research {
   /** Creates the project with this session as its main session; nothing starts yet. */
   async init(sessionID: string, directory: string, goal: string): Promise<CommandResult> {
     await this.ready()
-    if (!goal.trim()) throw new Error("用法：/research init <研究目标>")
-    if (this.isAssociated(sessionID)) throw new Error("本会话已经关联了研究项目；用 /research status 查看。")
+    if (!goal.trim()) throw new Error("用法：/research auto [--pause] <研究目标>")
+    if (this.isAssociated(sessionID)) throw new Error("本会话已经关联了研究项目；用 /research 打开看板查看。")
     const existing = findProjectRoot(directory)
     if (existing) {
-      throw new Error(`${existing} 已有研究项目。用 /research auto 继续，或 /research takeover 接管。`)
+      throw new Error(`${existing} 已有研究项目。用 /research auto 继续，或 /research recover takeover 接管。`)
     }
     this.requireScope(directory)
     const state = await this.call("open", sessionID, { root: directory, cwd: directory, goal: goal.trim() })

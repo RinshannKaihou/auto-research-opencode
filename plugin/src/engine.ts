@@ -538,7 +538,7 @@ export class Engine {
     }
     if (outcome === "interrupted") {
       if (this.ours.delete(sessionID)) return
-      await this.pauseSession(sessionID, "native_stop", "你中断了这一轮，本会话的自动推进已暂停；用 /research resume 继续。")
+      await this.pauseSession(sessionID, "native_stop", "你中断了这一轮，本会话的自动推进已暂停；用 /research auto 继续。")
       return
     }
     const state = await this.state(sessionID)
@@ -568,7 +568,7 @@ export class Engine {
         await this.continueSession(sessionID, state, "上一轮出错，重试一次。")
       } else {
         this.retried.delete(sessionID)
-        await this.pauseSession(sessionID, "fault", "连续出错，本会话的自动推进已暂停；用 /research resume 继续。")
+        await this.pauseSession(sessionID, "fault", "连续出错，本会话的自动推进已暂停；用 /research auto 继续。")
       }
       return
     }
@@ -603,7 +603,7 @@ export class Engine {
       await this.pauseSession(
         sessionID,
         "no_progress",
-        `连续 ${IDLE_LIMIT} 轮没有研究推进，本会话的自动推进已暂停；用 /research resume 继续。`,
+        `连续 ${IDLE_LIMIT} 轮没有研究推进，本会话的自动推进已暂停；用 /research auto 继续。`,
       )
       return
     }
@@ -807,7 +807,7 @@ export class Engine {
         const message = error instanceof Error ? error.message : String(error)
         if ((error as any)?.unsent_rolled_back) {
           const paused = (error as any).unsent_paused
-          await this.say(main, paused ? `节点 ${task.node_id} 连续三次未能提交，自动调度已暂停；任务保留在队列。排障后用 /research resume。`
+          await this.say(main, paused ? `节点 ${task.node_id} 连续三次未能提交，自动调度已暂停；任务保留在队列。排障后用 /research auto。`
             : `节点 ${task.node_id} 尚未提交宿主，任务已保留在队列。${message}`).catch(() => {})
           if (paused) break
           continue
@@ -1031,7 +1031,7 @@ export class Engine {
       await this.call('recovery_confirm_exit', sessionID, { task_id: taskID, reason })
       this.research.notifyChanged(root)
       await this.deliver(root).catch(() => {})
-      return { message: `已记录任务 ${taskID} 的人工退出核对；如需重新执行，使用 /research retry ${taskID} <原因>。` }
+      return { message: `已记录任务 ${taskID} 的人工退出核对；如需重新执行，使用 /research recover retry ${taskID} <原因>。` }
     })
   }
 
@@ -1264,11 +1264,11 @@ export class Engine {
     }
     const guidance = created ? "" : text.trim()
     if (guidance.length > GUIDANCE_LIMIT) {
-      throw new Error(`补充指令超过 ${GUIDANCE_LIMIT} 字，没有发送；请缩短。长期有效的规则可以写成文档，用 /research guidance 登记。`)
+      throw new Error(`补充指令超过 ${GUIDANCE_LIMIT} 字，没有发送；请缩短。长期有效的规则可写入项目 AGENTS.md。`)
     }
     const root = this.rootFor(sessionID, directory)
     const main = this.mainIn(root)
-    if (!main) throw new Error("这个项目的主会话不在 OpenCode 里。先用 /research takeover 接管。")
+    if (!main) throw new Error("这个项目的主会话不在 OpenCode 里。先用 /research recover takeover 接管，或直接运行 /research auto 按提示确认接管。")
     await this.ensureController(root, main)
     if (model) this.models.set(root, model)
     return this.serial(root, async () => {
@@ -1277,14 +1277,24 @@ export class Engine {
       const run = state.workflow?.run?.state
       if (run === "running") {
         if (guidance) throw new Error("自主研究已经在运行，补充指令没有发送；请直接在主会话里发消息，会记为用户指导。")
+        const members = this.research.sessionsIn(root).filter((sid) => this.drives(sid))
+        let hasResumable = false
+        for (const member of members) {
+          const mState = member === main ? state : await this.state(member)
+          const pauseReason = mState.workflow?.session?.pause_reason
+          if (pauseReason && RESUMABLE.has(pauseReason)) {
+            hasResumable = true
+            break
+          }
+        }
+        if (hasResumable) return this.resumeLocked(root, main, state)
         return { message: "自主研究已经在运行。", sessionID: main }
       }
       if (run === "paused" || run === "cold") {
-        throw new Error(
-          guidance
-            ? "项目处于暂停状态，补充指令没有发送；先在主会话里发消息说明，再用 /research resume 继续。"
-            : "项目处于暂停状态；用 /research resume 继续。",
-        )
+        if (guidance) {
+          throw new Error("项目处于暂停状态，补充指令没有发送；先在主会话里发消息说明，再用 /research auto 继续。")
+        }
+        return this.resumeLocked(root, main, state)
       }
       const unknown = await this.call('runtime_unverified', main)
       if (unknown.tasks || unknown.specialists) {
@@ -1332,7 +1342,7 @@ export class Engine {
           : "项目目标不变，补充指令已记为用户指导；但主会话刚开始了一轮，启动消息没有发出，模型只能从研究上下文里读到这段指令。"
       }
       return {
-        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${filed}进展会显示在侧栏、状态条和 /research board 里。`,
+        message: `${created ? "已建立研究项目，" : ""}自主研究已开始。${filed}进展会显示在侧栏、状态条和 /research 看板里。`,
         sessionID: main,
       }
     })
@@ -1347,8 +1357,8 @@ export class Engine {
       if (state.workflow?.run?.state !== "running") return { message: "自主研究没有在运行。" }
       await this.call("workflow", main, { action: "run", fields: { state: "paused" } })
       this.research.notifyChanged(root)
-      await this.say(main, "自主研究已暂停；正在进行的这一轮会做完。用 /research resume 继续。")
-      return { message: "已暂停。正在进行的这一轮会做完，之后不再继续；用 /research resume 恢复。" }
+      await this.say(main, "自主研究已暂停；正在进行的这一轮会做完。用 /research auto 继续。")
+      return { message: "已暂停。正在进行的这一轮会做完，之后不再继续；用 /research auto 恢复。" }
     })
   }
 
@@ -1359,62 +1369,66 @@ export class Engine {
     if (model) this.models.set(root, model)
     return this.serial(root, async () => {
       const state = await this.state(main)
-      const run = state.workflow?.run?.state
-      if (!["paused", "cold", "running"].includes(run)) {
-        throw new Error(`项目状态是「${run}」；用 /research auto 开始。`)
-      }
-      const tasks = await this.allTasks(main, state.workflow)
-      const candidate = (member: string, current: any) => {
-        const row = current.workflow?.session
-        if (!row || row.detached || !['main', 'node_core'].includes(row.role) ||
-            row.pause_reason && !RESUMABLE.has(row.pause_reason)) return
-        const task = tasks.find((item: any) => item.session_id === member && (
-          ACTIVE_TASK.has(item.state) || item.state === 'waiting' && item.error?.startsWith('wall_clock_budget:')))
-        if (row.role === 'node_core' && !task) return
-        return {row, task}
-      }
-      const members = this.research.sessionsIn(root).filter(sid => this.drives(sid))
-      // Validate only eligible targets, before changing control or reserving turns.
-      for (const member of members) {
-        const target = candidate(member, await this.state(member))
-        if (target && target.task?.state !== 'unverified') await this.host.assertReady?.(member)
-      }
-      if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
-      const resumed: string[] = []
-      const skipped: string[] = []
-      for (const member of members) {
-        const target = candidate(member, await this.state(member))
-        if (!target) continue
-        const {row, task} = target
-        if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
-        let result: any
-        for (let attempt=0; attempt<2; attempt++) {
-          const fresh = await this.state(member)
-          try {
-            result = await this.call('runtime_resume_session', main, {
-              target_session: member, expected_revision: fresh.workflow.run.control_revision,
-            })
-            break
-          } catch (error) {
-            if (attempt === 1 || !(error instanceof Error) || !error.message.includes('revision')) throw error
-          }
-        }
-        if (!result?.resumed) {
-          skipped.push(`${row.node_id ?? member}：${result?.reason ?? '状态已变化'}${result?.reason === 'execution_unverified' && result.task_id ? `；/research recover task ${result.task_id} <核实说明>` : result?.reason === 'execution_binding_pending' ? '；执行轮绑定未完成，请核对宿主后重试 resume' : ''}`)
-          continue
-        }
-        const waitingExternal = !!result.waiting_external
-        await this.useModel(root, member)
-        this.retried.delete(member)
-        this.idle.delete(member)
-        if (!waitingExternal && !this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
-        resumed.push(member)
-      }
-      await this.deliver(root)
-      await this.schedule(root)
-      this.research.notifyChanged(root)
-      return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}` }
+      return this.resumeLocked(root, main, state)
     })
+  }
+
+  private async resumeLocked(root: string, main: string, state: any): Promise<CommandResult> {
+    const run = state.workflow?.run?.state
+    if (!["paused", "cold", "running"].includes(run)) {
+      throw new Error(`项目状态是「${run}」；用 /research auto 开始。`)
+    }
+    const tasks = await this.allTasks(main, state.workflow)
+    const candidate = (member: string, current: any) => {
+      const row = current.workflow?.session
+      if (!row || row.detached || !['main', 'node_core'].includes(row.role) ||
+          row.pause_reason && !RESUMABLE.has(row.pause_reason)) return
+      const task = tasks.find((item: any) => item.session_id === member && (
+        ACTIVE_TASK.has(item.state) || item.state === 'waiting' && item.error?.startsWith('wall_clock_budget:')))
+      if (row.role === 'node_core' && !task) return
+      return {row, task}
+    }
+    const members = this.research.sessionsIn(root).filter(sid => this.drives(sid))
+    // Validate only eligible targets, before changing control or reserving turns.
+    for (const member of members) {
+      const target = candidate(member, await this.state(member))
+      if (target && target.task?.state !== 'unverified') await this.host.assertReady?.(member)
+    }
+    if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
+    const resumed: string[] = []
+    const skipped: string[] = []
+    for (const member of members) {
+      const target = candidate(member, await this.state(member))
+      if (!target) continue
+      const {row, task} = target
+      if (task?.state==='waiting') await this.call('workflow',main,{action:'task_state',fields:{task_id:task.task_id,state:'running'}})
+      let result: any
+      for (let attempt=0; attempt<2; attempt++) {
+        const fresh = await this.state(member)
+        try {
+          result = await this.call('runtime_resume_session', main, {
+            target_session: member, expected_revision: fresh.workflow.run.control_revision,
+          })
+          break
+        } catch (error) {
+          if (attempt === 1 || !(error instanceof Error) || !error.message.includes('revision')) throw error
+        }
+      }
+      if (!result?.resumed) {
+        skipped.push(`${row.node_id ?? member}：${result?.reason ?? '状态已变化'}${result?.reason === 'execution_unverified' && result.task_id ? `；/research recover task ${result.task_id} <核实说明>` : result?.reason === 'execution_binding_pending' ? '；执行轮绑定未完成，请核对宿主后重试 /research auto' : ''}`)
+        continue
+      }
+      const waitingExternal = !!result.waiting_external
+      await this.useModel(root, member)
+      this.retried.delete(member)
+      this.idle.delete(member)
+      if (!waitingExternal && !this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
+      resumed.push(member)
+    }
+    await this.deliver(root)
+    await this.schedule(root)
+    this.research.notifyChanged(root)
+    return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}`, sessionID: main }
   }
 
   stop(sessionID: string | null, directory: string): Promise<CommandResult> {

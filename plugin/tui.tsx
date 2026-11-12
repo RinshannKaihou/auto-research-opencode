@@ -7,7 +7,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import { ResearchRpc } from "./rpc"
-import { parseResearchCommand } from "./src/commands"
+import { TAKEOVER_WARNING, parseResearchCommand } from "./src/commands"
 import { errorText } from "./src/format"
 import { sessionTitle } from "./src/session-title"
 import { ResearchBoard } from "./src/board/Board"
@@ -16,6 +16,7 @@ import { ResearchComposerLine, ResearchSidebar, createSessionStatus } from "./sr
 
 const BOARD = "research-board"
 const SESSION_OPENERS = new Set(["init", "takeover", "auto"])
+const QUIET_STATES = new Set(["manual", "stopped", "complete"])
 
 export default Plugin.define({
   id: "auto-research.tui",
@@ -38,27 +39,64 @@ export default Plugin.define({
     })
 
     /**
-     * init and takeover make the current session the research main session. On
-     * the home screen there is none yet, so open one instead of asking the user
-     * to send a throwaway message first. A quick read-only check comes first,
-     * so a command that is going to fail never leaves an empty session behind.
+     * Prepare a main session for actions that open, adopt, or start a project.
+     * On the home screen there is no session yet, so open one after a read-only
+     * check; if an existing project has no OpenCode main session, confirm and
+     * adopt it before starting autonomous work.
      */
-    async function sessionFor(action: string, title: string): Promise<string | undefined> {
+    async function prepareOpener(
+      action: string,
+      currentSessionID: string | undefined,
+      title: string,
+    ): Promise<{ sessionID: string | undefined; cancelled?: boolean }> {
       const directory = location().directory
       const summary = (await context.client
         .rpc(ResearchRpc)
-        .board({ view: "summary", directory }, { location: location() })) as { project?: unknown; error?: string }
-      if (summary?.error) throw new Error(summary.error)
-      if (action === "init" && summary?.project) {
-        throw new Error(`${directory} 已有研究项目。用 /research auto 继续，或 /research takeover 接管。`)
+        .board({ view: "summary", directory }, { location: location() })) as {
+        project?: { goal?: string } | null
+        run?: { state?: string }
+        has_host_main?: boolean
+        error?: string
       }
-      if (action === "takeover" && !summary?.project) throw new Error("当前目录及上级目录里没有研究项目。")
-      // An existing project already has a main session; the server returns it.
-      if (action === "auto" && summary?.project) return undefined
-      if (action === "auto" && !title) throw new Error("当前目录还没有研究项目。用法：/research auto <研究目标>")
-      const session = await context.client.session.create({ title: sessionTitle(title), location: { directory } })
-      context.ui.router.navigate({ type: "session", sessionID: session.id })
-      return session.id
+      if (summary?.error) throw new Error(summary.error)
+      const ensureSession = async (fallbackTitle: string) => {
+        if (currentSessionID) return currentSessionID
+        const session = await context.client.session.create({ title: sessionTitle(fallbackTitle), location: { directory } })
+        context.ui.router.navigate({ type: "session", sessionID: session.id })
+        return session.id
+      }
+      if (action === "init") {
+        if (summary?.project) {
+          throw new Error(`${directory} 已有研究项目。用 /research auto 继续，或 /research recover takeover 接管。`)
+        }
+        return { sessionID: await ensureSession(title) }
+      }
+      if (action === "takeover") {
+        if (!summary?.project) throw new Error("当前目录及上级目录里没有研究项目。")
+        return { sessionID: await ensureSession(summary.project.goal || "Research") }
+      }
+      if (summary?.project) {
+        if (summary.has_host_main === false) {
+          const runState = summary.run?.state
+          if (runState && !QUIET_STATES.has(runState)) {
+            throw new Error(`项目运行状态是「${runState}」，请先在原宿主停止项目再接管。`)
+          }
+          const confirmed = await context.ui.dialog.confirm({ title: "Research", message: TAKEOVER_WARNING })
+          if (!confirmed) return { sessionID: currentSessionID, cancelled: true }
+          const adoptedSession = await ensureSession(summary.project.goal || "Research")
+          const taken = (await context.client
+            .rpc(ResearchRpc)
+            .command({ action: "takeover", sessionID: adoptedSession, directory, args: {} }, { location: location() })) as {
+            error?: string
+          }
+          if (taken?.error) throw new Error(taken.error)
+          return { sessionID: adoptedSession }
+        }
+        // An existing project already has a main session; the server returns it.
+        return { sessionID: currentSessionID }
+      }
+      if (!currentSessionID && !title.trim()) throw new Error("当前目录还没有研究项目。用法：/research auto <研究目标>")
+      return { sessionID: currentSessionID ?? (await ensureSession(title)) }
     }
 
     async function run(input?: string) {
@@ -79,9 +117,11 @@ export default Plugin.define({
         if (!confirmed) return
       }
       try {
-        if (!sessionID && SESSION_OPENERS.has(command.action)) {
+        if (SESSION_OPENERS.has(command.action)) {
           const title = command.action === "takeover" ? "Research" : String(command.args.goal ?? "")
-          sessionID = await sessionFor(command.action, title)
+          const prepared = await prepareOpener(command.action, sessionID, title)
+          if (prepared.cancelled) return
+          sessionID = prepared.sessionID
         }
         // Autonomous turns carry no model of their own; they use the one selected here.
         const selected = ["auto", "resume"].includes(command.action) ? context.ui.model.current() : undefined
@@ -118,7 +158,7 @@ export default Plugin.define({
             {
               id: "auto-research.command",
               title: "Research",
-              description: "研究项目：auto / init / status / board / context-policy / guidance / takeover / detach",
+              description: "研究项目：打开看板，或 auto / pause / stop / budget / exploration / recover",
               group: "Research",
               slash: { name: "research", arguments: true },
               palette: true,

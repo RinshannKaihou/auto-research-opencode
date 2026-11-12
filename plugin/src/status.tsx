@@ -50,7 +50,7 @@ export function createSessionStatus(context: Context): SessionStatusStore {
 }
 
 function activity(state: SessionResearch): string {
-  if (['gap', 'held'].includes(state.eventRecovery?.state ?? '')) return '事件待核对：/research resume'
+  if (['gap', 'held'].includes(state.eventRecovery?.state ?? '')) return '事件待核对：/research auto'
   if (state.runState !== "running") return runState(state.runState)
   if (state.pauseReason) return pauseReason(state.pauseReason)
   return "自主推进中"
@@ -82,9 +82,9 @@ export function ResearchSidebar(props: { context: Context; state: () => SessionR
             {`节点 ${state().counts?.nodes ?? 0} · 发布 ${state().counts?.publications ?? 0} · 知识 ${state().counts?.knowledge ?? 0}`}
           </text>
           <text fg={theme.text.muted} marginTop={1}>
-            /research board 看板
+            /research 看板
           </text>
-          <text fg={theme.text.muted}>{state().runState === "running" ? "/research pause 暂停" : "/research resume 恢复"}</text>
+          <text fg={theme.text.muted}>{state().runState === "running" ? "/research pause 暂停" : "/research auto 继续"}</text>
         </box>
       )}
     </Show>
@@ -97,7 +97,7 @@ export function ResearchComposerLine(props: { context: Context; state: () => Ses
     <Show when={props.state()?.associated ? props.state() : null}>
       {(state) => (
         <text fg={theme.text.muted} wrapMode="none" paddingLeft={1}>
-          {`Research · ${roleName(state().role)} · ${activity(state())} · ${workLine(state())} · /research board`}
+          {`Research · ${roleName(state().role)} · ${activity(state())} · ${workLine(state())} · /research`}
         </text>
       )}
     </Show>

@@ -5,12 +5,12 @@ import { sessionTitle } from "../src/session-title"
 
 const goal = "你的唯一工作目录是当前目录\n\n研究目标：\n研究 FlashAttention（FA）输出中的微小数值误差。\n" + "保留完整研究要求。".repeat(40)
 
-function harness() {
+function harness(options?: { board?: () => Promise<any>; confirm?: boolean }) {
   let route: any = { type: "home" }
   let run!: (input: string) => Promise<void>
-  const created: any[] = [], commands: any[] = [], titles: string[] = []
+  const created: any[] = [], commands: any[] = [], titles: string[] = [], confirms: string[] = [], alerts: number[] = []
   const rpc = {
-    board: async () => ({}),
+    board: options?.board ?? (async () => ({})),
     command: async (input: any) => { commands.push(input); return { message: "完成" } },
     events: { on: () => () => {} },
   }
@@ -27,21 +27,28 @@ function harness() {
         if (/[\u0000-\u001f\u007f-\u009f]/u.test(title)) throw new Error("ot_session_control failed: InvalidArgument")
         titles.push(title); route = next
       } },
-      dialog: { show: (_render: any, close: () => void) => close() },
+      dialog: {
+        clear: () => {},
+        confirm: async (input: any) => { confirms.push(input.message); return options?.confirm ?? true },
+        show: (_render: any, close: () => void) => { alerts.push(1); close() },
+      },
       model: { current: () => ({ modelID: "scripted", providerID: "mock" }) },
       slot: (input: any) => { if (input.append === "app") input.render(); return () => {} },
     },
     keymap: { layer: (value: any) => { run = value().commands[0].run } },
   } as unknown as Context
   const dispose = tui.setup(context) as () => void
-  return { created, commands, titles, run: (input: string) => run(input), dispose }
+  return { created, commands, titles, confirms, alerts, route: () => route, run: (input: string) => run(input), dispose }
 }
 
-for (const action of ["init", "auto"]) {
-  test(`home ${action} safely titles a multiline goal without changing the RPC goal`, async () => {
+for (const [cli, action] of [
+  ["auto --pause", "init"],
+  ["auto", "auto"],
+] as const) {
+  test(`home ${cli} safely titles a multiline goal without changing the RPC goal`, async () => {
     const host = harness()
     try {
-      await host.run(`${action} ${goal}`)
+      await host.run(`${cli} ${goal}`)
       expect(host.created).toHaveLength(1)
       expect(host.titles).toHaveLength(1)
       expect(host.created[0].title).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u)
@@ -69,3 +76,32 @@ for (const [input, expected] of [
     expect(sessionTitle(sessionTitle(input!))).toBe(expected!)
   })
 }
+
+test("bare /research opens the read-only board", async () => {
+  const host = harness()
+  try {
+    await host.run("")
+    expect(host.route()).toMatchObject({ type: "plugin", name: "research-board" })
+    expect(host.commands).toHaveLength(0)
+  } finally { host.dispose() }
+})
+
+test("auto adopts a quiet project without an OpenCode main session after confirmation", async () => {
+  const quietBoard = async () => ({ project: { goal: "Existing quiet project" }, run: { state: "stopped" }, has_host_main: false })
+  const cancelled = harness({ board: quietBoard, confirm: false })
+  try {
+    await cancelled.run("auto")
+    expect(cancelled.confirms).toHaveLength(1)
+    expect(cancelled.created).toHaveLength(0)
+    expect(cancelled.commands).toHaveLength(0)
+  } finally { cancelled.dispose() }
+
+  const confirmed = harness({ board: quietBoard, confirm: true })
+  try {
+    await confirmed.run("auto focus on Y")
+    expect(confirmed.confirms).toHaveLength(1)
+    expect(confirmed.created).toHaveLength(1)
+    expect(confirmed.commands.map((c) => c.action)).toEqual(["takeover", "auto"])
+    expect(confirmed.commands[1]).toMatchObject({ action: "auto", sessionID: "ses_created", args: { goal: "focus on Y" } })
+  } finally { confirmed.dispose() }
+})
