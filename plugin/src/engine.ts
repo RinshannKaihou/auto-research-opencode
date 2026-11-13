@@ -76,7 +76,7 @@ const NOTICE_OUTCOME: Record<string, string> = {
   published: "发布了新材料",
   paused: "已暂停，等待处理",
 }
-/** Pauses that /research resume clears; wait and closed segments resolve themselves. */
+/** Pauses that /research auto clears; wait and closed segments resolve themselves. */
 const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress",'budget'])
 
 export function oneLine(value: unknown, limit = 60): string {

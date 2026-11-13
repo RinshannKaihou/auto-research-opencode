@@ -53,7 +53,7 @@ class ResearchControlError(ConflictError):
             "recovery": recovery,
             "allow_fallback": False,
         }
-        instruction = "请由用户执行 /research resume 后再开始新工作" if paused else "请由用户明确启动自主研究后再开始新工作"
+        instruction = "请由用户执行 /research auto 后再开始新工作" if paused else "请由用户明确启动自主研究后再开始新工作"
         super().__init__(f"研究当前不能开始新工作（状态 {run_state}，原因 {pause_reason or '无'}）；{instruction}。不要重复请求，也不要自行执行节点工作。")
 
 

@@ -1786,7 +1786,7 @@ class MemoryStore:
             else:
                 role_override = ("Research execution is paused. Read and synthesize existing results, "
                                  "but do not propose or dispatch new work or perform node experiments yourself. "
-                                 "Only an explicit /research resume can resume autonomous research.")
+                                 "Only an explicit /research auto can resume autonomous research.")
             control_override = (f"Run state: {run_state}; session pause reason: {pause_reason or 'none'}. "
                                 "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
         blocks = [

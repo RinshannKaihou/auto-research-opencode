@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../index"
 import { parseResearchCommand } from "../src/commands"
+import { controlInstructions } from "../src/coordinator-boundary"
 import { decodeChunk, kindChips, knowledgeRows, materialRows, overviewModel, runtimeNotes, sessionRows } from "../src/board/model"
 import { associatedStatus } from "../src/format"
 import { StorageClient } from "../src/storage"
@@ -1760,8 +1761,13 @@ describe("autonomous research", () => {
     await host.hooks.get("context")!(request)
     expect(Object.keys(request.tools)).not.toContain("research_dispatch")
     expect(Object.keys(request.tools)).not.toContain("research_propose")
-    expect(contextText(request)).toContain("Only an explicit /research resume")
+    expect(contextText(request)).toContain("Only an explicit /research auto")
+    expect(contextText(request)).not.toContain("/research resume")
     expect(contextText(request)).not.toContain("decide and continue")
+    expect(controlInstructions("paused", null)).toContain("an explicit /research auto is required")
+    expect(controlInstructions("paused", null)).not.toContain("/research resume")
+    expect(controlInstructions("running", "finished")).toContain("/research auto does not reopen it")
+    expect(controlInstructions("running", "finished")).not.toContain("/research resume")
     await expect(host.call("research_propose", "ses_main", { question: "new?", why_now: "w", plan: "p", root_reason: "r" }))
       .rejects.toThrow("研究已暂停")
     expect((await host.summary()).run.state).toBe("paused")
@@ -6284,22 +6290,67 @@ test('auto without guidance resumes an interrupted session while the project run
   await until(() => host.said('ses_main').filter((row) => row.resume).length === 3, 'resumed after raising budget')
 })
 
-test('board summary omits has_host_main when membership loading fails so takeover is not falsely offered', async () => {
+test('board summary omits has_host_main when membership loading fails or times out so takeover is not falsely offered', async () => {
   const host = await load()
   await host.command('init', 'ses_main', { goal: 'Membership failure safety' })
   const normal = await host.rpc().board({ view: 'summary', directory: project })
   expect(normal.has_host_main).toBe(true)
 
   const original = StorageClient.prototype.request
+  let mode: 'reject' | 'timeout_ready' | 'timeout_session' | 'normal' = 'reject'
+  let releaseReady!: () => void
+  let releaseSession!: () => void
+  let readyPending = false
+  let sessionPending = false
   const spy = spyOn(StorageClient.prototype, 'request').mockImplementation(function (method, fields, operation) {
-    if (method === 'host_sessions') return Promise.reject(new Error('registry unavailable'))
+    if (method === 'host_sessions' && mode === 'reject') {
+      return Promise.reject(new Error('registry unavailable'))
+    }
+    if (method === 'host_sessions' && mode === 'timeout_ready') {
+      readyPending = true
+      return new Promise<void>((resolve) => { releaseReady = resolve }).then(() => {
+        readyPending = false
+        return original.call(this, method, fields, operation)
+      })
+    }
+    if (method === 'session_membership' && mode === 'timeout_session') {
+      sessionPending = true
+      return new Promise<void>((resolve) => { releaseSession = resolve }).then(() => {
+        sessionPending = false
+        return original.call(this, method, fields, operation)
+      })
+    }
     return original.call(this, method, fields, operation)
   })
   try {
-    const degraded = await load()
-    const summary = await degraded.rpc().board({ view: 'summary', directory: project })
-    expect(summary.project?.goal).toBe('Membership failure safety')
-    expect(summary.has_host_main).toBeUndefined()
+    const rejected = await load()
+    const rejectedSummary = await rejected.rpc().board({ view: 'summary', directory: project })
+    expect(rejectedSummary.project?.goal).toBe('Membership failure safety')
+    expect(rejectedSummary.has_host_main).toBeUndefined()
+
+    mode = 'timeout_ready'
+    const slowReady = await load()
+    const timedOutReady = await slowReady.rpc().board({ view: 'summary', directory: project })
+    expect(readyPending).toBe(true)
+    expect(timedOutReady.project?.goal).toBe('Membership failure safety')
+    expect(timedOutReady.has_host_main).toBeUndefined()
+    mode = 'normal'
+    releaseReady()
+    await until(() => !readyPending, 'delayed host_sessions settled')
+    const afterReady = await slowReady.rpc().board({ view: 'summary', directory: project })
+    expect(afterReady.has_host_main).toBe(true)
+
+    mode = 'timeout_session'
+    const timedOutSession = await slowReady.rpc().board({
+      view: 'summary',
+      sessionID: 'ses_unseen',
+      directory: project,
+    })
+    expect(sessionPending).toBe(true)
+    expect(timedOutSession.has_host_main).toBeUndefined()
+    mode = 'normal'
+    releaseSession()
+    await until(() => !sessionPending, 'delayed session_membership settled')
   } finally {
     spy.mockRestore()
   }

@@ -104,4 +104,13 @@ test("auto adopts a quiet project without an OpenCode main session after confirm
     expect(confirmed.commands.map((c) => c.action)).toEqual(["takeover", "auto"])
     expect(confirmed.commands[1]).toMatchObject({ action: "auto", sessionID: "ses_created", args: { goal: "focus on Y" } })
   } finally { confirmed.dispose() }
+
+  const unknownMembership = harness({
+    board: async () => ({ project: { goal: "Existing quiet project" }, run: { state: "stopped" } }),
+  })
+  try {
+    await unknownMembership.run("auto")
+    expect(unknownMembership.confirms).toHaveLength(0)
+    expect(unknownMembership.commands.map((c) => c.action)).toEqual(["auto"])
+  } finally { unknownMembership.dispose() }
 })

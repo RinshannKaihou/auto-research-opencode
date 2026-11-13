@@ -37,7 +37,8 @@ def test_paused_dispatch_is_non_retryable_until_explicit_resume(tmp_path):
         assert error.details["retryable"] is False
         assert error.details["recovery"] == "explicit_resume"
         assert error.details["allow_fallback"] is False
-        assert "/research resume" in str(error)
+        assert "/research auto" in str(error)
+        assert "/research resume" not in str(error)
     with sqlite3.connect(store.db_path) as db:
         assert db.execute("SELECT COUNT(*) FROM exploration_tasks").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM runtime_budget_reservations").fetchone()[0] == 0

@@ -1405,12 +1405,14 @@ export default Plugin.define({
           const view = String(input.view)
           const data = await research.board(directory, view, input.fields ?? {})
           if (view !== 'summary' || !data?.project_root) return data
-          let membershipReady = true
-          await within(research.ready(), STARTUP_WAIT_MS).catch(() => { membershipReady = false })
-          if (membershipReady && sessionID) {
-            await within(research.confirmMembership(sessionID), STARTUP_WAIT_MS).catch(() => { membershipReady = false })
-          }
           const root = String(data.project_root)
+          let membershipReady =
+            research.inScope(root) &&
+            (await within(research.ready().then(() => true, () => false), STARTUP_WAIT_MS)) === true
+          if (membershipReady && sessionID) {
+            membershipReady =
+              (await within(research.confirmMembership(sessionID).then(() => true, () => false), STARTUP_WAIT_MS)) === true
+          }
           const hasHostMain = membershipReady
             ? research.sessionsIn(root).some((sid) => research.roleOf(sid) === 'main')
             : undefined
