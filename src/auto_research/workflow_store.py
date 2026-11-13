@@ -402,10 +402,17 @@ class WorkflowStore:
                     from .exploration_store import _exploration_mode
                     config = self._project(db)['config']
                     changed_config = False
-                    if _exploration_mode(config) == 'auto' and config.get('exploration_policy') == 'exploration-v1':
-                        config['exploration_policy'] = 'off'
-                        config['conclusion_contract'] = 'legacy-v1'
-                        changed_config = True
+                    if _exploration_mode(config) == 'auto':
+                        if config.get('exploration_policy', 'off') != 'off':
+                            config['exploration_policy'] = 'off'
+                            changed_config = True
+                        if config.get('conclusion_contract', 'legacy-v1') != 'legacy-v1':
+                            config['conclusion_contract'] = 'legacy-v1'
+                            changed_config = True
+                        if config.get('context_policy') == 'memory-r1-v1' and config.get('context_policy_origin') != 'host':
+                            config['context_policy'] = 'memory-v2'
+                            config.pop('context_policy_origin', None)
+                            changed_config = True
                     if 'pending_exploration_question' in config:
                         config.pop('pending_exploration_question', None)
                         changed_config = True
@@ -466,6 +473,15 @@ class WorkflowStore:
                         f"UPDATE workflow_sessions SET {key}=? WHERE session_id=?",
                         (encoded(value) if key == "waiting" else value, session_id),
                     )
+                if (
+                    current["role"] == "main"
+                    and "pause_reason" in fields
+                    and current["pause_reason"] == "awaiting_user"
+                    and fields["pause_reason"] != "awaiting_user"
+                ):
+                    config = self._project(db)["config"]
+                    if config.pop("pending_exploration_question", None) is not None:
+                        self._set_project_config(db, config)
             elif action == "task":
                 if (
                     not current

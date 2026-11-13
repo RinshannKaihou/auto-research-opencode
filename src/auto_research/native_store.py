@@ -544,26 +544,33 @@ class NativeStore(EvidenceConclusionStore, ExplorationStore, ControllerStore, Ad
             if config.get("exploration_policy") == "exploration-v1" and policy != "memory-r1-v1":
                 raise ConflictError("Disable exploration before changing to legacy context")
             value = {"policy_version": policy}
-            if config.get("context_policy", "memory-v2") == policy:
+            if config.get("context_policy", "memory-v2") == policy and config.get("context_policy_origin") != "exploration":
                 return value
             config["context_policy"] = policy
+            if policy == "memory-v2":
+                config.pop("context_policy_origin", None)
+            else:
+                config["context_policy_origin"] = "host"
             self._set_project_config(db, config)
             self._event(db, "context.policy_changed", value)
             return value
 
         return self._mutate("set_context_policy", {"policy": policy}, request_id, work)
 
-    def initialize(self, goal: str, request_id: str) -> dict:
+    def initialize(self, goal: str, request_id: str, *, config: dict | None = None) -> dict:
         payload = {"goal": _text(goal, "goal")}
+        if config is not None:
+            payload["config"] = dict(config)
 
         def work(db: sqlite3.Connection) -> dict:
             if db.execute("SELECT 1 FROM project").fetchone():
                 raise ConflictError("Project is already initialized")
+            initial_config = dict(config) if config is not None else {"exploration_mode": "auto"}
             value = {
                 "project_id": str(uuid4()),
-                **payload,
+                "goal": payload["goal"],
                 "control": "manual",
-                "config": {},
+                "config": initial_config,
                 "created_at": _now(),
             }
             db.execute(

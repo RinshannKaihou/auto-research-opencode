@@ -6523,3 +6523,117 @@ test('orchestrator proactive ask pauses at awaiting_user and user chat reply aut
   host.turn.end('ses_main')
   await until(() => host.said('ses_main').filter((row) => row.resume).length === 3, 'auto-continued after user reply')
 })
+
+test('exploration review regressions: legacy off migration, waiting tool gate, manual ask, and /research auto guidance resume', async () => {
+  // 1) Upgraded legacy DB with explicit exploration_policy='off' (and no exploration_mode) stays off & hides tool.
+  const host = await load({ placement: 'system' })
+  await host.command('init', 'ses_main', { goal: 'Legacy migration and waiting gate check' })
+  const dbPath = join(project, '.research', 'state.sqlite3')
+  const { Database } = await import('bun:sqlite')
+  const db = new Database(dbPath)
+  db.run('UPDATE project SET config = ?', [JSON.stringify({ exploration_policy: 'off' })])
+  db.close()
+
+  const migrated = await host.command('exploration', 'ses_main', { mode: null })
+  expect(migrated.state).toMatchObject({ exploration_mode: 'off', exploration_policy: 'off' })
+  const legacyReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(legacyReq)
+  expect(Object.keys(legacyReq.tools)).not.toContain('research_exploration')
+  await expect(
+    host.call('research_exploration', 'ses_main', { action: 'enable', reason: 'Should fail on legacy off' }),
+  ).rejects.toThrow(/disabled by user policy/i)
+
+  // Opt in to auto on this project, verify manual ask does NOT leave a sticky pending_question after user reply.
+  await host.command('exploration', 'ses_main', { mode: 'auto' })
+  const manualAsked = await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Manual clarification',
+    question: '手动模式下用哪套数据集？',
+    options: ['Dataset A', 'Dataset B'],
+  })
+  expect(manualAsked).toMatchObject({ paused: false, state: 'manual' })
+  await host.prompt('ses_main', '用 Dataset A', 'msg_manual_reply')
+  const manualAfterReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(manualAfterReq)
+  expect(contextText(manualAfterReq)).not.toContain('pending_question')
+  host.turn.end('ses_main')
+
+  // 2) Start autonomous run, enter `wait` on a dispatched node: `research_exploration` is hidden and direct calls
+  //    reject with a clear waiting message (not misleading `/research auto`).
+  await host.command('auto', 'ses_main', { goal: '' })
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 1, 'kickoff')
+  host.turn.start('ses_main')
+  await host.call('research_propose', 'ses_main', {
+    question: 'Q-wait?',
+    why_now: 'Initial work',
+    plan: 'Run node',
+    root_reason: 'Root',
+  })
+  const dispatched = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  await host.call('research_wait', 'ses_main', { task_ids: [dispatched.task_id] })
+
+  const waitReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(waitReq)
+  expect(Object.keys(waitReq.tools)).not.toContain('research_exploration')
+  let waitErr = ''
+  try {
+    await host.call('research_exploration', 'ses_main', { action: 'ask', reason: 'During wait', question: 'Q?' })
+  } catch (error: any) {
+    waitErr = error?.message ?? String(error)
+  }
+  expect(waitErr).toContain('waiting on dispatched node tasks')
+  expect(waitErr).not.toContain('/research auto')
+  host.turn.end('ses_main')
+
+  // Finish node X-001 so main wakes cleanly.
+  const nodeSid = host.created[0]!
+  await host.call('research_publish', nodeSid, {
+    status: 'complete',
+    summary: 'done',
+    items: [{ item_id: 'note', kind: 'text', content: { text: 'ok' } }],
+  })
+  await host.call('research_finish', nodeSid, { state: 'finished', summary: 'done' })
+  host.turn.end(nodeSid)
+  await until(() => host.said('ses_main').some((item) => item.text.includes('节点 X-001 已完成')), 'wake after wait')
+
+  // 3) Pause at `awaiting_user` and resume via `/research auto <guidance>` (both normal and when `note` fails).
+  host.turn.start('ses_main')
+  await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Need route choice',
+    question: '选方案 A 还是方案 B？',
+    options: ['方案 A', '方案 B'],
+  })
+  host.turn.end('ses_main')
+  await Bun.sleep(40)
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('awaiting_user')
+
+  const resumedWithGuidance = await host.command('auto', 'ses_main', { goal: '按方案 B 推进' })
+  expect(resumedWithGuidance.message).toContain('补充指令已记为用户指导')
+  expect(host.said('ses_main').at(-1)?.text).toContain('按方案 B 推进')
+
+  // Ask again, then simulate `note` failure during `/research auto <guidance>`: failure must be surfaced, not swallowed.
+  host.turn.start('ses_main')
+  await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Need threshold confirmation',
+    question: '阈值设 1ms 还是 5ms？',
+    options: ['1ms', '5ms'],
+  })
+  host.turn.end('ses_main')
+  await Bun.sleep(40)
+
+  const originalRequest = StorageClient.prototype.request
+  StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {
+    return method === 'note'
+      ? Promise.reject(new Error('ledger unavailable'))
+      : (originalRequest as any).call(this, method, ...rest)
+  } as typeof originalRequest
+  cleanups.push(() => {
+    StorageClient.prototype.request = originalRequest
+  })
+
+  const resumedNoteFailed = await host.command('auto', 'ses_main', { goal: '阈值用 1ms' })
+  expect(resumedNoteFailed.message).toContain('没能记入研究记录（ledger unavailable）')
+  expect(host.said('ses_main').at(-1)?.text).toContain('阈值用 1ms')
+})

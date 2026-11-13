@@ -113,13 +113,15 @@ def _exploration_mode(config):
     mode = config.get("exploration_mode")
     if mode in {"auto", "on", "off"}:
         return mode
-    return "on" if config.get("exploration_policy") == "exploration-v1" else "auto"
+    return "on" if config.get("exploration_policy") == "exploration-v1" else "off"
 
 
 def _activate_exploration(store, db, run, config, *, mode=None):
     if mode is not None:
         config["exploration_mode"] = mode
     config["exploration_policy"] = "exploration-v1"
+    if config.get("context_policy", "memory-v2") != "memory-r1-v1":
+        config["context_policy_origin"] = "exploration"
     config["context_policy"] = "memory-r1-v1"
     if db.execute('PRAGMA user_version').fetchone()[0] >= 14:
         config["conclusion_contract"] = "evidence-v1"
@@ -430,6 +432,21 @@ class ExplorationStore:
         def work(db):
             require_controller(db)
             run = _main(db, host, session)
+            actor_row = db.execute(
+                "SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?",
+                (host, session),
+            ).fetchone()
+            if (
+                actor_row
+                and not actor_row["detached"]
+                and actor_row["role"] == "main"
+                and run["state"] == "running"
+                and actor_row["pause_reason"] == "wait"
+            ):
+                raise ConflictError(
+                    "Cannot change exploration or ask a blocking question while waiting on dispatched node tasks; "
+                    "wait for node results first"
+                )
             require_new_work(db, host, session, manual=True, waiting=False, role="main")
             config = self._project(db)["config"]
             mode = _exploration_mode(config)
@@ -475,12 +492,16 @@ class ExplorationStore:
                     raise ValidationError("options must be a list of at most 8 nonempty strings")
                 options = [_text(item, "option") for item in raw_options]
             asked_at = now()
+            paused = run["state"] == "running"
             record = {"generation": run["generation"], "question": question, "reason": reason,
                       "options": options, "asked_at": asked_at, "actor": actor}
-            config["pending_exploration_question"] = record
-            self._set_project_config(db, config)
+            if paused:
+                config["pending_exploration_question"] = record
+                self._set_project_config(db, config)
+            elif "pending_exploration_question" in config:
+                config.pop("pending_exploration_question", None)
+                self._set_project_config(db, config)
             self._event(db, "exploration.question_asked", record)
-            paused = run["state"] == "running"
             if paused:
                 db.execute("UPDATE workflow_sessions SET pause_reason='awaiting_user',waiting='[]' "
                            "WHERE host_id=? AND session_id=?", (host, session))

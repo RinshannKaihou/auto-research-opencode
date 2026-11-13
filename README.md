@@ -2,7 +2,7 @@
 
 **当前版本：v0.2.7**（2026-11-13），实验版本。已审阅一次真实模型研究实例；v0.1.1 针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前源码包含 R1／R2、运行控制修复和 E1／E2／E3，数据库使用 schema 16。R2 已完成窄写工具、已交付基线 CAS、候选／审阅义务、关系与采用记录、持久自主调度预算及调用观测。E1／E2 提供探索循环与证据结项（默认 `auto` 由主协调按任务自主决定是否启用或主动询问，也可手动 `on`／`off`），E3 扩展多范围、共同计划投入、异步比较、组合与恢复；本轮验证见 [E3 工程记录](docs/evidence/e3-multiroute/README.md)，真实模型质量／成本配对效果未验证。使用方式见 [plugin/README.md](plugin/README.md)。R2 和运行控制验证与边界分别见 [R2 实施记录](docs/evidence/r2-runtime/README.md)和[运行控制验证记录](docs/evidence/runtime-control/README.md)。
+当前源码包含 R1／R2、运行控制修复和 E1／E2／E3，数据库使用 schema 16。R2 已完成窄写工具、已交付基线 CAS、候选／审阅义务、关系与采用记录、持久自主调度预算及调用观测。E1／E2 提供探索循环与证据结项（新建项目默认 `auto` 由主协调按任务自主决定是否启用或主动询问，也可手动 `on`／`off`；升级前的既有项目保留原开关状态），E3 扩展多范围、共同计划投入、异步比较、组合与恢复；本轮验证见 [E3 工程记录](docs/evidence/e3-multiroute/README.md)，真实模型质量／成本配对效果未验证。使用方式见 [plugin/README.md](plugin/README.md)。R2 和运行控制验证与边界分别见 [R2 实施记录](docs/evidence/r2-runtime/README.md)和[运行控制验证记录](docs/evidence/runtime-control/README.md)。
 
 给出一个研究目标，插件就在 OpenCode V2 里驱动模型自己完成规划、派发、实验、综合和收尾，中间不需要你再发消息。你可以随时插话指导，也可以暂停或停止。研究中的节点、发布材料、知识和依据都记在项目目录的研究记录里，中断后能接着做，每条结论都能追到来源。
 

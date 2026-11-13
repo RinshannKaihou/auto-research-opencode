@@ -1823,7 +1823,7 @@ class MemoryStore:
                                     "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
         project_block = {"goal": project["goal"], "control": project["control"], "run_state": run_state,
                          "pause_reason": pause_reason}
-        if project["config"].get("pending_exploration_question"):
+        if pause_reason == "awaiting_user" and project["config"].get("pending_exploration_question"):
             project_block["pending_question"] = project["config"]["pending_exploration_question"]
         blocks = [
             ("project", project_block),

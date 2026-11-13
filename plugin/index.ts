@@ -882,8 +882,8 @@ export default Plugin.define({
           needsResearchTools = ['running', 'manual'].includes(run) && !pause
           const explorationPolicy = state.project?.config?.exploration_policy
           const explorationMode = state.project?.config?.exploration_mode
-            ?? (explorationPolicy === 'exploration-v1' ? 'on' : 'auto')
-          if (explorationMode === 'off') delete request.tools.research_exploration
+            ?? (explorationPolicy === 'exploration-v1' ? 'on' : 'off')
+          if (explorationMode === 'off' || pause === 'wait') delete request.tools.research_exploration
           else if (explorationPolicy === 'exploration-v1' && request.tools.research_exploration) {
             const spec = TOOLS.find(tool => tool.name === 'research_exploration')!.parameters
             const askOnly = {

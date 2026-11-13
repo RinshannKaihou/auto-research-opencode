@@ -1313,8 +1313,14 @@ export class Engine {
       if (run === "running") {
         if (guidance) {
           if (state.workflow?.session?.pause_reason === "awaiting_user") {
-            await this.call("note", main, guidanceNote(guidance)).catch(() => {})
-            return this.resumeLocked(root, main, state)
+            if (this.busy.has(main)) {
+              throw new Error("主会话这一轮还没结束，补充指令没有发送；等这一轮结束后再执行 /research auto。")
+            }
+            let noteError = ""
+            await this.call("note", main, guidanceNote(guidance)).catch((error) => {
+              noteError = error instanceof Error ? error.message : String(error)
+            })
+            return this.resumeLocked(root, main, state, guidance, noteError)
           }
           throw new Error("自主研究已经在运行，补充指令没有发送；请直接在主会话里发消息，会记为用户指导。")
         }
@@ -1414,7 +1420,13 @@ export class Engine {
     })
   }
 
-  private async resumeLocked(root: string, main: string, state: any): Promise<CommandResult> {
+  private async resumeLocked(
+    root: string,
+    main: string,
+    state: any,
+    guidance = "",
+    noteError = "",
+  ): Promise<CommandResult> {
     const run = state.workflow?.run?.state
     if (!["paused", "cold", "running"].includes(run)) {
       throw new Error(`项目状态是「${run}」；用 /research auto 开始。`)
@@ -1448,6 +1460,7 @@ export class Engine {
     if (run !== "running") await this.call("workflow", main, { action: "run", fields: { state: "running" } })
     const resumed: string[] = []
     const skipped: string[] = []
+    let mainPromptSent = false
     for (const member of members) {
       const target = candidate(member, await this.state(member))
       if (!target) continue
@@ -1473,13 +1486,29 @@ export class Engine {
       await this.useModel(root, member)
       this.retried.delete(member)
       this.idle.delete(member)
-      if (!waitingExternal && !this.busy.has(member)) await this.continueSession(member, await this.state(member), "自主研究已恢复。")
+      if (!waitingExternal && !this.busy.has(member)) {
+        const reason = member === main && guidance
+          ? `自主研究已恢复。\n本轮附带用户指导（项目目标不变），请遵循：\n${guidance}\n`
+          : "自主研究已恢复。"
+        await this.continueSession(member, await this.state(member), reason)
+        if (member === main) mainPromptSent = true
+      }
       resumed.push(member)
     }
     await this.deliver(root)
     await this.schedule(root)
     this.research.notifyChanged(root)
-    return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}`, sessionID: main }
+    let filed = ""
+    if (guidance && mainPromptSent) {
+      filed = noteError
+        ? `补充指令写进了恢复消息，但没能记入研究记录（${noteError}）。`
+        : "补充指令已记为用户指导。"
+    } else if (guidance) {
+      filed = noteError
+        ? `补充指令没能记入研究记录（${noteError}），恢复消息也未发出，请在主会话里重新发送这段指令。`
+        : "补充指令已记为用户指导；但主会话恢复消息未发出，模型将从研究上下文里读到这段指令。"
+    }
+    return { message: `已恢复自主研究（${resumed.length} 个会话继续）。${filed}${skipped.length ? `\n待处理：\n${skipped.join('\n')}` : ''}`, sessionID: main }
   }
 
   stop(sessionID: string | null, directory: string): Promise<CommandResult> {

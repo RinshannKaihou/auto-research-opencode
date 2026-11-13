@@ -188,7 +188,7 @@ def test_orchestrator_ask_pauses_awaiting_user_and_resumes_cleanly(tmp_path):
     assert noop == {"resumed": False, "reason": "not_awaiting_user"}
     assert ledger_counts(host.root) == before_counts
 
-    # In manual mode, ask records the question without setting a running pause.
+    # In manual mode, ask records the question without setting a running pause or sticky pending_question.
     manual_ask = host.call(
         "exploration_orchestrate",
         model_call=True,
@@ -201,6 +201,13 @@ def test_orchestrator_ask_pauses_awaiting_user_and_resumes_cleanly(tmp_path):
     )
     assert manual_ask["paused"] is False
     assert manual_ask["state"] == "manual"
+    manual_blocks_before = sections(host.call("memory_context", max_chars=12000, profile="opencode-auto"))
+    assert "pending_question" not in manual_blocks_before["project"]
+    host.call("focus", node_id=None, role="planner", mode="manual")
+    host.call("note", body="用户指导：p99 latency", kind="correction")
+    assert host.call("runtime_resume_awaiting_user") == {"resumed": False, "reason": "not_awaiting_user"}
+    manual_blocks_after = sections(host.call("memory_context", max_chars=12000, profile="opencode-auto"))
+    assert "pending_question" not in manual_blocks_after["project"]
 
     # Start running, then ask during autonomous execution.
     host.call("workflow", action="run", fields={"state": "running"})
@@ -274,20 +281,110 @@ def test_auto_mode_resets_per_generation_while_on_mode_persists(tmp_path):
 
     host.call("workflow", action="run", fields={"state": "stopped"})
 
-    # Generation 1 under auto mode starts fresh with exploration_policy='off' and legacy-v1.
+    # Generation 1 under auto mode starts fresh with exploration_policy='off', memory-v2, and legacy-v1.
     gen1 = host.call("workflow", action="run", fields={"state": "running", "new_generation": True})
     assert gen1["run"]["generation"] == 1
     pol1 = host.call("exploration_policy", mode=None)
     assert pol1["exploration_mode"] == "auto"
     assert pol1["exploration_policy"] == "off"
+    assert pol1["context_policy"] == "memory-v2"
     assert pol1["conclusion_contract"] == "legacy-v1"
+    assert host.call("context_policy")["policy_version"] == "memory-v2"
+
+    # Standalone host context_policy='memory-r1-v1' probe is preserved across new_generation when exploration stayed off.
+    host.call("context_policy", policy="memory-r1-v1")
+    host.call("workflow", action="run", fields={"state": "stopped"})
+    host.call("workflow", action="run", fields={"state": "running", "new_generation": True})
+    assert host.call("context_policy")["policy_version"] == "memory-r1-v1"
+    host.call("context_policy", policy="memory-v2")
 
     # Explicit user 'on' mode persists across generations.
     host.call("exploration_policy", mode="on")
     host.call("workflow", action="run", fields={"state": "stopped"})
     gen2 = host.call("workflow", action="run", fields={"state": "running", "new_generation": True})
-    assert gen2["run"]["generation"] == 2
+    assert gen2["run"]["generation"] == 3
     pol2 = host.call("exploration_policy", mode=None)
     assert pol2["exploration_mode"] == "on"
     assert pol2["exploration_policy"] == "exploration-v1"
+    assert pol2["context_policy"] == "memory-r1-v1"
     assert pol2["conclusion_contract"] == "evidence-v1"
+
+
+def test_legacy_config_without_exploration_mode_preserves_off_and_on(tmp_path):
+    import json
+    import sqlite3
+
+    host = Host(tmp_path)
+    host.open()
+    host.call("workflow", action="run", fields={"state": "running"})
+
+    # Simulate an upgraded v0.2.7 project where the user had explicitly run `/research exploration off`
+    # (persisted `{"exploration_policy": "off"}` with no `exploration_mode`).
+    with sqlite3.connect(host.root / ".research/state.sqlite3") as db:
+        db.execute("UPDATE project SET config=?", (json.dumps({"exploration_policy": "off"}),))
+        db.commit()
+
+    legacy_off = host.call("exploration_policy", mode=None)
+    assert legacy_off["exploration_mode"] == "off"
+    assert legacy_off["exploration_policy"] == "off"
+    store = NativeStore(host.root)
+    with store._read() as db:
+        assert contract_versions(store, db, host.host_id, "ses_main")["exploration_mode"] == "off"
+    ctx_off = host.call("memory_context", max_chars=12000, profile="opencode-auto")
+    assert ctx_off["exploration_mode"] == "off"
+    assert "Exploration control is auto" not in sections(ctx_off)["role_instructions"]
+    assert "disabled by user policy" in host.error(
+        "exploration_orchestrate",
+        model_call=True,
+        fields={"action": "enable", "reason": "Must stay blocked on upgraded off project"},
+    )
+    assert "disabled by user policy" in host.error(
+        "exploration_orchestrate",
+        model_call=True,
+        fields={"action": "ask", "reason": "Must stay blocked", "question": "Proceed?"},
+    )
+
+    # Simulate an upgraded pre-v0.2.8 project with empty `{}` config: also stays off conservatively.
+    with sqlite3.connect(host.root / ".research/state.sqlite3") as db:
+        db.execute("UPDATE project SET config='{}'")
+        db.commit()
+    assert host.call("exploration_policy", mode=None)["exploration_mode"] == "off"
+
+    # Simulate an upgraded v0.2.7 project where exploration was explicitly enabled.
+    with sqlite3.connect(host.root / ".research/state.sqlite3") as db:
+        db.execute(
+            "UPDATE project SET config=?",
+            (json.dumps({"exploration_policy": "exploration-v1", "context_policy": "memory-r1-v1"}),),
+        )
+        db.commit()
+    legacy_on = host.call("exploration_policy", mode=None)
+    assert legacy_on["exploration_mode"] == "on"
+    assert legacy_on["exploration_policy"] == "exploration-v1"
+
+
+def test_waiting_session_rejects_exploration_orchestrate_without_misleading_auto_hint(tmp_path):
+    host = Host(tmp_path)
+    host.open()
+    host.call("workflow", action="run", fields={"state": "running"})
+    node = host.call(
+        "propose",
+        model_call=True,
+        question="Background node question",
+        why_now="Need initial probe",
+        plan="Run background task",
+        root_reason="Initial work",
+    )
+    task = host.call("workflow", action="task", fields={"node_id": node["node_id"]})
+    host.call("workflow", action="session", fields={"pause_reason": "wait", "waiting": [task["task_id"]]})
+
+    for action, extra in (
+        ("enable", {}),
+        ("ask", {"question": "Interrupt wait?"}),
+    ):
+        err = host.error(
+            "exploration_orchestrate",
+            model_call=True,
+            fields={"action": action, "reason": "Called while waiting", **extra},
+        )
+        assert "waiting on dispatched node tasks" in err
+        assert "/research auto" not in err
