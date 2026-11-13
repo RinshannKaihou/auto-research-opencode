@@ -1,5 +1,21 @@
 # 版本记录
 
+## v0.2.7 · 2026-11-13
+
+版本字符串自 v0.2.6 更新。下面只记 v0.2.6 之后合进 main 的改动：#43（feat: trim user-facing /research slash command surface，合并提交 e6799d3）。
+
+**升级注意**
+- **行为变化：** 用户能直接输入的 `/research` 斜杠命令收成：无参数 `/research`（打开只读看板），以及 `auto`、`pause`、`stop`、`budget`、`exploration`、`recover`、`help`。下列顶层子命令会报未知子命令，不再执行：`board`、`resume`、`init`、`status`、`context-policy`、`conclusion-contract`、`guidance`、`detach`、`retry`、`takeover`、`work`。
+- **`/research resume` 已移除，改用 `/research auto`。** 项目处于暂停或冷启动，或项目仍显示运行但有受管会话因中断、无进展、出错或预算暂停而停下时，不带参数的 `/research auto` 继续当前这一代：不清运行预算，也不另开 generation。预算已经到限时，先用 `/research budget` 显式提额，再执行 `/research auto`；只输入 auto 清不掉预算暂停。普通聊天消息仍然不会恢复自动推进。已经结束的工作段不能靠 `/research auto` 重开，新的节点工作仍要显式排进新的工作段。
+- 只建立项目、先调预算或开启探索：用 `/research auto --pause <研究目标>`。它不能用来暂停已经在跑的研究；暂停仍是 `/research pause`。
+- 目录里已有停下的项目（手动、已停止或已结项），但还没有 OpenCode 主会话时，`/research auto` 会先要求确认单向接管，接管成功后再继续。只接管、不启动，用 `/research recover takeover`。节点重试用 `/research recover retry <任务 ID> <原因>`。顶层 `/research takeover` 和 `/research retry` 已移除。项目还在运行时不会从这里接管，需先在原宿主停下。
+- 只读诊断改由无参数 `/research` 看板和侧栏呈现，包括控制器、未核实的报告或唤醒投递、未核实执行、是否已有宿主主会话、事件修复和会话位置警告。成员关系读取失败或超时时，不显示「没有主会话」，避免误提示接管。顶层 `/research status` 和 `/research board` 已移除。v0.2.6 升级注意里写的「显式 `/research resume`」「`/research status` 会附上位置说明」「`/research takeover`」改按本条的命令执行。会话位置仍不对时，还是把**同一个会话**移回注册根目录、等宿主位置真正变了、核对执行状态，再用 `/research auto`；位置仍不对时，恢复会在改控制状态或预留新轮次之前拒绝。
+- 暂停时的运行提示、位置诊断（`research_session_location`）和工具入口缺失（`research_tool_entry_unavailable`）已改为指向 `/research auto`。
+- `status`、`resume`、`detach`、`context-policy`、`conclusion-contract` 仍留在内部 RPC，供既有探针和测试调用，不再是用户斜杠命令。单独切换结项契约或读取策略不再占用顶层命令。
+- 没有 schema 变更。控制器归属、执行授权、checkpoint、待收尾和 tail 收尾语义保持原样。#43 没有部署，也没有改过真实研究会话、研究库或共享 OpenCode 后台。宿主兼容声明不变：`@opencode/plugin` 仍锁定 2.2.5，README 仍是至 2.2.5（含）。
+
+当前用法以 README 和 [plugin/README.md](plugin/README.md) 的命令表为准；这两处已在 #43 改成上述命令。更早的版本记录和证据文档仍按当时的命令记载。
+
 ## v0.2.6 · 2026-11-10
 
 版本字符串自 v0.2.5 更新。下面只记 v0.2.5 之后合进 main 的改动：#40（fix: guard research sessions against workspace location drift，合并提交 65d4d90）。
