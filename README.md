@@ -1,6 +1,6 @@
 # Auto Research · OpenCode V2 自主研究插件
 
-**当前版本：v0.2.6**（2026-11-10），实验版本。已审阅一次真实模型研究实例；v0.1.1 针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+**当前版本：v0.2.7**（2026-11-13），实验版本。已审阅一次真实模型研究实例；v0.1.1 针对该实例修复 checkpoint 归属和结项要求，并通过假宿主与真实研究记录的回归测试及独立打包启动测试，尚未完整重跑真实模型研究。版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 当前源码包含 R1／R2、运行控制修复和 E1／E2／E3，数据库使用 schema 16。R2 已完成窄写工具、已交付基线 CAS、候选／审阅义务、关系与采用记录、持久自主调度预算及调用观测。E1／E2 提供显式启用的探索循环与证据结项，E3 扩展多范围、共同计划投入、异步比较、组合与恢复；本轮验证见 [E3 工程记录](docs/evidence/e3-multiroute/README.md)，真实模型质量／成本配对效果未验证。使用方式见 [plugin/README.md](plugin/README.md)。R2 和运行控制验证与边界分别见 [R2 实施记录](docs/evidence/r2-runtime/README.md)和[运行控制验证记录](docs/evidence/runtime-control/README.md)。
 
@@ -250,7 +250,7 @@ R2 修复写入契约、审阅任务生命周期和受管自动推进，不自�
 - **DSH 版已停止维护**：DSH 版停在 0.6.11，不再开发。两边的代码从此各自维护，新功能只进这个仓库。
 - **接管 DSH 建的项目**：在项目目录里直接运行 `/research auto`（按提示确认接管并继续），或用 `/research recover takeover` 仅接管不启动；项目必须先在 DSH 里停下。接管是**单向**的：原来的 DSH 主会话会被移出项目，之后由 OpenCode 继续。同一个项目不要同时在 DSH 和 OpenCode 里打开。
 
-| | DSH 版 0.6.11 | OpenCode 版 v0.2.6 |
+| | DSH 版 0.6.11 | OpenCode 版 v0.2.7 |
 |---|---|---|
 | 宿主与界面 | DSH 网页版，浏览器里的 Research 工作台 | OpenCode V2 终端界面，全屏看板加侧栏和状态条 |
 | 开始研究 | `/research init <目标>`，再 `/research auto` | 一条 `/research auto <目标>`，在首页就能用（需要预先调参可用 `--pause`） |
