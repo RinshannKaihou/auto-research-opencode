@@ -6595,6 +6595,7 @@ test('exploration review regressions: legacy off migration, waiting tool gate, m
   await host.call('research_finish', nodeSid, { state: 'finished', summary: 'done' })
   host.turn.end(nodeSid)
   await until(() => host.said('ses_main').some((item) => item.text.includes('节点 X-001 已完成')), 'wake after wait')
+  await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason == null, 'wait cleared')
 
   // 3) Pause at `awaiting_user` and resume via `/research auto <guidance>` (both normal and when `note` fails).
   host.turn.start('ses_main')
@@ -6605,8 +6606,30 @@ test('exploration review regressions: legacy off migration, waiting tool gate, m
     options: ['方案 A', '方案 B'],
   })
   host.turn.end('ses_main')
-  await Bun.sleep(40)
-  expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('awaiting_user')
+  await until(
+    async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'awaiting_user',
+    'awaiting_user set 1',
+  )
+
+  // Inject failure on `runtime_resume_awaiting_user` during an ordinary chat reply: failure notice + `/research auto`
+  // manual recovery instruction must be surfaced rather than silently swallowed, while `awaiting_user` remains intact.
+  const baseReq = StorageClient.prototype.request
+  StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {
+    return method === 'runtime_resume_awaiting_user'
+      ? Promise.reject(new Error('resume rpc unavailable'))
+      : (baseReq as any).call(this, method, ...rest)
+  } as typeof baseReq
+  try {
+    await host.prompt('ses_main', '尝试直接回复但恢复失败', 'msg_resume_fail')
+    host.turn.end('ses_main')
+    const failNotice = host.said('ses_main').at(-1)
+    expect(failNotice?.resume).toBe(false)
+    expect(failNotice?.text).toContain('自动恢复研究失败（resume rpc unavailable）')
+    expect(failNotice?.text).toContain('/research auto')
+    expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('awaiting_user')
+  } finally {
+    StorageClient.prototype.request = baseReq
+  }
 
   const resumedWithGuidance = await host.command('auto', 'ses_main', { goal: '按方案 B 推进' })
   expect(resumedWithGuidance.message).toContain('补充指令已记为用户指导')
@@ -6621,7 +6644,10 @@ test('exploration review regressions: legacy off migration, waiting tool gate, m
     options: ['1ms', '5ms'],
   })
   host.turn.end('ses_main')
-  await Bun.sleep(40)
+  await until(
+    async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'awaiting_user',
+    'awaiting_user set 2',
+  )
 
   const originalRequest = StorageClient.prototype.request
   StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {

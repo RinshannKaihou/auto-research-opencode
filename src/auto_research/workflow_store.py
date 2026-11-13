@@ -409,7 +409,7 @@ class WorkflowStore:
                         if config.get('conclusion_contract', 'legacy-v1') != 'legacy-v1':
                             config['conclusion_contract'] = 'legacy-v1'
                             changed_config = True
-                        if config.get('context_policy') == 'memory-r1-v1' and config.get('context_policy_origin') != 'host':
+                        if config.get('context_policy') == 'memory-r1-v1' and config.get('context_policy_origin') == 'exploration':
                             config['context_policy'] = 'memory-v2'
                             config.pop('context_policy_origin', None)
                             changed_config = True

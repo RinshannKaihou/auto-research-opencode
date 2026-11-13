@@ -993,16 +993,32 @@ export class Engine {
       return Promise.resolve(false)
     }
     return this.serial(root, async () => {
-      const result = await this.call<any>("runtime_resume_awaiting_user", sessionID)
-      if (result?.resumed) {
-        this.retried.delete(sessionID)
-        this.idle.delete(sessionID)
-        this.pendingScheduleOnEnd.add(sessionID)
-        this.research.invalidateMemory(root)
-        this.research.notifyChanged(root)
-        return true
+      try {
+        const result = await this.call<any>("runtime_resume_awaiting_user", sessionID)
+        if (result?.resumed) {
+          this.retried.delete(sessionID)
+          this.idle.delete(sessionID)
+          this.pendingScheduleOnEnd.add(sessionID)
+          this.research.invalidateMemory(root)
+          this.research.notifyChanged(root)
+          return true
+        }
+        return false
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        const stillAwaiting = await this.state(sessionID)
+          .then((s) => s.workflow?.run?.state === "running" && s.workflow?.session?.pause_reason === "awaiting_user")
+          .catch(() => true)
+        if (stillAwaiting) {
+          await this.say(
+            sessionID,
+            `自动恢复研究失败（${detail}）；主会话仍处于等待用户回复状态，请执行 /research auto 手动恢复。`,
+            false,
+            "自动恢复失败",
+          ).catch(() => {})
+        }
+        return false
       }
-      return false
     })
   }
 

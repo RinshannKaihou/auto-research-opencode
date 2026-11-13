@@ -361,6 +361,16 @@ def test_legacy_config_without_exploration_mode_preserves_off_and_on(tmp_path):
     assert legacy_on["exploration_mode"] == "on"
     assert legacy_on["exploration_policy"] == "exploration-v1"
 
+    # Simulate an upgraded v0.2.7 project where host set `context_policy='memory-r1-v1'` WITHOUT exploration
+    # (no `context_policy_origin`): switching to `auto` and starting a new generation preserves `memory-r1-v1`.
+    with sqlite3.connect(host.root / ".research/state.sqlite3") as db:
+        db.execute("UPDATE project SET config=?", (json.dumps({"context_policy": "memory-r1-v1"}),))
+        db.commit()
+    host.call("exploration_policy", mode="auto")
+    host.call("workflow", action="run", fields={"state": "stopped"})
+    host.call("workflow", action="run", fields={"state": "running", "new_generation": True})
+    assert host.call("context_policy")["policy_version"] == "memory-r1-v1"
+
 
 def test_waiting_session_rejects_exploration_orchestrate_without_misleading_auto_hint(tmp_path):
     host = Host(tmp_path)

@@ -185,7 +185,7 @@ export default Plugin.define({
         catch { /* A finished work segment has no writable note target; the native message is still persisted. */ }
       }
       if (research.roleOf(sessionID) === 'main') {
-        await engine.resumeAwaitingUser(sessionID).catch(() => {})
+        await engine.resumeAwaitingUser(sessionID)
       }
     }
     let observeSpecialist: ((event: any) => void) | undefined
@@ -1151,7 +1151,7 @@ export default Plugin.define({
           catch { /* Without an open work segment there is nowhere to file the note; the message still goes through. */ }
         }
         if (role === "main" && (text.length > 0 || attachments > 0)) {
-          await engine.resumeAwaitingUser(input.sessionID).catch(() => {})
+          await engine.resumeAwaitingUser(input.sessionID)
         }
       } catch {
         // Without an open work segment there is nowhere to file the note; the message still goes through.

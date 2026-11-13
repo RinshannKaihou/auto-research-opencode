@@ -401,6 +401,8 @@ class ExplorationStore:
                 config.pop("pending_exploration_question", None)
             else:
                 config["exploration_mode"] = "auto"
+                if before["exploration_policy"] == "exploration-v1" and config.get("context_policy") == "memory-r1-v1":
+                    config.setdefault("context_policy_origin", "exploration")
                 if run["state"] == "complete" or not _scopes(db, run["generation"]):
                     config["exploration_policy"] = "off"
             self._set_project_config(db, config)
