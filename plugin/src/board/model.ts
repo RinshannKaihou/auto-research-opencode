@@ -3,7 +3,7 @@
  * delivery and scientific state stay separate: an ended work segment, a
  * complete publication and a knowledge status are never merged into "done".
  */
-import { OUTCOMES, REVIEWS, conclusionLines, pauseReason, roleName, runState } from "../format"
+import { OUTCOMES, REVIEWS, conclusionLines, controlRecoveryLines, pauseReason, roleName, runState } from "../format"
 
 export type Tab = "overview" | "process" | "knowledge" | "materials" | "runtime" | "review"
 
@@ -133,6 +133,19 @@ export interface OverviewModel {
   presentationError?: string
 }
 
+export function recoveryNotices(summary: any): string[] {
+  if (!summary?.project) return []
+  return controlRecoveryLines(
+    { run: summary.run, controller: summary.controller, deliveries: summary.deliveries, unverified: summary.unverified },
+    {
+      boardHint: "还有未核实执行，见「2 研究 → v 运行会话」。",
+      eventMessage: summary.event_recovery?.message,
+      locationWarning: summary.location_warning,
+      resourceLeases: summary.runtime_budget?.exploration?.resource_leases,
+    },
+  )
+}
+
 export function overviewModel(summary: any, presentation: any): OverviewModel | null {
   if (!summary?.project) return null
   const counts = summary.counts ?? {}
@@ -147,7 +160,7 @@ export function overviewModel(summary: any, presentation: any): OverviewModel | 
     runState: summary.run?.state,
     runLabel: runState(summary.run?.state),
     runNote: RUN_NOTE,
-    notices: conclusion ? [] : conclusionLines(null, summary.run?.state),
+    notices: [...recoveryNotices(summary), ...(conclusion ? [] : conclusionLines(null, summary.run?.state))],
     conclusion: conclusion
       ? {
           outcome: conclusion.outcome,

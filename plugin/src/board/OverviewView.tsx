@@ -83,7 +83,7 @@ export function OverviewView(props: { context: Context; model: OverviewModel | n
   return (
     <Show
       when={props.model}
-      fallback={<text fg={colors.muted}>{"当前目录没有研究项目。用 /research init <研究目标> 新建。"}</text>}
+      fallback={<text fg={colors.muted}>{"当前目录没有研究项目。用 /research auto <研究目标> 开始。"}</text>}
     >
       {(model) => {
         const execution = () => runExecution(model().runState)

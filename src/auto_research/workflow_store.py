@@ -243,11 +243,13 @@ class WorkflowStore:
         token = CURRENT_CONTROLLER.get()
         candidate = db.execute("SELECT 1 FROM workflow_intents WHERE intent_id=? AND kind='controller_candidate' AND state='pending'",
                                (candidate_id(session_id, token.get('epoch'), token.get('binding')),)).fetchone() if isinstance(token, dict) else None
+        delivery_session = session_id if session_id is not None else (row["main_session_id"] if row else None)
         deliveries = []
-        for delivery in db.execute("SELECT kind,state,details FROM workflow_intents WHERE session_id=? AND kind IN ('notification_delivery','notification_wake') AND state='submitting' ORDER BY updated_at LIMIT 50", (session_id,)):
-            details = json.loads(delivery['details'])
-            deliveries.append({'kind': 'report' if delivery['kind'] == 'notification_delivery' else 'wake',
-                               'state': 'unverified', 'notification_id': details['notification_id'], 'message_id': details['message_id']})
+        if delivery_session:
+            for delivery in db.execute("SELECT kind,state,details FROM workflow_intents WHERE session_id=? AND kind IN ('notification_delivery','notification_wake') AND state='submitting' ORDER BY updated_at LIMIT 50", (delivery_session,)):
+                details = json.loads(delivery['details'])
+                deliveries.append({'kind': 'report' if delivery['kind'] == 'notification_delivery' else 'wake',
+                                   'state': 'unverified', 'notification_id': details['notification_id'], 'message_id': details['message_id']})
         unverified = {
             'tasks': [dict(item) for item in db.execute("SELECT task_id,node_id FROM exploration_tasks WHERE state='unverified' ORDER BY updated_at,task_id LIMIT 50")],
             'specialists': [dict(item) for item in db.execute("SELECT task_id,node_id FROM specialist_tasks WHERE state='unverified' ORDER BY updated_at,task_id LIMIT 50")],

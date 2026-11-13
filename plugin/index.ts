@@ -276,8 +276,8 @@ export default Plugin.define({
       }
       const state = eventGap ? 'gap' : held ? 'held' : unresolved ? 'unresolved' : 'ready'
       const message = state === 'ready' ? undefined : state === 'unresolved'
-        ? `有 ${unresolved} 个事件会话归属待核对；已知会话继续按原授权控制。用 /research resume 重试核对。`
-        : `研究事件需核对（${eventGap ? '事件流中断或溢出；' : ''}暂存 ${held} 条）；暂停和停止仍可用，用 /research resume 重新订阅并核对。`
+        ? `有 ${unresolved} 个事件会话归属待核对；已知会话继续按原授权控制。用 /research auto 重试核对。`
+        : `研究事件需核对（${eventGap ? '事件流中断或溢出；' : ''}暂存 ${held} 条）；暂停和停止仍可用，用 /research auto 重新订阅并核对。`
       return { state, held, unresolved, ...(message ? {message} : {}) }
     }
     notifyEventState = () => { for (const root of research.roots()) if (research.inScope(root)) emitChanged(root) }
@@ -286,7 +286,7 @@ export default Plugin.define({
     let bootstrap: () => Promise<void> = async () => { throw new Error('Controller not initialized') }
     const verifyController = async (sessionID: string, reducingOrReading = false) => {
       requireCurrent()
-      if (!reducingOrReading && (eventGap || failedEvents.has(sessionID))) throw Object.assign(new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume'), { code: 'research_events_need_check' })
+      if (!reducingOrReading && (eventGap || failedEvents.has(sessionID))) throw Object.assign(new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research auto'), { code: 'research_events_need_check' })
       const root = research.rootOf(sessionID) ?? research.scope
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
       if (!main || !research.inScope(root)) throw new Error('Research controller scope is unavailable')
@@ -668,13 +668,13 @@ export default Plugin.define({
       // A started event may already be buffered while setup is completing.
       // Consume it before a node asks to finish that execution.
       await waitEvents(call.sessionID)
-      if (tool.writes && (eventGap || failedEvents.has(call.sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research resume')
+      if (tool.writes && (eventGap || failedEvents.has(call.sessionID))) throw new Error('研究事件需核对；停止和暂停仍可用，核对后可 /research auto')
       if (tool.writes) requireCurrent()
       const sessionID = call.sessionID as string
       await research.confirmMembership(sessionID)
       await assertLocation(sessionID)
       if (!research.isAssociated(sessionID)) {
-        throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
+        throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research recover takeover 接管。")
       }
       const root = research.rootOf(sessionID)!
       const main = research.sessionsIn(root).find(sid => research.roleOf(sid) === 'main')
@@ -1247,8 +1247,21 @@ export default Plugin.define({
       return { id: value.id, providerID: value.providerID, ...(typeof value.variant === "string" ? { variant: value.variant } : {}) }
     }
 
+    const USER_COMMAND_LABELS: Record<string, string> = {
+      budget: "/research budget",
+      exploration: "/research exploration",
+      recover: "/research recover",
+      init: "/research auto --pause",
+      takeover: "/research recover takeover",
+      retry: "/research recover retry",
+      resume: "/research auto",
+    }
+
     function needsSession(sessionID: string | null, action: string): string {
-      if (!sessionID) throw new Error(`请先进入一个会话，再使用 /research ${action}。`)
+      if (!sessionID) {
+        const label = USER_COMMAND_LABELS[action]
+        throw new Error(label ? `请先进入一个会话，再使用 ${label}。` : "请先进入一个会话再执行该操作。")
+      }
       return sessionID
     }
 
@@ -1300,7 +1313,7 @@ export default Plugin.define({
               boot = null
               research.notifyChanged(root)
               return { message: '控制器已接管；项目保持暂停，未知执行仍需逐项核对。' +
-                (eventGap ? ' 当前事件流需核对，可用 /research resume 重新订阅并核对。' : '核对后可显式 /research resume。') }
+                (eventGap ? ' 当前事件流需核对，可用 /research auto 重新订阅并核对。' : '核对后可显式 /research auto。') }
             }
             await bootstrap()
             if (args.kind === 'resource') return engine.recoverResource(sid, String(args.task_id ?? ''), String(args.reason ?? ''))
@@ -1327,16 +1340,17 @@ export default Plugin.define({
           })()
         case "takeover":
           return research.takeover(needsSession(sessionID, action), directory)
+        case "exploration":
+          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
+        // Internal-only RPC actions (no user slash entry): retained alongside `status` and
+        // `resume` for host probe scripts (`scripts/probe_*.py`) and isolated R1 / evidence-v1 /
+        // session-boundary test harnesses.
         case "detach":
           return research.detach(needsSession(sessionID, action))
         case "context-policy":
           return research.contextPolicy(needsSession(sessionID, action), args.policy)
-        case "exploration":
-          return engine.explorationPolicy(needsSession(sessionID, action), args.mode)
         case "conclusion-contract":
           return research.conclusionContract(needsSession(sessionID, action), args.contract)
-        case "guidance":
-          return research.guidance(needsSession(sessionID, action), directory, args.path, args.version)
         default:
           throw new Error(`未知的 /research 子命令：${action}\n\n${USAGE}`)
       }
@@ -1345,7 +1359,7 @@ export default Plugin.define({
     const commandHandler = (input: any) => reported(async () => {
           const action = String(input.action ?? "help")
           if (action === "help") return { message: USAGE }
-          if (action === 'resume' && (eventGap || failedEvents.size)) await repairEvents()
+          if ((action === 'resume' || (action === 'auto' && !input.args?.goal)) && (eventGap || failedEvents.size)) await repairEvents()
           if (!['status', 'recover'].includes(action)) await bootstrap()
           if (['auto','resume','init','takeover','budget','recover','retry'].includes(action)) await research.ensureContract()
           await within(research.ready(), STARTUP_WAIT_MS)
@@ -1385,9 +1399,35 @@ export default Plugin.define({
           return { ...state, eventRecovery: eventHealth(root) ?? null, observationCoverage: root && research.inScope(root) ? observations.coverage(root) : null }
         })
     const boardHandler = (input: any) => reported(async () => {
+          const sessionID = input.sessionID ? String(input.sessionID) : null
           const directory =
-            input.directory ?? (input.sessionID ? await sessionDirectory(String(input.sessionID)) : ctx.location.directory)
-          return research.board(directory, String(input.view), input.fields ?? {})
+            input.directory ?? (sessionID ? await sessionDirectory(sessionID) : ctx.location.directory)
+          const view = String(input.view)
+          const data = await research.board(directory, view, input.fields ?? {})
+          if (view !== 'summary' || !data?.project_root) return data
+          const root = String(data.project_root)
+          let membershipReady =
+            research.inScope(root) &&
+            (await within(research.ready().then(() => true, () => false), STARTUP_WAIT_MS)) === true
+          if (membershipReady && sessionID) {
+            membershipReady =
+              (await within(research.confirmMembership(sessionID).then(() => true, () => false), STARTUP_WAIT_MS)) === true
+          }
+          const hasHostMain = membershipReady
+            ? research.sessionsIn(root).some((sid) => research.roleOf(sid) === 'main')
+            : undefined
+          const health = eventHealth(root)
+          let locationWarning: string | undefined
+          if (sessionID) {
+            try { await assertLocation(sessionID) }
+            catch (error) { if (isSessionEntryError(error)) locationWarning = error.message }
+          }
+          return {
+            ...data,
+            ...(hasHostMain !== undefined ? { has_host_main: hasHostMain } : {}),
+            ...(health ? { event_recovery: health } : {}),
+            ...(locationWarning ? { location_warning: locationWarning } : {}),
+          }
         })
     const routeRpc = (kind: 'command' | 'session' | 'board', input: any) => {
       if (lifecycle.current()) return { command: commandHandler, session: sessionHandler, board: boardHandler }[kind](input)

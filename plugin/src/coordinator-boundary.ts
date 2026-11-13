@@ -7,10 +7,10 @@ export function coordinatorMayUseNative(name: string): boolean {
 }
 
 export function controlInstructions(run: string | undefined, pause: string | null | undefined): string | null {
-  if (pause === 'finished' || pause === 'segment_complete') return 'This work segment has ended. Read existing evidence only; /research resume does not reopen it. New node work needs an explicitly scheduled work segment.'
+  if (pause === 'finished' || pause === 'segment_complete') return 'This work segment has ended. Read existing evidence only; /research auto does not reopen it. New node work needs an explicitly scheduled work segment.'
   const sessionPaused = !!pause && pause !== "wait"
   if (run === "manual") return null
   if (run === "running" && !sessionPaused) return null
   if (!run) return "Research control state is unavailable. You may read existing information, but cannot start research or assume it is running."
-  return `Research execution is ${run}${pause ? ` (session reason: ${pause})` : ""}. You may read and synthesize existing evidence. Do not start new research, dispatch nodes, or perform node work yourself. Ordinary messages do not resume research; an explicit /research resume is required.`
+  return `Research execution is ${run}${pause ? ` (session reason: ${pause})` : ""}. You may read and synthesize existing evidence. Do not start new research, dispatch nodes, or perform node work yourself. Ordinary messages do not resume research; an explicit /research auto is required.`
 }

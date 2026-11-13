@@ -5,16 +5,15 @@
  */
 import { randomUUID, createHash } from "node:crypto"
 import { existsSync, realpathSync, statSync } from "node:fs"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import type { StorageClient } from "./storage"
 import { CheckpointDelivery } from './checkpoint-delivery'
 import { EvidenceDelivery } from './evidence-delivery'
-import { associatedStatus, unassociatedStatus } from "./format"
+import { QUIET_STATES, associatedStatus, unassociatedStatus } from "./format"
 import packageInfo from '../package.json'
 
 export const HOST_ID = "opencode"
 const MEMORY_TIMEOUT_MS = 2000
-const QUIET_STATES = new Set(["manual", "stopped", "complete"])
 
 function canonical(path: string): string {
   try {
@@ -298,7 +297,7 @@ export class Research {
 
   requireAssociated(sessionID: string): string {
     const root = this.rootOf(sessionID)
-    if (!root) throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research takeover 接管。")
+    if (!root) throw new Error("本会话没有关联研究项目。用 /research auto <目标> 开始，或 /research recover takeover 接管。")
     return root
   }
 
@@ -320,11 +319,11 @@ export class Research {
   /** Creates the project with this session as its main session; nothing starts yet. */
   async init(sessionID: string, directory: string, goal: string): Promise<CommandResult> {
     await this.ready()
-    if (!goal.trim()) throw new Error("用法：/research init <研究目标>")
-    if (this.isAssociated(sessionID)) throw new Error("本会话已经关联了研究项目；用 /research status 查看。")
+    if (!goal.trim()) throw new Error("用法：/research auto [--pause] <研究目标>")
+    if (this.isAssociated(sessionID)) throw new Error("本会话已经关联了研究项目；用 /research 打开看板查看。")
     const existing = findProjectRoot(directory)
     if (existing) {
-      throw new Error(`${existing} 已有研究项目。用 /research auto 继续，或 /research takeover 接管。`)
+      throw new Error(`${existing} 已有研究项目。用 /research auto 继续，或 /research recover takeover 接管。`)
     }
     this.requireScope(directory)
     const state = await this.call("open", sessionID, { root: directory, cwd: directory, goal: goal.trim() })
@@ -386,7 +385,7 @@ export class Research {
     await this.ready()
     const root = this.requireAssociated(sessionID)
     this.requireScope(root)
-    if (policy && policy !== "legacy" && policy !== "r1") throw new Error("用法：/research context-policy legacy|r1")
+    if (policy && policy !== "legacy" && policy !== "r1") throw new Error("上下文策略须为 legacy 或 r1")
     const state = await this.call("context_policy", sessionID,
       policy ? { policy: policy === "legacy" ? "memory-v2" : "memory-r1-v1" } : {})
     if (policy) {
@@ -420,18 +419,6 @@ export class Research {
     const state = await this.call<any>('conclusion_contract',sessionID,{contract:contract ?? null})
     if (contract) this.changed(root)
     return {message:`研究代 ${state.generation} 的结项契约：${state.conclusion_contract}`,state}
-  }
-
-  async guidance(sessionID: string, directory: string, path?: string, version?: string): Promise<CommandResult> {
-    await this.ready()
-    this.requireAssociated(sessionID)
-    if (!path) {
-      const state = await this.call("guidance_status", sessionID)
-      return { message: JSON.stringify(state, null, 2), state }
-    }
-    const absolute = isAbsolute(path) ? path : resolve(directory, path)
-    const state = await this.call("guidance_register", sessionID, { path: absolute, ...(version ? { version } : {}) })
-    return { message: `已登记科研指导：${absolute}`, state }
   }
 
   /** Read-only project views located from a directory; no session or association needed. */

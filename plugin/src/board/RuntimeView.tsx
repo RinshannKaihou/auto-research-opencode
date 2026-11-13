@@ -6,7 +6,7 @@ import type { Context } from "@opencode/plugin/tui/context"
 import { TextAttributes } from "@opentui/core"
 import { For, Show } from "solid-js"
 import { roleName, runState } from "../format"
-import { RUN_NOTE, TASK_STATES, runtimeNotes, sessionActivity, type Row as RowData } from "./model"
+import { RUN_NOTE, TASK_STATES, recoveryNotices, runtimeNotes, sessionActivity, type Row as RowData } from "./model"
 import { palette } from "./palette"
 import { EXECUTION, displayWidth, fit, runExecution, sessionExecution, taskExecution } from "./process"
 import { Row, Section } from "./ui"
@@ -49,6 +49,7 @@ export function RuntimeDetail(props: { context: Context; summary: any; session: 
         </span>
         <span style={{ fg: colors.muted }}>{`  ${RUN_NOTE}`}</span>
       </text>
+      <For each={recoveryNotices(props.summary)}>{(notice) => <text fg={colors.warning}>{notice}</text>}</For>
       <For each={runtimeNotes(props.summary)}>{(note) => <text fg={colors.muted}>{note}</text>}</For>
       <Show when={props.summary?.runtime_budget?.available}>
         <text fg={colors.muted}>{`自主调度预算 · 主会话当前工作对象已预留 ${props.summary.runtime_budget.turns} 轮 / ${props.summary.runtime_budget.limits.max_session_turns ?? '未配置'} · 交付未核实 ${props.summary.runtime_budget.unconfirmed_reservations} · 节点 ${props.summary.runtime_budget.total_nodes} / ${props.summary.runtime_budget.limits.max_total_nodes ?? '未配置'}`}</text>
