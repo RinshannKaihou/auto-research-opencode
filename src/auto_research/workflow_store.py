@@ -398,11 +398,23 @@ class WorkflowStore:
                 }:
                     raise ValidationError("Invalid run state")
                 generation = view["run"]["generation"] + (1 if fields.get("new_generation") else 0)
-                if fields.get('new_generation') and db.execute('PRAGMA user_version').fetchone()[0] >= 15:
-                    from .conclusion_policy import set_contract
+                if fields.get('new_generation'):
+                    from .exploration_store import _exploration_mode
                     config = self._project(db)['config']
-                    contract = 'evidence-v1' if config.get('exploration_policy') == 'exploration-v1' else 'legacy-v1'
-                    set_contract(db, generation, contract, 'new_generation')
+                    changed_config = False
+                    if _exploration_mode(config) == 'auto' and config.get('exploration_policy') == 'exploration-v1':
+                        config['exploration_policy'] = 'off'
+                        config['conclusion_contract'] = 'legacy-v1'
+                        changed_config = True
+                    if 'pending_exploration_question' in config:
+                        config.pop('pending_exploration_question', None)
+                        changed_config = True
+                    if changed_config:
+                        self._set_project_config(db, config)
+                    if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+                        from .conclusion_policy import set_contract
+                        contract = 'evidence-v1' if config.get('exploration_policy') == 'exploration-v1' else 'legacy-v1'
+                        set_contract(db, generation, contract, 'new_generation')
                 if state == 'running':
                     from .runtime_budget import start
                     start(self, db, generation, at)

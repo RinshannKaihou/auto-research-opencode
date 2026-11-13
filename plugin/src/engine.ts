@@ -77,7 +77,7 @@ const NOTICE_OUTCOME: Record<string, string> = {
   paused: "已暂停，等待处理",
 }
 /** Pauses that /research auto clears; wait and closed segments resolve themselves. */
-const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress",'budget'])
+const RESUMABLE = new Set(["project", "project_wait", "cold", "native_stop", "fault", "no_progress", "budget", "awaiting_user"])
 
 export function oneLine(value: unknown, limit = 60): string {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""
@@ -125,6 +125,7 @@ export class Engine {
   private models: Map<string, ModelRef>
   private shellInboxes: NonNullable<RuntimeState['shellInboxes']>
   private shellWake: NonNullable<RuntimeState['shellWake']>
+  private pendingScheduleOnEnd = new Set<string>()
 
   constructor(
     private readonly research: Research,
@@ -591,6 +592,9 @@ export class Engine {
     }
     // A coordinator with nothing to do while its nodes run waits for them rather
     // than being nudged, or paused as idle, turn after turn.
+    if (row.role === "main" && this.pendingScheduleOnEnd.delete(sessionID)) {
+      await this.schedule(root)
+    }
     const running = row.role === "main" ? this.runningTasks({ workflow: { tasks: await this.allTasks(sessionID, state.workflow) } }, sessionID) : []
     if (row.role === "main" && idle > 0 && running.length) {
       await this.call("workflow", sessionID, { action: "session", fields: { waiting: running, pause_reason: "wait" } })
@@ -966,8 +970,39 @@ export class Engine {
     const root=this.research.requireAssociated(sessionID)
     return this.serial(root,async()=>{
       const result=await this.research.explorationPolicy(sessionID,mode)
-      if (mode==='off') await this.deliver(root)
+      if ((result.state as any)?.exploration_policy==='off' && (mode==='off' || mode==='auto')) await this.deliver(root)
       return result
+    })
+  }
+
+  explorationOrchestrate(sessionID: string, args: Record<string, unknown>, operationID: string): Promise<unknown> {
+    const root = this.research.requireAssociated(sessionID)
+    if (this.research.roleOf(sessionID) !== "main") throw new Error("只有主协调可以管理探索策略")
+    return this.serial(root, async () => {
+      const result = await this.call<any>("exploration_orchestrate", sessionID, { fields: args, model_call: true }, operationID)
+      this.research.invalidateMemory(root)
+      if (result?.paused) this.idle.delete(sessionID)
+      this.research.notifyChanged(root)
+      return result
+    })
+  }
+
+  resumeAwaitingUser(sessionID: string): Promise<boolean> {
+    const root = this.research.rootOf(sessionID)
+    if (!this.current() || !root || !this.research.inScope(root) || this.research.roleOf(sessionID) !== "main") {
+      return Promise.resolve(false)
+    }
+    return this.serial(root, async () => {
+      const result = await this.call<any>("runtime_resume_awaiting_user", sessionID)
+      if (result?.resumed) {
+        this.retried.delete(sessionID)
+        this.idle.delete(sessionID)
+        this.pendingScheduleOnEnd.add(sessionID)
+        this.research.invalidateMemory(root)
+        this.research.notifyChanged(root)
+        return true
+      }
+      return false
     })
   }
 
@@ -1276,7 +1311,13 @@ export class Engine {
       const state = await this.state(main)
       const run = state.workflow?.run?.state
       if (run === "running") {
-        if (guidance) throw new Error("自主研究已经在运行，补充指令没有发送；请直接在主会话里发消息，会记为用户指导。")
+        if (guidance) {
+          if (state.workflow?.session?.pause_reason === "awaiting_user") {
+            await this.call("note", main, guidanceNote(guidance)).catch(() => {})
+            return this.resumeLocked(root, main, state)
+          }
+          throw new Error("自主研究已经在运行，补充指令没有发送；请直接在主会话里发消息，会记为用户指导。")
+        }
         const members = this.research.sessionsIn(root).filter((sid) => this.drives(sid))
         let hasResumable = false
         for (const member of members) {

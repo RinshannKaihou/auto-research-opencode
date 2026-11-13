@@ -128,6 +128,20 @@ OPENCODE_AUTO_MAIN_CONCLUSIONS = {
         "are derived from the prepared draft, not declared separately at conclude time. "
     ),
 }
+OPENCODE_AUTO_MAIN_EXPLORATION = {
+    "auto_inactive": (
+        "Exploration control is auto: run clear single-path delivery directly via "
+        "research_propose and research_dispatch. For selection/discovery choices with competing "
+        "routes, or when results falsify a key assumption before large effort, call "
+        "research_exploration (action=enable). Call research_exploration (action=ask) only when "
+        "goal ambiguity or a high-cost route tradeoff needs human judgment. "
+    ),
+    "active": (
+        "Exploration is active: manage scopes, routes and choices via research_scope, "
+        "research_route and research_decide; call research_exploration (action=ask) only when "
+        "goal ambiguity or a high-cost route tradeoff needs human judgment. "
+    ),
+}
 OPENCODE_AUTO_MAIN_SUFFIX = (
     "Messages starting with 【Research 自动推进】 come from the research engine; other user "
     "messages are guidance from the human lead: follow them and keep going."
@@ -135,9 +149,19 @@ OPENCODE_AUTO_MAIN_SUFFIX = (
 
 
 def _main_role_text(config):
+    from .exploration_store import _exploration_mode
+    mode = _exploration_mode(config)
+    active = config.get("exploration_policy") == "exploration-v1"
+    exploration = (
+        OPENCODE_AUTO_MAIN_EXPLORATION["active"]
+        if active
+        else OPENCODE_AUTO_MAIN_EXPLORATION["auto_inactive"]
+        if mode == "auto"
+        else ""
+    )
     contract = config.get("conclusion_contract", "legacy-v1")
     passage = OPENCODE_AUTO_MAIN_CONCLUSIONS.get(contract, OPENCODE_AUTO_MAIN_CONCLUSIONS["legacy-v1"])
-    return OPENCODE_AUTO_MAIN_COORDINATION + passage + OPENCODE_AUTO_MAIN_SUFFIX
+    return OPENCODE_AUTO_MAIN_COORDINATION + exploration + passage + OPENCODE_AUTO_MAIN_SUFFIX
 
 
 OPENCODE_AUTO_ROLES = {
@@ -1783,15 +1807,26 @@ class MemoryStore:
                 role_override = ("Research execution is paused. Only finish the currently authorized node turn; "
                                  "publish and checkpoint its existing work, then call research_finish. "
                                  "Do not start new work or delegate another specialist.")
+                control_override = (f"Run state: {run_state}; session pause reason: {pause_reason or 'none'}. "
+                                    "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
+            elif run_state == "running" and pause_reason == "awaiting_user" and session and session["role"] == "main":
+                role_override = ("Research execution is waiting for the user's reply to your question. "
+                                 "Present the pending question and options concisely in plain text and end this turn "
+                                 "without proposing, dispatching or calling write tools.")
+                control_override = ("Run state: running; session pause reason: awaiting_user. "
+                                    "When the user replies in this session (or runs /research auto), autonomous research resumes automatically.")
             else:
                 role_override = ("Research execution is paused. Read and synthesize existing results, "
                                  "but do not propose or dispatch new work or perform node experiments yourself. "
                                  "Only an explicit /research auto can resume autonomous research.")
-            control_override = (f"Run state: {run_state}; session pause reason: {pause_reason or 'none'}. "
-                                "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
+                control_override = (f"Run state: {run_state}; session pause reason: {pause_reason or 'none'}. "
+                                    "Ordinary user messages do not resume research. Preserve existing evidence and report the pause.")
+        project_block = {"goal": project["goal"], "control": project["control"], "run_state": run_state,
+                         "pause_reason": pause_reason}
+        if project["config"].get("pending_exploration_question"):
+            project_block["pending_question"] = project["config"]["pending_exploration_question"]
         blocks = [
-            ("project", {"goal": project["goal"], "control": project["control"], "run_state": run_state,
-                         "pause_reason": pause_reason}),
+            ("project", project_block),
             ("conclusion", self.conclusion_view(db) or (
                 {"contract_status": "not_recorded"} if db.execute(
                     "SELECT 1 FROM workflow_project WHERE state='complete'"
@@ -1876,8 +1911,10 @@ class MemoryStore:
                     ref = pid if pid.startswith("pub/") else f"pub/{pid}"
                     if ref not in read_refs:
                         read_refs.append(ref)
+            from .exploration_store import _exploration_mode
             view = render_context(self, db, blocks, node_id, max_chars,
                                   decision_refs=read_refs, final_ref=final_ref)
+            view['exploration_mode'] = _exploration_mode(project['config'])
             view['exploration_policy'] = project['config'].get('exploration_policy', 'off')
             view['conclusion_contract'] = project['config'].get('conclusion_contract', 'legacy-v1')
             return view
@@ -1913,7 +1950,7 @@ class MemoryStore:
                     "identity": 400,
                     "task": 2200,
                     "specialist_task": 1400,
-                    "role_instructions": 1600,
+                    "role_instructions": 2200,
                     "control_instructions": 800,
                     "attempt": 400,
                     "pending_review": 2200,
@@ -2040,8 +2077,10 @@ class MemoryStore:
             dependencies.append(
                 "frozen/" + hashlib.sha256(_encoded(frozen_context).encode()).hexdigest()
             )
+        from .exploration_store import _exploration_mode
         return {
             "policy_version": "memory-v2",
+            "exploration_mode": _exploration_mode(project['config']),
             "exploration_policy": project['config'].get('exploration_policy', 'off'),
             "conclusion_contract": project['config'].get('conclusion_contract', 'legacy-v1'),
             "text": body,

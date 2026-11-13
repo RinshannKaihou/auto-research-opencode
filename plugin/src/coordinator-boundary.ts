@@ -8,6 +8,9 @@ export function coordinatorMayUseNative(name: string): boolean {
 
 export function controlInstructions(run: string | undefined, pause: string | null | undefined): string | null {
   if (pause === 'finished' || pause === 'segment_complete') return 'This work segment has ended. Read existing evidence only; /research auto does not reopen it. New node work needs an explicitly scheduled work segment.'
+  if (run === 'running' && pause === 'awaiting_user') {
+    return "Research is waiting for the user's reply to your question. Present your pending question and options concisely in plain text and end this turn without starting new research or calling write tools. When the user replies in this session (or runs /research auto), autonomous research resumes automatically."
+  }
   const sessionPaused = !!pause && pause !== "wait"
   if (run === "manual") return null
   if (run === "running" && !sessionPaused) return null

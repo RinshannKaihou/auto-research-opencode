@@ -266,6 +266,11 @@ export class Research {
     this.changed(root)
   }
 
+  invalidateMemory(root: string): void {
+    this.memoryGeneration++
+    for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
+  }
+
   setController(root: string, owner: { epoch: string; binding: string; fence: number }): void {
     this.controllers.set(canonical(root), owner)
   }
@@ -287,7 +292,7 @@ export class Research {
       if (root) {
         const result=value as any
         const contract=method==='status' ? result?.project?.config?.conclusion_contract
-          : ['memory_context','exploration_policy','conclusion_contract'].includes(method) ? result?.conclusion_contract : undefined
+          : ['memory_context','exploration_policy','exploration_orchestrate','conclusion_contract'].includes(method) ? result?.conclusion_contract : undefined
         if (typeof contract==='string') this.conclusionContracts.set(root,contract)
         if (method==='workflow' && fields.action==='run' && (fields.fields as any)?.new_generation) this.conclusionContracts.delete(root)
       }
@@ -389,8 +394,7 @@ export class Research {
     const state = await this.call("context_policy", sessionID,
       policy ? { policy: policy === "legacy" ? "memory-v2" : "memory-r1-v1" } : {})
     if (policy) {
-      this.memoryGeneration++
-      for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
+      this.invalidateMemory(root)
       this.changed(root)
     }
     const labels: Record<string, string> = { "memory-v2": "Legacy (memory-v2)", "memory-r1-v1": "R1 (memory-r1-v1)" }
@@ -405,11 +409,12 @@ export class Research {
     this.requireScope(root)
     const state = await this.call<any>("exploration_policy", sessionID, { mode: mode ?? null })
     if (mode) {
-      this.memoryGeneration++
-      for (const session of this.sessionsIn(root)) this.memoryCache.delete(session)
+      this.invalidateMemory(root)
       this.changed(root)
     }
-    return { message: `探索策略：${state.exploration_policy}${state.effective_for==='next_generation' ? '（从下一研究代生效）' : ''}\n上下文策略：${state.context_policy}\n结项契约：${state.conclusion_contract}（研究代 ${state.generation}）`, state }
+    const modeLabels: Record<string, string> = { auto: "auto（主协调自主决定）", on: "on（强制开启）", off: "off（强制关闭）" }
+    const modeText = modeLabels[state.exploration_mode] ?? state.exploration_mode ?? "auto"
+    return { message: `探索控制：${modeText}\n探索策略：${state.exploration_policy}${state.effective_for==='next_generation' ? '（从下一研究代生效）' : ''}\n上下文策略：${state.context_policy}\n结项契约：${state.conclusion_contract}（研究代 ${state.generation}）`, state }
   }
 
   async conclusionContract(sessionID: string, contract?: string | null): Promise<CommandResult> {
@@ -536,7 +541,7 @@ export class Research {
           policy_version: view.policy_version,
           dependencies: view.dependencies ?? [],
           selection: { source_digest: view.source_digest, context_mode: view.context_mode, omitted: view.omitted ?? [],
-            exploration_policy: view.exploration_policy, conclusion_contract: view.conclusion_contract,
+            exploration_mode: view.exploration_mode, exploration_policy: view.exploration_policy, conclusion_contract: view.conclusion_contract,
             exploration_context: view.exploration_context, exploration_selection: view.exploration_selection,
             plugin_version:packageInfo.version,
             selected: view.selection, coverage: view.coverage, block_chars: view.block_chars, truncation: view.truncation },

@@ -8,7 +8,7 @@ import type { Spec } from "./schema"
 import { coordinatorMayUseNative } from "./coordinator-boundary"
 
 export type Role = "main" | "node_core" | "specialist"
-export type EngineAction = "dispatch" | "wait" | "finish" | "conclude" | "delegate" | "delegate_batch" | "exploration_decide"
+export type EngineAction = "dispatch" | "wait" | "finish" | "conclude" | "delegate" | "delegate_batch" | "exploration_decide" | "exploration"
 
 export interface ToolDefinition {
   name: string
@@ -421,6 +421,35 @@ const SPECIALIST_TASK: Record<string, Spec> = {
 }
 
 TOOLS.push(
+  {
+    name: "research_exploration",
+    roles: ["main"],
+    engine: "exploration",
+    writes: true,
+    description:
+      "Autonomously enable multi-route exploration or pause to ask the user when a choice needs human judgment. Use action='enable' before large commitments on selection/discovery choices with competing routes or when a single-path assumption fails (upgrades context to memory-r1-v1 and conclusion contract to evidence-v1, and optionally creates the initial scope). Use action='ask' only when goal ambiguity or a high-cost route/budget tradeoff genuinely requires user confirmation; in auto mode this pauses continuation until the user replies.",
+    parameters: {
+      action: { type: "string", required: true, enum: ["enable", "ask"] },
+      reason: { type: "string", required: true, description: "Why multi-route exploration should be enabled now, or why user judgment is required." },
+      question: { type: "string", description: "Required when action='ask': concise question for the user." },
+      options: { type: "array", items: { type: "string" }, description: "Optional concrete options or candidate routes (at most 8) when action='ask'." },
+      scope: {
+        type: "object",
+        additionalProperties: false,
+        description: "Optional initial exploration scope to create atomically when action='enable'.",
+        properties: {
+          objective: { type: "string", required: true },
+          task_kind: { type: "string", required: true, enum: ["delivery", "selection", "discovery"] },
+          question_refs: { type: "array", items: { type: "string" } },
+          constraints: {},
+          comparison_basis: {},
+          baseline_refs: { type: "array", items: { type: "string" } },
+          budget_policy: {},
+        },
+      },
+    },
+    fields: same,
+  },
   {
     name: "research_dispatch",
     roles: ["main"],
