@@ -184,6 +184,9 @@ export default Plugin.define({
         try { await research.call('note', sessionID, guidanceNote(item.text), `guidance:${sessionID}:${item.id}`) }
         catch { /* A finished work segment has no writable note target; the native message is still persisted. */ }
       }
+      if (research.roleOf(sessionID) === 'main') {
+        await engine.resumeAwaitingUser(sessionID)
+      }
     }
     let observeSpecialist: ((event: any) => void) | undefined
     const queueEvent = (event: any) => {
@@ -695,7 +698,7 @@ export default Plugin.define({
           } finally { clearTimeout(timer) }
         }
       }
-      if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude")) {
+      if (role === "main" && (tool.name === "research_propose" || tool.name === "research_conclude" || tool.name === "research_exploration")) {
         const current = await research.call<any>("status", sessionID)
         const run = current.workflow?.run?.state
         const pause = current.workflow?.session?.pause_reason
@@ -746,6 +749,8 @@ export default Plugin.define({
         case "conclude":
           return engine.conclude(sessionID, args as unknown as ConclusionInput, operationID,
             research.evidenceDelivery.forCall(sessionID,call.messageID,call.id))
+        case "exploration":
+          return engine.explorationOrchestrate(sessionID, args, operationID)
         case "exploration_decide":
           return engine.explorationDecide(sessionID, args, operationID)
         case "delegate":
@@ -875,7 +880,23 @@ export default Plugin.define({
           const run = state.workflow?.run?.state
           const pause = state.workflow?.session?.pause_reason
           needsResearchTools = ['running', 'manual'].includes(run) && !pause
-          if (state.project?.config?.exploration_policy !== 'exploration-v1') {
+          const explorationPolicy = state.project?.config?.exploration_policy
+          const explorationMode = state.project?.config?.exploration_mode
+            ?? (explorationPolicy === 'exploration-v1' ? 'on' : 'off')
+          if (explorationMode === 'off' || pause === 'wait') delete request.tools.research_exploration
+          else if (explorationPolicy === 'exploration-v1' && request.tools.research_exploration) {
+            const spec = TOOLS.find(tool => tool.name === 'research_exploration')!.parameters
+            const askOnly = {
+              action: { ...spec.action, required: true, enum: ['ask'] },
+              reason: { ...spec.reason, required: true },
+              question: { ...spec.question, required: true },
+              options: { ...spec.options },
+            }
+            request.tools.research_exploration.input = parameters(askOnly) as typeof request.tools.research_exploration.input
+            request.tools.research_exploration.description =
+              'Multi-route exploration is already active. Call with action="ask" only when goal ambiguity or a high-cost route/budget tradeoff genuinely requires user confirmation.'
+          }
+          if (explorationPolicy !== 'exploration-v1') {
             for (const name of ['research_scope', 'research_route']) delete request.tools[name]
             if (!state.exploration_closing_allowed) delete request.tools.research_decide
             else if (request.tools.research_decide) {
@@ -898,7 +919,11 @@ export default Plugin.define({
               : 'Conclude with a complete final report, the outcome, remaining gaps and an explicitly declared review.'
           }
           if (controlInstructions(run, pause)) {
-            for (const name of ["research_propose", "research_dispatch", "research_conclude", 'research_scope', 'research_route', 'research_decide', 'research_prepare_conclusion']) delete request.tools[name]
+            if (run === 'running' && pause === 'awaiting_user') {
+              readOnly = true
+              fullSystem = true
+            }
+            for (const name of ["research_propose", "research_dispatch", "research_conclude", 'research_scope', 'research_route', 'research_decide', 'research_prepare_conclusion', 'research_exploration']) delete request.tools[name]
           }
           // An accepted wait finishes on the next primary request of the same
           // execution. This marker is process-local and never reconstructs
@@ -1121,8 +1146,13 @@ export default Plugin.define({
           if (text) rememberQueuedGuidance(input.sessionID, messageID, text, engine.executionToken(input.sessionID))
           return
         }
-        if (!text) return
-        await research.call("note", input.sessionID, guidanceNote(text))
+        if (text) {
+          try { await research.call("note", input.sessionID, guidanceNote(text)) }
+          catch { /* Without an open work segment there is nowhere to file the note; the message still goes through. */ }
+        }
+        if (role === "main" && (text.length > 0 || attachments > 0)) {
+          await engine.resumeAwaitingUser(input.sessionID)
+        }
       } catch {
         // Without an open work segment there is nowhere to file the note; the message still goes through.
       }

@@ -63,6 +63,8 @@ def summary(store, host_id: str, session_id: str) -> dict:
             generation = (state.get('workflow', {}).get('run') or {}).get('generation')
             exploration = exploration_overview(store, db, generation) if generation is not None else None
             if exploration:
+                from .exploration_store import _exploration_mode
+                exploration['mode'] = _exploration_mode(state['project']['config'])
                 exploration['policy'] = state['project']['config'].get('exploration_policy', 'off')
                 exploration['budget'] = {key:value for key,value in state['runtime_budget'].get('exploration', {}).items()
                                          if key not in {'allocations', 'resource_leases'}}

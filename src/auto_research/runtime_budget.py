@@ -10,7 +10,7 @@ from .errors import ValidationError, BudgetError, ConflictError, ResearchControl
 LIMITS = {'max_session_turns','max_total_nodes','max_wall_seconds','max_tokens','max_cost',
           'shared_work_budget', 'resource_capacities'}
 SOURCE_ALGORITHM = 'source-worker-v1'
-RESUMABLE_SESSION_PAUSES = {'project', 'project_wait', 'cold', 'native_stop', 'fault', 'no_progress', 'budget'}
+RESUMABLE_SESSION_PAUSES = {'project', 'project_wait', 'cold', 'native_stop', 'fault', 'no_progress', 'budget', 'awaiting_user'}
 
 
 def shell_intent_id(host, session, call_id):
@@ -1356,9 +1356,49 @@ class RuntimeStore:
                        (host, target_session))
             db.execute('UPDATE runtime_progress SET idle_turns=0 WHERE generation=? AND host_id=? AND session_id=?',
                        (run['generation'], host, target_session))
+            if target['pause_reason'] == 'awaiting_user':
+                config = self._project(db)['config']
+                if config.pop('pending_exploration_question', None) is not None:
+                    self._set_project_config(db, config)
             self._event(db, 'runtime.session_resumed', {'session_id': target_session, 'prior_reason': target['pause_reason']})
             return {'resumed': True, 'waiting_external': bool(shells)}
         return self._mutate('runtime.resume_session', payload, operation, work)
+
+    def runtime_resume_awaiting_user(self, host, session, operation):
+        with self._read() as db:
+            if not db.execute('SELECT 1 FROM requests WHERE request_id=?', (operation,)).fetchone():
+                run = db.execute('SELECT state,main_session_id FROM workflow_project WHERE id=1').fetchone()
+                actor = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                                   (host, session)).fetchone()
+                if (not run or run['state'] != 'running' or not actor or actor['detached']
+                        or actor['role'] != 'main' or run['main_session_id'] != session
+                        or actor['pause_reason'] != 'awaiting_user'):
+                    return {'resumed': False, 'reason': 'not_awaiting_user'}
+        payload = dict(host=host, session=session)
+
+        def work(db):
+            self._association(db, host, session)
+            run = db.execute('SELECT * FROM workflow_project WHERE id=1').fetchone()
+            actor = db.execute('SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?',
+                               (host, session)).fetchone()
+            if (not run or run['state'] != 'running' or not actor or actor['detached']
+                    or actor['role'] != 'main' or run['main_session_id'] != session
+                    or actor['pause_reason'] != 'awaiting_user'):
+                return {'resumed': False, 'reason': 'not_awaiting_user'}
+            at = timestamp()
+            db.execute('UPDATE workflow_sessions SET pause_reason=NULL WHERE host_id=? AND session_id=?',
+                       (host, session))
+            db.execute('UPDATE workflow_project SET control_revision=control_revision+1,updated_at=? WHERE id=1', (at,))
+            db.execute('UPDATE runtime_progress SET idle_turns=0 WHERE generation=? AND host_id=? AND session_id=?',
+                       (run['generation'], host, session))
+            config = self._project(db)['config']
+            prior_question = config.pop('pending_exploration_question', None)
+            if prior_question is not None:
+                self._set_project_config(db, config)
+            self._event(db, 'runtime.session_resumed', {
+                'session_id': session, 'prior_reason': 'awaiting_user', 'trigger': 'user_prompt'})
+            return {'resumed': True, 'prior_question': prior_question}
+        return self._mutate('runtime.resume_awaiting_user', payload, operation, work)
 
     def runtime_reserve(self, host, session, operation, source_snapshot=None, wake_intent_id=None, launch_intent_id=None, specialist_launch_id=None, message_id=None):
         if message_id is not None and (not isinstance(message_id, str) or not message_id.startswith('msg_')):
@@ -1524,6 +1564,12 @@ class RuntimeStore:
                     meaningful = True
                 elif mine=='project' and kind=='exploration.decided':
                     meaningful |= data.get('actor')=={'host_id':host,'session_id':session} and bool(data.get('result_ids'))
+                elif mine=='project' and kind=='exploration.policy_changed':
+                    meaningful |= data.get('actor')=={'host_id':host,'session_id':session}
+                elif mine=='project' and kind in {'exploration.scope_saved', 'exploration.route_saved'}:
+                    meaningful |= data.get('actor')=={'host_id':host,'session_id':session} and str(data.get('ref', '')).endswith('@1')
+                elif mine=='project' and kind=='exploration.question_asked':
+                    meaningful |= data.get('actor')=={'host_id':host,'session_id':session}
                 elif kind=='review.scope_changed':
                     meaningful |= data['actor'].get('host_id')==host and data['actor'].get('session_id')==session and bool(data['added'])
                 elif kind == 'review.completed':

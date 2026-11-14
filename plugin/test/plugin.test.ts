@@ -3755,6 +3755,14 @@ describe("command parsing", () => {
     expect((parseResearchCommand("recover retry T-001 retry after fix") as any).confirm).toContain("重新执行该节点")
     expect(parseResearchCommand("recover takeover")).toMatchObject({ kind: "rpc", action: "takeover", args: {} })
     expect((parseResearchCommand("recover takeover") as any).confirm).toContain("接管")
+    expect(parseResearchCommand("exploration")).toEqual({ kind: "rpc", action: "exploration", args: { mode: null } })
+    expect(parseResearchCommand("exploration auto")).toEqual({ kind: "rpc", action: "exploration", args: { mode: "auto" } })
+    expect(parseResearchCommand("exploration on")).toEqual({ kind: "rpc", action: "exploration", args: { mode: "on" } })
+    expect(parseResearchCommand("exploration off")).toEqual({ kind: "rpc", action: "exploration", args: { mode: "off" } })
+    expect(parseResearchCommand("exploration invalid")).toEqual({
+      kind: "error",
+      message: "用法：/research exploration [auto|on|off]",
+    })
     for (const removed of [
       "board",
       "board extra",
@@ -6369,4 +6377,289 @@ test('session-required RPC errors never point to removed slash commands', async 
     expect(res.error).toContain(expected)
     if (action !== 'budget') expect(res.error).not.toContain(`/research ${action}`)
   }
+})
+
+test('orchestrator autonomously enables exploration in auto mode and respects user off override', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'Compare two indexing architectures' })
+  const view0 = await host.command('exploration', 'ses_main', { mode: null })
+  expect(view0.state).toMatchObject({
+    exploration_mode: 'auto',
+    exploration_policy: 'off',
+    conclusion_contract: 'legacy-v1',
+  })
+  expect(view0.message).toContain('探索控制：auto')
+
+  const initial = modelRequest('ses_main')
+  await host.hooks.get('context')!(initial)
+  expect(Object.keys(initial.tools)).toContain('research_exploration')
+  expect(Object.keys(initial.tools)).not.toContain('research_scope')
+  expect(Object.keys(initial.tools)).not.toContain('research_decide')
+  expect(Object.keys(initial.tools)).not.toContain('research_prepare_conclusion')
+
+  // User override off hides research_exploration and rejects stale calls.
+  const disabled = await host.command('exploration', 'ses_main', { mode: 'off' })
+  expect(disabled.state).toMatchObject({ exploration_mode: 'off', exploration_policy: 'off' })
+  const offReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(offReq)
+  expect(Object.keys(offReq.tools)).not.toContain('research_exploration')
+  await expect(
+    host.call('research_exploration', 'ses_main', { action: 'enable', reason: 'Try while off' }),
+  ).rejects.toThrow(/disabled by user policy/i)
+
+  // Restore auto mode, then let the orchestrator autonomously enable exploration with an initial scope.
+  const backAuto = await host.command('exploration', 'ses_main', { mode: 'auto' })
+  expect(backAuto.state).toMatchObject({ exploration_mode: 'auto', exploration_policy: 'off' })
+  const enabled = await host.call('research_exploration', 'ses_main', {
+    action: 'enable',
+    reason: 'Two competing candidate architectures require bounded comparison',
+    scope: { objective: 'Select indexing architecture', task_kind: 'selection' },
+  })
+  expect(enabled).toMatchObject({
+    action: 'enable',
+    exploration_mode: 'auto',
+    exploration_policy: 'exploration-v1',
+    context_policy: 'memory-r1-v1',
+    conclusion_contract: 'evidence-v1',
+  })
+  expect(enabled.scope.scope_id).toBe('ES-001')
+
+  const activeReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(activeReq)
+  expect(Object.keys(activeReq.tools)).toContain('research_scope')
+  expect(Object.keys(activeReq.tools)).toContain('research_route')
+  expect(Object.keys(activeReq.tools)).toContain('research_decide')
+  expect(Object.keys(activeReq.tools)).toContain('research_prepare_conclusion')
+  expect(Object.keys(activeReq.tools)).toContain('research_exploration')
+  expect((activeReq.tools.research_exploration.input as any).properties.action.enum).toEqual(['ask'])
+  expect(Object.keys((activeReq.tools.research_conclude.input as any).properties).sort()).toEqual([
+    'draft_id',
+    'final_ref',
+    'summary',
+  ])
+})
+
+test('orchestrator proactive ask pauses at awaiting_user and user chat reply automatically resumes continuation', async () => {
+  const host = await load()
+  await host.command('auto', 'ses_main', { goal: 'Evaluate high-cost benchmark vs synthetic probe' })
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 1, 'initial kickoff')
+
+  host.turn.start('ses_main')
+  const asked = await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Full benchmark costs 8 GPU-hours while a synthetic probe is cheap',
+    question: '先跑合成探针还是直接跑完整基准？',
+    options: ['先跑合成探针', '直接跑完整基准'],
+  })
+  expect(asked).toMatchObject({ action: 'ask', state: 'awaiting_user', paused: true })
+
+  // Post-ask request in the same turn is read-only and surfaces pending_question.
+  const postAsk = modelRequest('ses_main')
+  await host.hooks.get('context')!(postAsk)
+  expect(Object.keys(postAsk.tools)).toContain('read')
+  expect(Object.keys(postAsk.tools)).toContain('research_query')
+  expect(Object.keys(postAsk.tools)).not.toContain('research_propose')
+  expect(Object.keys(postAsk.tools)).not.toContain('research_dispatch')
+  expect(Object.keys(postAsk.tools)).not.toContain('research_exploration')
+  expect(Object.keys(postAsk.tools)).not.toContain('research_record')
+  expect(contextText(postAsk)).toContain('先跑合成探针还是直接跑完整基准？')
+
+  host.turn.end('ses_main')
+  await Bun.sleep(50)
+  const pausedSession = await host.rpc().session({ sessionID: 'ses_main' })
+  expect(pausedSession.pauseReason).toBe('awaiting_user')
+  expect(host.said('ses_main').filter((row) => row.resume)).toHaveLength(1)
+  expect(
+    associatedStatus({
+      project: { goal: 'G' },
+      workflow: { run: { state: 'running' }, session: { role: 'main', pause_reason: 'awaiting_user' } },
+    }),
+  ).toContain('等待用户回复')
+
+  // If the user explicitly runs /research pause, an ordinary chat message must NOT auto-resume.
+  await host.command('pause', 'ses_main')
+  expect((await host.summary()).run.state).toBe('paused')
+  await host.prompt('ses_main', '暂停期间的备注', 'msg_while_paused')
+  host.turn.end('ses_main')
+  await Bun.sleep(50)
+  expect((await host.summary()).run.state).toBe('paused')
+  expect(host.said('ses_main').filter((row) => row.resume)).toHaveLength(1)
+
+  // Resume with /research auto, then ask again while running and reply directly in chat.
+  const resumedExplicit = await host.command('auto', 'ses_main', { goal: null })
+  expect(resumedExplicit.error).toBeUndefined()
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 2, 'explicit resume kickoff')
+
+  host.turn.start('ses_main')
+  await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Confirm metric priority before committing probes',
+    question: '优先优化 p99 延迟还是吞吐？',
+    options: ['p99 延迟', '吞吐'],
+  })
+  host.turn.end('ses_main')
+  await Bun.sleep(50)
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('awaiting_user')
+  expect(host.said('ses_main').filter((row) => row.resume)).toHaveLength(2)
+
+  // Direct user chat reply clears awaiting_user, records guidance, restores tools, and resumes loop after turn!
+  await host.prompt('ses_main', '优先优化 p99 延迟，先用小探针验证。', 'msg_user_answer_1')
+  expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBeNull()
+
+  const resumedReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(resumedReq)
+  expect(Object.keys(resumedReq.tools)).toContain('research_propose')
+  expect(Object.keys(resumedReq.tools)).toContain('research_dispatch')
+  expect(Object.keys(resumedReq.tools)).toContain('research_exploration')
+  expect(contextText(resumedReq)).not.toContain('pending_question')
+
+  host.turn.start('ses_main')
+  await host.call('research_propose', 'ses_main', {
+    question: 'Does p99 tail drop under synthetic load?',
+    why_now: 'User confirmed p99 priority',
+    plan: 'Run bounded probe',
+    root_reason: 'Initial probe',
+  })
+  host.turn.end('ses_main')
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 3, 'auto-continued after user reply')
+})
+
+test('exploration review regressions: legacy off migration, waiting tool gate, manual ask, and /research auto guidance resume', async () => {
+  // 1) Upgraded legacy DB with explicit exploration_policy='off' (and no exploration_mode) stays off & hides tool.
+  const host = await load({ placement: 'system' })
+  await host.command('init', 'ses_main', { goal: 'Legacy migration and waiting gate check' })
+  const dbPath = join(project, '.research', 'state.sqlite3')
+  const { Database } = await import('bun:sqlite')
+  const db = new Database(dbPath)
+  db.run('UPDATE project SET config = ?', [JSON.stringify({ exploration_policy: 'off' })])
+  db.close()
+
+  const migrated = await host.command('exploration', 'ses_main', { mode: null })
+  expect(migrated.state).toMatchObject({ exploration_mode: 'off', exploration_policy: 'off' })
+  const legacyReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(legacyReq)
+  expect(Object.keys(legacyReq.tools)).not.toContain('research_exploration')
+  await expect(
+    host.call('research_exploration', 'ses_main', { action: 'enable', reason: 'Should fail on legacy off' }),
+  ).rejects.toThrow(/disabled by user policy/i)
+
+  // Opt in to auto on this project, verify manual ask does NOT leave a sticky pending_question after user reply.
+  await host.command('exploration', 'ses_main', { mode: 'auto' })
+  const manualAsked = await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Manual clarification',
+    question: '手动模式下用哪套数据集？',
+    options: ['Dataset A', 'Dataset B'],
+  })
+  expect(manualAsked).toMatchObject({ paused: false, state: 'manual' })
+  await host.prompt('ses_main', '用 Dataset A', 'msg_manual_reply')
+  const manualAfterReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(manualAfterReq)
+  expect(contextText(manualAfterReq)).not.toContain('pending_question')
+  host.turn.end('ses_main')
+
+  // 2) Start autonomous run, enter `wait` on a dispatched node: `research_exploration` is hidden and direct calls
+  //    reject with a clear waiting message (not misleading `/research auto`).
+  await host.command('auto', 'ses_main', { goal: '' })
+  await until(() => host.said('ses_main').filter((row) => row.resume).length === 1, 'kickoff')
+  host.turn.start('ses_main')
+  await host.call('research_propose', 'ses_main', {
+    question: 'Q-wait?',
+    why_now: 'Initial work',
+    plan: 'Run node',
+    root_reason: 'Root',
+  })
+  const dispatched = await host.call('research_dispatch', 'ses_main', { node_id: 'X-001' })
+  await host.call('research_wait', 'ses_main', { task_ids: [dispatched.task_id] })
+
+  const waitReq = modelRequest('ses_main')
+  await host.hooks.get('context')!(waitReq)
+  expect(Object.keys(waitReq.tools)).not.toContain('research_exploration')
+  let waitErr = ''
+  try {
+    await host.call('research_exploration', 'ses_main', { action: 'ask', reason: 'During wait', question: 'Q?' })
+  } catch (error: any) {
+    waitErr = error?.message ?? String(error)
+  }
+  expect(waitErr).toContain('waiting on dispatched node tasks')
+  expect(waitErr).not.toContain('/research auto')
+  host.turn.end('ses_main')
+
+  // Finish node X-001 so main wakes cleanly.
+  const nodeSid = host.created[0]!
+  await host.call('research_publish', nodeSid, {
+    status: 'complete',
+    summary: 'done',
+    items: [{ item_id: 'note', kind: 'text', content: { text: 'ok' } }],
+  })
+  await host.call('research_finish', nodeSid, { state: 'finished', summary: 'done' })
+  host.turn.end(nodeSid)
+  await until(() => host.said('ses_main').some((item) => item.text.includes('节点 X-001 已完成')), 'wake after wait')
+  await until(async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason == null, 'wait cleared')
+
+  // 3) Pause at `awaiting_user` and resume via `/research auto <guidance>` (both normal and when `note` fails).
+  host.turn.start('ses_main')
+  await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Need route choice',
+    question: '选方案 A 还是方案 B？',
+    options: ['方案 A', '方案 B'],
+  })
+  host.turn.end('ses_main')
+  await until(
+    async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'awaiting_user',
+    'awaiting_user set 1',
+  )
+
+  // Inject failure on `runtime_resume_awaiting_user` during an ordinary chat reply: failure notice + `/research auto`
+  // manual recovery instruction must be surfaced rather than silently swallowed, while `awaiting_user` remains intact.
+  const baseReq = StorageClient.prototype.request
+  StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {
+    return method === 'runtime_resume_awaiting_user'
+      ? Promise.reject(new Error('resume rpc unavailable'))
+      : (baseReq as any).call(this, method, ...rest)
+  } as typeof baseReq
+  try {
+    await host.prompt('ses_main', '尝试直接回复但恢复失败', 'msg_resume_fail')
+    host.turn.end('ses_main')
+    const failNotice = host.said('ses_main').at(-1)
+    expect(failNotice?.resume).toBe(false)
+    expect(failNotice?.text).toContain('自动恢复研究失败（resume rpc unavailable）')
+    expect(failNotice?.text).toContain('/research auto')
+    expect((await host.rpc().session({ sessionID: 'ses_main' })).pauseReason).toBe('awaiting_user')
+  } finally {
+    StorageClient.prototype.request = baseReq
+  }
+
+  const resumedWithGuidance = await host.command('auto', 'ses_main', { goal: '按方案 B 推进' })
+  expect(resumedWithGuidance.message).toContain('补充指令已记为用户指导')
+  expect(host.said('ses_main').at(-1)?.text).toContain('按方案 B 推进')
+
+  // Ask again, then simulate `note` failure during `/research auto <guidance>`: failure must be surfaced, not swallowed.
+  host.turn.start('ses_main')
+  await host.call('research_exploration', 'ses_main', {
+    action: 'ask',
+    reason: 'Need threshold confirmation',
+    question: '阈值设 1ms 还是 5ms？',
+    options: ['1ms', '5ms'],
+  })
+  host.turn.end('ses_main')
+  await until(
+    async () => (await host.rpc().session({ sessionID: 'ses_main' })).pauseReason === 'awaiting_user',
+    'awaiting_user set 2',
+  )
+
+  const originalRequest = StorageClient.prototype.request
+  StorageClient.prototype.request = function (this: StorageClient, method: string, ...rest: any[]) {
+    return method === 'note'
+      ? Promise.reject(new Error('ledger unavailable'))
+      : (originalRequest as any).call(this, method, ...rest)
+  } as typeof originalRequest
+  cleanups.push(() => {
+    StorageClient.prototype.request = originalRequest
+  })
+
+  const resumedNoteFailed = await host.command('auto', 'ses_main', { goal: '阈值用 1ms' })
+  expect(resumedNoteFailed.message).toContain('没能记入研究记录（ledger unavailable）')
+  expect(host.said('ses_main').at(-1)?.text).toContain('阈值用 1ms')
 })

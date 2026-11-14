@@ -884,6 +884,7 @@ class NativeService:
                 "close_node",
                 "memory_write",
                 "review_scope_set",
+                "exploration_orchestrate",
                 "exploration_scope",
                 "exploration_route",
                 "exploration_decide",
@@ -1202,6 +1203,10 @@ class NativeService:
                 value = {**value, "last_recorded": dict(last) if last else None}
             elif method == "exploration_policy":
                 value = store.exploration_policy(host_id, session_id, request.get("mode"), self._operation(request))
+            elif method == "exploration_orchestrate":
+                value = store.exploration_orchestrate(host_id, session_id, request.get("fields", {}), self._operation(request))
+            elif method == "runtime_resume_awaiting_user":
+                value = store.runtime_resume_awaiting_user(host_id, session_id, self._operation(request))
             elif method == "conclusion_contract":
                 value = store.conclusion_contract(host_id, session_id, request.get('contract'), self._operation(request))
             elif method == "conclusion_prepare":

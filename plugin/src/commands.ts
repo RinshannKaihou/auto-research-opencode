@@ -63,7 +63,7 @@ export function parseResearchCommand(raw: string | undefined): ParsedCommand {
       }
     }
     case "exploration":
-      if (tail && tail !== "on" && tail !== "off") return { kind: "error", message: "用法：/research exploration [on|off]" }
+      if (tail && tail !== "auto" && tail !== "on" && tail !== "off") return { kind: "error", message: "用法：/research exploration [auto|on|off]" }
       return { kind: "rpc", action, args: { mode: tail || null } }
     case 'budget': {
       if (!tail) return {kind:'rpc',action,args:{}}

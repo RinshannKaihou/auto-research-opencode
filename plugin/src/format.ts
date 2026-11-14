@@ -34,6 +34,7 @@ const ROLES: Record<string, string> = {
 
 const PAUSE_REASONS: Record<string, string> = {
   wait: "等待节点结果",
+  awaiting_user: "等待用户回复",
   segment_complete: "节点工作已结束",
   native_stop: "你中断了这一轮",
   fault: "连续出错",
@@ -136,7 +137,7 @@ export function associatedStatus(state: any): string {
   return [
     `目标：${state.project?.goal ?? "未记录"}`,
     `项目：${state.project_root ?? ""}`,
-    `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}`,
+    `本会话：${roleName(state.workflow?.session?.role)} · 运行状态：${runState(state.workflow?.run?.state)}${state.workflow?.session?.pause_reason ? `（${pauseReason(state.workflow.session.pause_reason)}）` : ""}`,
     ...controlRecoveryLines(state.workflow, {
       resourceLeases: state.runtime_budget?.exploration?.resource_leases,
     }),
@@ -170,12 +171,12 @@ export function unassociatedStatus(root: string | null, summary: any, inSession 
 export const USAGE = [
   "/research                     打开研究看板（只读；含概览、进度、成果与待核实提示）",
   "/research auto [目标或指令]   新建并开始、暂停或中断后恢复，或开启新一轮",
-  "/research auto --pause <目标> 仅新建项目而不启动（先调预算或开探索时用；暂停已有运行请用 pause）",
+  "/research auto --pause <目标> 仅新建项目而不启动（先调预算或策略时用；暂停已有运行请用 pause）",
   "/research pause               暂停自主研究（当前这一轮会做完）",
   "/research stop                停止新工作并请求中断；在途执行需核实（需确认）",
   "/research budget [turns|nodes|seconds|tokens|cost|work <正数|off> <原因>]  查看或改额",
   "/research budget resource <名称> <容量|off> <原因>  配置受管测量资源容量",
-  "/research exploration [on|off]  查看或切换探索模式",
+  "/research exploration [auto|on|off]  查看或切换探索控制（默认 auto 由主协调自主决定）",
   "/research recover controller|task|specialist|resource|delivery|retry|takeover …  人工核实、重试或接管（需确认）",
   "/research help                查看本帮助说明",
 ].join("\n")

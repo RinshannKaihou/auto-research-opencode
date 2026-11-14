@@ -109,6 +109,27 @@ def _work_input_references(work):
     return sorted(set(refs))
 
 
+def _exploration_mode(config):
+    mode = config.get("exploration_mode")
+    if mode in {"auto", "on", "off"}:
+        return mode
+    return "on" if config.get("exploration_policy") == "exploration-v1" else "off"
+
+
+def _activate_exploration(store, db, run, config, *, mode=None):
+    if mode is not None:
+        config["exploration_mode"] = mode
+    config["exploration_policy"] = "exploration-v1"
+    if config.get("context_policy", "memory-v2") != "memory-r1-v1":
+        config["context_policy_origin"] = "exploration"
+    config["context_policy"] = "memory-r1-v1"
+    if db.execute('PRAGMA user_version').fetchone()[0] >= 14:
+        config["conclusion_contract"] = "evidence-v1"
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
+            from .conclusion_policy import set_contract
+            set_contract(db, run['generation'], 'evidence-v1', 'exploration')
+
+
 def contract_versions(store, db, host, session):
     from . import __version__
     config = store._project(db)['config']
@@ -121,6 +142,7 @@ def contract_versions(store, db, host, session):
         last = {'context_id':row['context_id'], 'policy_version':row['policy_version'],
                 'exploration_context':selection.get('exploration_context'), 'plugin_version':selection.get('plugin_version')}
     return {'context_policy':config.get('context_policy', 'memory-v2'),
+            'exploration_mode':_exploration_mode(config),
             'exploration_policy':config.get('exploration_policy', 'off'),
             'conclusion_contract':config.get('conclusion_contract', 'legacy-v1'),
             'backend_version':__version__, 'last_recorded_context':last}
@@ -276,43 +298,122 @@ def check_exploration_task(store, db, task_id):
 
 
 class ExplorationStore:
+    def _save_scope_in_tx(self, db, run, host, session, fields):
+        changes = _changes(self, db, fields.get("changes", {}), _SCOPE_FIELDS)
+        ref = fields.get("scope_ref")
+        old = None
+        if ref:
+            ident, expected = _parse_ref(ref, "scope")
+            old = _latest(db, "scope", ident)
+            if old["generation"] != run["generation"] or old["revision"] != expected:
+                raise ConflictError("exploration_scope_changed: refresh the current scope")
+            _text(fields.get("reason"), "reason")
+            data = {key: old.get(key) for key in _SCOPE_FIELDS}
+            data.update(changes)
+            revision = expected + 1
+            goal_version = old["goal_version"] + int(any(old.get(k) != data.get(k) for k in
+                ("objective", "constraints", "comparison_basis")))
+        else:
+            ident = self._next(db, "exploration_scope", "ES")
+            revision, goal_version = 1, 1
+            data = {"question_refs": [], "constraints": None, "comparison_basis": None,
+                    "baseline_refs": [], "budget_policy": None, "state": "active",
+                    "parent_scope_ref": None, "reactivation_condition": None, **changes}
+        data['state'] = data.get('state') or 'active'
+        if data['state'] in {'deferred', 'closed'}:
+            _text(fields.get('reason'), 'scope state reason')
+            _text(data.get('reactivation_condition'), 'scope reactivation_condition')
+        if old and old.get('state', 'active') != 'active' and data['state'] == 'active':
+            _text(fields.get('reason'), 'scope reactivation reason')
+            _text(fields.get('changed_conditions'), 'changed_conditions')
+            data['changed_conditions'] = fields['changed_conditions']
+        parent = data.get('parent_scope_ref')
+        visited = {ident}
+        while parent:
+            parent_id, parent_rev = _parse_ref(parent, 'scope')
+            if parent_id in visited:
+                raise ValidationError('Scope parent relationship would form a cycle')
+            visited.add(parent_id)
+            ancestor = _latest(db, 'scope', parent_id)
+            if ancestor['generation'] != run['generation']:
+                raise ValidationError('Parent scope must belong to this generation')
+            if not db.execute('SELECT 1 FROM exploration_scopes WHERE scope_id=? AND revision=?', (parent_id, parent_rev)).fetchone():
+                raise ValidationError('Unknown parent scope revision')
+            parent = ancestor.get('parent_scope_ref')
+        for key in ("objective", "task_kind"):
+            if key not in data:
+                raise ValidationError(f"{key} is required")
+        data["reason"] = fields.get("reason")
+        actor = {"host_id": host, "session_id": session}
+        db.execute("INSERT INTO exploration_scopes VALUES(?,?,?,?,?,?,?)",
+                   (ident, revision, run["generation"], goal_version, encoded(data), encoded(actor), now()))
+        value = _latest(db, "scope", ident)
+        self._event(db, "exploration.scope_saved", {"ref": value["ref"], "actor": actor})
+        if old and value['goal_version'] != old['goal_version']:
+            self._exploration_result_in_scope(db, ident, 'scope:' + value['ref'], 'scope_changed',
+                                              value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
+        if old and value['state'] != old.get('state', 'active'):
+            if self._scope_state_action_expressed(db, ident, old, value, run):
+                # The revision itself is the coordinator's explicit state
+                # action; recording an extra self-confirmation obligation
+                # for the same fact would only duplicate the decision cost.
+                self._event(db, 'exploration.scope_state_expressed', {
+                    'rule': self.SCOPE_STATE_RULE, 'scope_ref': value['ref'],
+                    'before_ref': old['ref'], 'state': value['state'],
+                    'reason': fields.get('reason'),
+                    'reactivation_condition': value.get('reactivation_condition'),
+                    'actor': actor})
+            else:
+                self._exploration_result_in_scope(db, ident, 'state:' + value['ref'], 'scope_state_changed',
+                    value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
+        return value
+
     def exploration_policy(self, host, session, mode, operation):
         if mode is None:
             with self._read() as db:
                 run = _main(db, host, session)
                 config = self._project(db)["config"]
-                return {"generation": run["generation"], "exploration_policy": config.get("exploration_policy", "off"),
+                return {"generation": run["generation"],
+                        "exploration_mode": _exploration_mode(config),
+                        "exploration_policy": config.get("exploration_policy", "off"),
                         "context_policy": config.get("context_policy", "memory-v2"),
                         "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
-        if mode not in {"on", "off"}:
-            raise ValidationError("exploration policy must be on or off")
+        if mode not in {"auto", "on", "off"}:
+            raise ValidationError("exploration policy must be auto, on or off")
         payload = {"host": host, "session": session, "mode": mode}
 
         def work(db):
             require_controller(db)
             run = _main(db, host, session)
-            if run["state"] == "complete" and mode != 'off':
+            if run["state"] == "complete" and mode == "on":
                 raise ConflictError("Start a new generation before changing exploration")
             config = self._project(db)["config"]
-            before = {"exploration_policy": config.get("exploration_policy", "off"),
+            before = {"exploration_mode": _exploration_mode(config),
+                      "exploration_policy": config.get("exploration_policy", "off"),
                       "context_policy": config.get("context_policy", "memory-v2"),
                       "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
-            config["exploration_policy"] = "exploration-v1" if mode == "on" else "off"
             if mode == "on":
-                config["context_policy"] = "memory-r1-v1"
-                if db.execute('PRAGMA user_version').fetchone()[0] >= 14:
-                    config["conclusion_contract"] = "evidence-v1"
-                    if db.execute('PRAGMA user_version').fetchone()[0] >= 15:
-                        from .conclusion_policy import set_contract
-                        set_contract(db, run['generation'], 'evidence-v1', 'exploration')
+                _activate_exploration(self, db, run, config, mode="on")
+                config.pop("pending_exploration_question", None)
+            elif mode == "off":
+                config["exploration_mode"] = "off"
+                config["exploration_policy"] = "off"
+                config.pop("pending_exploration_question", None)
+            else:
+                config["exploration_mode"] = "auto"
+                if before["exploration_policy"] == "exploration-v1" and config.get("context_policy") == "memory-r1-v1":
+                    config.setdefault("context_policy_origin", "exploration")
+                if run["state"] == "complete" or not _scopes(db, run["generation"]):
+                    config["exploration_policy"] = "off"
             self._set_project_config(db, config)
-            if mode == 'off' and run['state'] != 'complete':
+            if config["exploration_policy"] == "off" and before["exploration_policy"] == "exploration-v1" and run["state"] != "complete":
                 rows = list(db.execute("SELECT * FROM workflow_intents WHERE kind='exploration_work' "
                     "AND state IN ('pending','waiting_budget','materialized') AND json_extract(details,'$.generation')=?",
                     (run['generation'],)))
                 for row in rows:
                     settle_exploration_work(self, db, row, 'cancelled', 'exploration_disabled')
-            after = {"exploration_policy": config["exploration_policy"],
+            after = {"exploration_mode": _exploration_mode(config),
+                     "exploration_policy": config.get("exploration_policy", "off"),
                      "context_policy": config.get("context_policy", "memory-v2"),
                      "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
             if before != after:
@@ -320,6 +421,103 @@ class ExplorationStore:
             return {"generation": run["generation"], **after,
                     **({'effective_for': 'next_generation'} if run['state'] == 'complete' else {})}
         return self._mutate("exploration.policy", payload, operation, work)
+
+    def exploration_orchestrate(self, host, session, fields, operation):
+        if not isinstance(fields, dict):
+            raise ValidationError("Exploration orchestration fields must be an object")
+        action = fields.get("action")
+        if action not in {"enable", "ask"}:
+            raise ValidationError("action must be enable or ask")
+        reason = _text(fields.get("reason"), "reason")
+        payload = {"host": host, "session": session, "fields": fields}
+
+        def work(db):
+            require_controller(db)
+            run = _main(db, host, session)
+            actor_row = db.execute(
+                "SELECT role,pause_reason,detached FROM workflow_sessions WHERE host_id=? AND session_id=?",
+                (host, session),
+            ).fetchone()
+            if (
+                actor_row
+                and not actor_row["detached"]
+                and actor_row["role"] == "main"
+                and run["state"] == "running"
+                and actor_row["pause_reason"] == "wait"
+            ):
+                raise ConflictError(
+                    "Cannot change exploration or ask a blocking question while waiting on dispatched node tasks; "
+                    "wait for node results first"
+                )
+            require_new_work(db, host, session, manual=True, waiting=False, role="main")
+            config = self._project(db)["config"]
+            mode = _exploration_mode(config)
+            if mode == "off":
+                raise ConflictError("Exploration is disabled by user policy (/research exploration off)")
+            actor = {"host_id": host, "session_id": session}
+            if action == "enable":
+                scope_input = fields.get("scope")
+                if scope_input is not None and not isinstance(scope_input, dict):
+                    raise ValidationError("scope must be an object")
+                if scope_input is not None:
+                    # Validate scope fields before mutating config.
+                    _changes(self, db, scope_input, _SCOPE_FIELDS)
+                    for key in ("objective", "task_kind"):
+                        if key not in scope_input:
+                            raise ValidationError(f"{key} is required")
+                before = {"exploration_mode": mode,
+                          "exploration_policy": config.get("exploration_policy", "off"),
+                          "context_policy": config.get("context_policy", "memory-v2"),
+                          "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
+                _activate_exploration(self, db, run, config, mode=mode)
+                config.pop("pending_exploration_question", None)
+                self._set_project_config(db, config)
+                after = {"exploration_mode": _exploration_mode(config),
+                         "exploration_policy": config["exploration_policy"],
+                         "context_policy": config.get("context_policy", "memory-v2"),
+                         "conclusion_contract": config.get("conclusion_contract", "legacy-v1")}
+                if before != after:
+                    self._event(db, "exploration.policy_changed", {
+                        "generation": run["generation"], "before": before, "after": after,
+                        "reason": reason, "actor": actor})
+                created_scope = None
+                if scope_input is not None:
+                    created_scope = self._save_scope_in_tx(db, run, host, session,
+                                                           {"changes": scope_input, "reason": reason})
+                return {"action": "enable", "generation": run["generation"], **after, "reason": reason,
+                        **({"scope": created_scope} if created_scope is not None else {})}
+            question = _text(fields.get("question"), "question")
+            raw_options = fields.get("options")
+            options = []
+            if raw_options is not None:
+                if not isinstance(raw_options, list) or len(raw_options) > 8:
+                    raise ValidationError("options must be a list of at most 8 nonempty strings")
+                options = [_text(item, "option") for item in raw_options]
+            asked_at = now()
+            paused = run["state"] == "running"
+            record = {"generation": run["generation"], "question": question, "reason": reason,
+                      "options": options, "asked_at": asked_at, "actor": actor}
+            if paused:
+                config["pending_exploration_question"] = record
+                self._set_project_config(db, config)
+            elif "pending_exploration_question" in config:
+                config.pop("pending_exploration_question", None)
+                self._set_project_config(db, config)
+            self._event(db, "exploration.question_asked", record)
+            if paused:
+                db.execute("UPDATE workflow_sessions SET pause_reason='awaiting_user',waiting='[]' "
+                           "WHERE host_id=? AND session_id=?", (host, session))
+                db.execute("UPDATE workflow_project SET control_revision=control_revision+1,updated_at=? WHERE id=1",
+                           (asked_at,))
+            return {"action": "ask", "generation": run["generation"],
+                    "state": "awaiting_user" if paused else "manual", "paused": paused,
+                    "question": question, "options": options, "reason": reason,
+                    "message": ("Autonomous continuation is paused waiting for the user's reply. "
+                                "State this question and any options concisely in plain text and end this turn "
+                                "without calling more write tools."
+                                if paused else
+                                "Question recorded in manual mode. Present the question and options concisely to the user.")}
+        return self._mutate("exploration.orchestrate", payload, operation, work)
 
     def exploration_scope(self, host, session, fields, operation):
         payload = {"host": host, "session": session, "fields": fields}
@@ -330,74 +528,7 @@ class ExplorationStore:
             require_new_work(db, host, session, manual=True, waiting=True, role="main")
             if self._project(db)["config"].get("exploration_policy", "off") != "exploration-v1":
                 raise ConflictError("Enable exploration before creating a scope")
-            changes = _changes(self, db, fields.get("changes", {}), _SCOPE_FIELDS)
-            ref = fields.get("scope_ref")
-            old = None
-            if ref:
-                ident, expected = _parse_ref(ref, "scope")
-                old = _latest(db, "scope", ident)
-                if old["generation"] != run["generation"] or old["revision"] != expected:
-                    raise ConflictError("exploration_scope_changed: refresh the current scope")
-                _text(fields.get("reason"), "reason")
-                data = {key: old.get(key) for key in _SCOPE_FIELDS}
-                data.update(changes)
-                revision = expected + 1
-                goal_version = old["goal_version"] + int(any(old.get(k) != data.get(k) for k in
-                    ("objective", "constraints", "comparison_basis")))
-            else:
-                ident = self._next(db, "exploration_scope", "ES")
-                revision, goal_version = 1, 1
-                data = {"question_refs": [], "constraints": None, "comparison_basis": None,
-                        "baseline_refs": [], "budget_policy": None, "state": "active",
-                        "parent_scope_ref": None, "reactivation_condition": None, **changes}
-            data['state'] = data.get('state') or 'active'
-            if data['state'] in {'deferred', 'closed'}:
-                _text(fields.get('reason'), 'scope state reason')
-                _text(data.get('reactivation_condition'), 'scope reactivation_condition')
-            if old and old.get('state', 'active') != 'active' and data['state'] == 'active':
-                _text(fields.get('reason'), 'scope reactivation reason')
-                _text(fields.get('changed_conditions'), 'changed_conditions')
-                data['changed_conditions'] = fields['changed_conditions']
-            parent = data.get('parent_scope_ref')
-            visited = {ident}
-            while parent:
-                parent_id, parent_rev = _parse_ref(parent, 'scope')
-                if parent_id in visited:
-                    raise ValidationError('Scope parent relationship would form a cycle')
-                visited.add(parent_id)
-                ancestor = _latest(db, 'scope', parent_id)
-                if ancestor['generation'] != run['generation']:
-                    raise ValidationError('Parent scope must belong to this generation')
-                if not db.execute('SELECT 1 FROM exploration_scopes WHERE scope_id=? AND revision=?', (parent_id, parent_rev)).fetchone():
-                    raise ValidationError('Unknown parent scope revision')
-                parent = ancestor.get('parent_scope_ref')
-            for key in ("objective", "task_kind"):
-                if key not in data:
-                    raise ValidationError(f"{key} is required")
-            data["reason"] = fields.get("reason")
-            actor = {"host_id": host, "session_id": session}
-            db.execute("INSERT INTO exploration_scopes VALUES(?,?,?,?,?,?,?)",
-                       (ident, revision, run["generation"], goal_version, encoded(data), encoded(actor), now()))
-            value = _latest(db, "scope", ident)
-            self._event(db, "exploration.scope_saved", {"ref": value["ref"], "actor": actor})
-            if old and value['goal_version'] != old['goal_version']:
-                self._exploration_result_in_scope(db, ident, 'scope:' + value['ref'], 'scope_changed',
-                                                  value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
-            if old and value['state'] != old.get('state', 'active'):
-                if self._scope_state_action_expressed(db, ident, old, value, run):
-                    # The revision itself is the coordinator's explicit state
-                    # action; recording an extra self-confirmation obligation
-                    # for the same fact would only duplicate the decision cost.
-                    self._event(db, 'exploration.scope_state_expressed', {
-                        'rule': self.SCOPE_STATE_RULE, 'scope_ref': value['ref'],
-                        'before_ref': old['ref'], 'state': value['state'],
-                        'reason': fields.get('reason'),
-                        'reactivation_condition': value.get('reactivation_condition'),
-                        'actor': actor})
-                else:
-                    self._exploration_result_in_scope(db, ident, 'state:' + value['ref'], 'scope_state_changed',
-                        value['ref'], {'before': old['ref'], 'after': value['ref'], 'route_ids': []})
-            return value
+            return self._save_scope_in_tx(db, run, host, session, fields)
         return self._mutate("exploration.scope", payload, operation, work)
 
     SCOPE_STATE_RULE = "scope-state-expressed-v1"

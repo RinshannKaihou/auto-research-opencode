@@ -450,7 +450,11 @@ def migrate_copy(source: str | Path, destination: str | Path) -> dict:
         if state_db.exists():
             state_db.unlink()
         store = NativeStore(temporary)
-        project = store.initialize(report["project"]["goal"], "migration:initialize",)
+        project = store.initialize(
+            report["project"]["goal"],
+            "migration:initialize",
+            config={"exploration_mode": "off"},
+        )
         imported_at = now()
         with sqlite3.connect(legacy_db) as legacy, store._connection() as db:
             legacy.row_factory = sqlite3.Row
